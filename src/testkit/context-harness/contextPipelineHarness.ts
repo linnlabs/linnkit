@@ -1,0 +1,102 @@
+import * as contextManager from '../../context-manager';
+import type { AiMessage } from '../../contracts';
+
+type IContextProvider = contextManager.agentContext.IContextProvider;
+type MessageProcessingState = contextManager.agentContext.MessageProcessingState;
+type ProviderContext = contextManager.agentContext.ProviderContext;
+type ProviderResult = contextManager.agentContext.ProviderResult;
+type IPreprocessor = contextManager.agentPreprocessors.IPreprocessor;
+type PreprocessorContext = contextManager.agentPreprocessors.PreprocessorContext;
+type PreprocessorResult = contextManager.agentPreprocessors.PreprocessorResult;
+
+export interface ContextPipelineHarnessOptions {
+  messages: AiMessage[];
+  totalBudget?: number;
+  debugMode?: boolean;
+  estimateTokens?: (message: AiMessage) => number;
+}
+
+export interface ContextPipelineHarness {
+  runPreprocessors(preprocessors: IPreprocessor[]): Promise<PreprocessorResult>;
+  createStates(coreMessageIds?: string[], messages?: AiMessage[]): MessageProcessingState[];
+  runProvider(
+    provider: IContextProvider,
+    options?: { coreMessageIds?: string[]; messages?: AiMessage[]; contextPatch?: Partial<ProviderContext> }
+  ): Promise<ProviderResult>;
+}
+
+function createDefaultProviderContext(
+  options: ContextPipelineHarnessOptions,
+  contextPatch?: Partial<ProviderContext>
+): ProviderContext {
+  return {
+    totalBudget: options.totalBudget ?? 100_000,
+    config: contextManager.agentContext.AGENT_CONTEXT_BUILDER_CONFIG,
+    debugMode: options.debugMode ?? false,
+    estimateTokens: options.estimateTokens ?? (() => 1),
+    ...(contextPatch ?? {}),
+  };
+}
+
+/**
+ * 中文备注：
+ * - ContextPipelineHarness 用于稳定复用“预处理 -> 状态化 -> Provider”三段测试流程；
+ * - 它不内置任何业务 Provider，避免 testkit 与具体 feature 反向耦合；
+ * - 调用侧只需要声明核心消息与预算，即可测试上下文不变量。
+ */
+export function createContextPipelineHarness(
+  options: ContextPipelineHarnessOptions
+): ContextPipelineHarness {
+  return {
+    async runPreprocessors(preprocessors: IPreprocessor[]): Promise<PreprocessorResult> {
+      const ordered = [...preprocessors].sort((left, right) => left.priority - right.priority);
+      let currentMessages = [...options.messages];
+      const appliedStrategies: string[] = [];
+      const preprocessorContext: PreprocessorContext = {
+        debugMode: options.debugMode ?? false,
+      };
+
+      for (const preprocessor of ordered) {
+        if (preprocessor.shouldSkip?.(currentMessages, preprocessorContext)) {
+          continue;
+        }
+        const result = await preprocessor.process(currentMessages, preprocessorContext);
+        currentMessages = result.messages;
+        appliedStrategies.push(...result.appliedStrategies);
+      }
+
+      return {
+        messages: currentMessages,
+        stats: {
+          originalCount: options.messages.length,
+          processedCount: currentMessages.length,
+          removedCount: options.messages.length - currentMessages.length,
+          modifiedCount: appliedStrategies.length,
+        },
+        appliedStrategies,
+      };
+    },
+
+    createStates(coreMessageIds: string[] = [], messages?: AiMessage[]): MessageProcessingState[] {
+      const sourceMessages = messages ?? options.messages;
+      const estimateTokens = options.estimateTokens ?? (() => 1);
+      const coreIds = new Set(coreMessageIds);
+      return sourceMessages.map((message, index) => ({
+        message,
+        originalIndex: index,
+        action: coreIds.has(message.id) ? 'keep_core' : 'skip',
+        tokens: estimateTokens(message),
+      }));
+    },
+
+    async runProvider(
+      provider: IContextProvider,
+      runOptions?: { coreMessageIds?: string[]; messages?: AiMessage[]; contextPatch?: Partial<ProviderContext> }
+    ): Promise<ProviderResult> {
+      const providerMessages = runOptions?.messages ?? options.messages;
+      const context = createDefaultProviderContext(options, runOptions?.contextPatch);
+      const states = this.createStates(runOptions?.coreMessageIds ?? [], providerMessages);
+      return provider.provide(states, context.totalBudget, context);
+    },
+  };
+}

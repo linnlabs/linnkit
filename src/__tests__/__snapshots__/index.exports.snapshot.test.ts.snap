@@ -1,0 +1,14 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`src/agent public exports snapshot > exposes the documented root public surface 1`] = `
+[
+  "contracts",
+  "generateMessageId",
+  "generateRunId",
+  "linnkitCompat",
+  "ports",
+  "runtimeKernel",
+  "testkit",
+  "withLLMTelemetryContext",
+]
+`;

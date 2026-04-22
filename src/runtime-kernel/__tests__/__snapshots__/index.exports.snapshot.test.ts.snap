@@ -1,0 +1,116 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`src/agent/runtime-kernel public exports snapshot > exposes the documented runtime-kernel namespaces 1`] = `
+[
+  "ENGINE_ERROR_CODES",
+  "childRuns",
+  "createDefaultGraphExecutor",
+  "createGraphLoopHarness",
+  "enrichment",
+  "events",
+  "execution",
+  "graph",
+  "llm",
+  "runContext",
+  "runSupervisor",
+  "subrun",
+  "telemetry",
+  "tools",
+]
+`;
+
+exports[`src/agent/runtime-kernel public exports snapshot > snapshots the childRuns namespace 1`] = `
+[
+  "InternalAgentInvoker",
+  "pickChildRunSeedHistory",
+]
+`;
+
+exports[`src/agent/runtime-kernel public exports snapshot > snapshots the enrichment namespace 1`] = `
+[
+  "requestEnricherRegistry",
+]
+`;
+
+exports[`src/agent/runtime-kernel public exports snapshot > snapshots the events namespace 1`] = `
+[
+  "describeRuntimeEventLifecycle",
+  "eventMapper",
+  "getRuntimeEventUiProjectionKind",
+  "isCheckpointHistorySummaryEvent",
+  "isToolCallDecisionEvent",
+  "shouldEmitRuntimeEventToSse",
+  "shouldEnterAgentContext",
+  "shouldPersistRuntimeEvent",
+  "shouldReplayRuntimeEventToUi",
+]
+`;
+
+exports[`src/agent/runtime-kernel public exports snapshot > snapshots the execution namespace 1`] = `
+[
+  "EventBus",
+  "EventSequencer",
+  "createRuntimeErrorEvent",
+]
+`;
+
+exports[`src/agent/runtime-kernel public exports snapshot > snapshots the graph namespace 1`] = `
+[
+  "ENGINE_STATE_SCHEMA_VERSION",
+  "GraphAgentExecutor",
+  "GraphExecutor",
+  "LlmNode",
+  "MemoryCheckpointer",
+  "MemoryEventStore",
+  "createMonotonicEventIdFactory",
+  "summarizeCheckpoint",
+]
+`;
+
+exports[`src/agent/runtime-kernel public exports snapshot > snapshots the llm namespace 1`] = `
+[
+  "LlmCaller",
+  "ModelResolver",
+]
+`;
+
+exports[`src/agent/runtime-kernel public exports snapshot > snapshots the runContext namespace 1`] = `
+[
+  "createDefaultRunContext",
+]
+`;
+
+exports[`src/agent/runtime-kernel public exports snapshot > snapshots the runSupervisor namespace 1`] = `
+[
+  "MemoryRunRegistryStore",
+]
+`;
+
+exports[`src/agent/runtime-kernel public exports snapshot > snapshots the subrun namespace 1`] = `
+[
+  "EventBusSubRunTracePublisher",
+]
+`;
+
+exports[`src/agent/runtime-kernel public exports snapshot > snapshots the telemetry namespace 1`] = `
+[
+  "TELEMETRY_EVENT_KINDS",
+  "noopTelemetry",
+]
+`;
+
+exports[`src/agent/runtime-kernel public exports snapshot > snapshots the tools namespace 1`] = `
+[
+  "BaseTool",
+  "computeToolIdempotencyKey",
+  "ensureToolContextRuntimeCapability",
+  "findCachedToolOutputByIdempotencyKey",
+  "normalizeToolArgs",
+  "readToolContextModelId",
+  "readToolContextPersistedHistory",
+  "readToolContextRunContext",
+  "readToolContextUserQuery",
+  "readToolContextWorkingHistory",
+  "stripRuntimeReservedToolContextPatch",
+]
+`;

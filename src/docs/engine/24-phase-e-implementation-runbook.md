@@ -1,0 +1,423 @@
+# 24 · Phase E 实施 Runbook（真抽包到 `packages/linnkit/`）
+
+> **类型**：实施手册（runbook）
+> **状态**：🚧 执行中（PR-A codemod + 契约测试已落地；PR-B 正式 package 壳子已完成；PR-C 前置已清空，进入真 move + 全仓改写）
+> **前置**：
+> - [`engine/07-public-api-and-package-boundary.md`](./07-public-api-and-package-boundary.md) —— Phase E 真抽包主真源
+> - [`engine/11-phase-e-hard-blockers.md`](./11-phase-e-hard-blockers.md) —— 第一轮硬阻塞已全部关闭
+> - [`engine/20-d3-d4-port-interfaces-plan.md`](./20-d3-d4-port-interfaces-plan.md) —— Phase D 已完成
+> - [`engine/23-b3-eventstore-runbook.md`](./23-b3-eventstore-runbook.md) —— EventStore Phase E 前置已关闭
+> **目标**：把 `src/agent/` 真正变成 `packages/linnkit/`，删除 dryrun，批量改全仓 import，跑完整回归，不留双源和过渡层。
+
+---
+
+## 0. 启动准入
+
+开始 Phase E 之前，必须同时满足：
+
+- [x] `engine/07` 已标记 **Phase D 完成**
+- [x] `engine/11` 已确认 **第一轮硬阻塞全部关闭**
+- [x] `packages/agent-engine-dryrun/` 的 `typecheck` / `test:smoke` 已跑通过（Phase D 结果）
+- [x] `guard:agent-boundary` 当前为最终 enforce，reverse deep import baseline = `0`
+- [x] B1 Checkpointer / B2 Telemetry / B3 EventStore 已完成，`linnkit` 不再存在死接口
+- [x] package 正式名已定为 `linnkit`
+- [x] 用户决策已明确：**直接物理搬迁 + 脚本批量改 import 路径，不做长期过渡**
+
+如任一不满足，**ABORT**，先回到对应上游 topic。
+
+---
+
+## 1. 本 runbook 固定决策
+
+| ID | 决策 | 含义 |
+|----|------|------|
+| **E-D1** | **真源只有一份** | `src/agent/` 与 `packages/agent-engine-dryrun/` 不能长期并存；Phase E 完成后只保留 `packages/linnkit/` |
+| **E-D2** | **物理 move，不做 re-export 过渡** | 直接 `git mv src/agent packages/linnkit/src`，不新建 `src/agent/index.ts -> linnkit` 兼容桥 |
+| **E-D3** | **路径改写走脚本，不手改 200+ 处** | 用 codemod 批量把消费侧 `src/agent` 改到 `linnkit` / `linnkit/<entry>` |
+| **E-D4** | **脚本与 move 同批合并，不留半迁移态** | 允许同 PR 内先 move 再 codemod，但 merge 前不得残留“靠临时 alias 才能工作”的状态 |
+| **E-D5** | **dryrun sunset 是 Phase E 的一部分** | 删除 `packages/agent-engine-dryrun/`、`src/agent/__tests__/dryrun.workspace.test.ts`、guard/vitest 中对 dryrun 的豁免 |
+| **E-D6** | **B2/B3 不再阻塞 Phase E** | `defaultGraphExecutorContextBuilder` 与 runtime/child-run 默认工厂归类为 host-owned default，后续再治理 |
+| **E-D7** | **不顺手扩 scope** | 不顺手补新 port、不顺手清 unrelated tech debt、不顺手改产品行为 |
+| **E-D8** | **回归优先级高于路径洁癖** | 任何批量改写都必须先有脚本/测试证据，再做大范围机械替换 |
+
+---
+
+## 2. 当前仓库实情（按真实代码，不按旧文案想象）
+
+### 2.1 workspace / 包管理现实
+
+- 仓库同时存在 `package-lock.json` 与 [`pnpm-workspace.yaml`](/Users/tiansi/code/linnya/pnpm-workspace.yaml)
+- 根 [`package.json`](/Users/tiansi/code/linnya/package.json) **没有** `workspaces` 字段；workspace 真源在 `pnpm-workspace.yaml`
+- 因此 E-3 要改的不是“根 package.json 的 workspaces”，而是：
+  - `pnpm-workspace.yaml`
+  - 根 `tsconfig.json`
+  - `vite.config.mjs`
+  - `vitest.config.ts`
+  - 各消费侧 package/runtime alias
+
+### 2.2 dryrun 已提供现成真源
+
+`packages/agent-engine-dryrun/` 已经预演了：
+
+- [`package.json`](/Users/tiansi/code/linnya/packages/agent-engine-dryrun/package.json)
+  - `name: "linnkit-dryrun"`
+  - exports: `. / ports / contracts / runtime-kernel / context-manager / testkit`
+- [`tsconfig.json`](/Users/tiansi/code/linnya/packages/agent-engine-dryrun/tsconfig.json)
+  - 已验证 `linnkit` / `linnkit/*` 路径别名形状
+- [`vitest.config.ts`](/Users/tiansi/code/linnya/packages/agent-engine-dryrun/vitest.config.ts)
+  - 已验证测试侧 alias 映射
+
+**结论**：Phase E 不需要重新设计包形状，只需要把 dryrun 里已经证实可用的 package 结构升格为正式包。
+
+### 2.3 dryrun sunset 的真实触点
+
+当前与 dryrun 绑定的仓库真点位：
+
+- [`vitest.config.ts`](/Users/tiansi/code/linnya/vitest.config.ts) 排除了 `packages/agent-engine-dryrun/**`
+- [`scripts/agent-package-boundary-guard.ts`](/Users/tiansi/code/linnya/scripts/agent-package-boundary-guard.ts) 的 `IGNORED_RELATIVE_PREFIXES` 忽略了 `packages/agent-engine-dryrun/`
+- [`src/agent/__tests__/dryrun.workspace.test.ts`](/Users/tiansi/code/linnya/src/agent/__tests__/dryrun.workspace.test.ts) 锁住 dryrun workspace 契约
+- `scripts/__tests__/agent-package-boundary-guard.test.ts` 含 dryrun 豁免测试
+
+### 2.4 E-4 的真实改写面
+
+实测（不含 `packages/agent-engine-dryrun/**`）：
+
+- 消费侧 `src/agent...` import 命中：**248**
+- 消费侧 `@/agent...` import 命中：**0**
+
+统计口径目录：
+
+- `src/app-hosts`
+- `src/features`
+- `src/electron-main`
+- `src/tools`
+- `src/integrations`
+- `src/testkit`
+- `apps`
+- `scripts`
+
+说明：
+
+- 248 包含生产代码、测试代码、以及部分脚本测试
+- 这不是 deep import 违规数；而是 **Phase E 物理抽包后必须改成 `linnkit` 的真实引用面**
+- 因此 E-4 不能靠手改，必须先有 codemod
+
+---
+
+## 3. 关键文件清单
+
+### 3.1 必改配置
+
+- [pnpm-workspace.yaml](/Users/tiansi/code/linnya/pnpm-workspace.yaml)
+- [package.json](/Users/tiansi/code/linnya/package.json)
+- [tsconfig.json](/Users/tiansi/code/linnya/tsconfig.json)
+- [vite.config.mjs](/Users/tiansi/code/linnya/vite.config.mjs)
+- [vitest.config.ts](/Users/tiansi/code/linnya/vitest.config.ts)
+
+### 3.2 必删 dryrun 触点
+
+- [packages/agent-engine-dryrun/package.json](/Users/tiansi/code/linnya/packages/agent-engine-dryrun/package.json)
+- [packages/agent-engine-dryrun/tsconfig.json](/Users/tiansi/code/linnya/packages/agent-engine-dryrun/tsconfig.json)
+- [packages/agent-engine-dryrun/vitest.config.ts](/Users/tiansi/code/linnya/packages/agent-engine-dryrun/vitest.config.ts)
+- [src/agent/__tests__/dryrun.workspace.test.ts](/Users/tiansi/code/linnya/src/agent/__tests__/dryrun.workspace.test.ts)
+- [scripts/agent-package-boundary-guard.ts](/Users/tiansi/code/linnya/scripts/agent-package-boundary-guard.ts)
+- [scripts/__tests__/agent-package-boundary-guard.test.ts](/Users/tiansi/code/linnya/scripts/__tests__/agent-package-boundary-guard.test.ts)
+
+### 3.3 需要批量改 import 的主目录
+
+- `src/app-hosts/linnya/**`
+- `src/features/**`
+- `src/electron-main/**`
+- `src/tools/**`
+- `src/integrations/**`
+- `src/testkit/**`
+- `apps/**`
+- `scripts/**`
+
+---
+
+## 4. PR 切片总览
+
+本 runbook 按 **4 个 PR** 执行。禁止一口气把 E1-E8 全塞进一个 commit。
+
+| PR | 范围 | 目标 |
+|----|------|------|
+| **PR-A** | codemod + 测试 | 先把 `src/agent -> linnkit` 的机械改写脚本写好，跑在 fixture 和小样本上 |
+| **PR-B** | 正式 package 壳子 | 建 `packages/linnkit/`，把 dryrun manifest/tsconfig/vitest 形状升格为正式包 |
+| **PR-C** | 真 move + 批量 import 改写 | `git mv src/agent packages/linnkit/src`，跑 codemod，全仓切到 `linnkit` |
+| **PR-D** | dryrun sunset + 文档 + 全量回归 | 删除 dryrun/豁免/旧测试，补文档，跑完整 baseline 与桌面手测 |
+
+---
+
+## 5. PR-A：导入改写 codemod ✅ 已完成（当前工作树）
+
+### 5.1 目标
+
+新增一个**通用** codemod，把：
+
+- `src/agent`
+- `src/agent/contracts`
+- `src/agent/runtime-kernel`
+- `src/agent/context-manager`
+- `src/agent/testkit`
+- `src/agent/ports`
+
+批量改写为：
+
+- `linnkit`
+- `linnkit/contracts`
+- `linnkit/runtime-kernel`
+- `linnkit/context-manager`
+- `linnkit/testkit`
+- `linnkit/ports`
+
+### 5.2 文件范围
+
+- [x] 新增 [rewrite-agent-imports-to-linnkit.ts](/Users/tiansi/code/linnya/scripts/codemods/rewrite-agent-imports-to-linnkit.ts)
+- [x] 新增对应测试 [rewrite-agent-imports-to-linnkit.test.ts](/Users/tiansi/code/linnya/scripts/codemods/__tests__/rewrite-agent-imports-to-linnkit.test.ts)
+- 必要时新增 fixture（只在脚本测试目录）
+
+### 5.3 验收
+
+- 能处理 `import` + `import type`
+- 能处理同文件多条 import
+- 不误改注释 / 普通字符串 / 文档
+- 对不支持的 deep import（如 `src/agent/runtime-kernel/graph-engine/engine`）必须**显式报错**，不偷偷猜路径
+
+### 5.4 禁止事项
+
+- 不做“见到 deep import 就自动拍脑袋映射”
+- 不直接跑全仓改写
+- 不在这一步动业务代码
+
+### 5.5 当前结论
+
+- 已支持：
+  - static import
+  - dynamic import
+  - `typeof import('...')`
+- 已明确：
+  - 只改公开入口 `src/agent` / `contracts` / `runtime-kernel` / `context-manager` / `testkit` / `ports`
+  - 遇到 deep import 会直接报错，不做猜测性映射
+- 已验证：
+  - `npx vitest run scripts/codemods/__tests__/rewrite-agent-imports-to-linnkit.test.ts` 全绿
+
+
+---
+
+## 6. PR-B：正式 package 壳子 ✅ 已完成（当前工作树）
+
+### 6.1 目标
+
+创建正式的 `packages/linnkit/`，但此时还**不** move `src/agent`。
+
+### 6.2 具体动作
+
+1. 新建 `packages/linnkit/package.json`
+2. 新建 `packages/linnkit/tsconfig.json`
+3. 新建 `packages/linnkit/vitest.config.ts`
+4. 新建最小 smoke/manifest 测试，锁住正式包形状
+5. manifest 与 alias 以 dryrun 已验证形状为准，但 `name` 改为 **`linnkit`**
+
+当前已落地：
+
+- [x] `packages/linnkit/package.json`
+- [x] `packages/linnkit/tsconfig.json`
+- [x] `packages/linnkit/vitest.config.ts`
+- [x] `packages/linnkit/__tests__/package.shell.test.ts`
+
+当前约束：
+
+- package shell 只锁配置形状，不复制第二份 `src`
+- `exports` 明确指向未来 `./src/*` 真路径，等待 PR-C 的 `git mv`
+- 在 PR-C 之前，禁止把 `packages/linnkit/` 变成回指 `src/agent` 的桥接层
+
+验证结果：
+
+- [x] `npm --prefix packages/linnkit run test:smoke`
+- [x] `npm --prefix packages/linnkit run typecheck`
+
+### 6.3 关键原则
+
+- 这里只建正式包壳子，不复制第二份 `src/`
+- 正式包的 `src/` 会在 PR-C 通过 `git mv` 直接进入
+- 不在 PR-B 建 re-export 兼容层
+
+---
+
+## 7. PR-C：真 move + 批量改写
+
+### 7.1 目标
+
+这是 Phase E 的主 PR：
+
+1. `git mv src/agent packages/linnkit/src`
+2. 跑 codemod，把消费侧 `src/agent...` 全量改成 `linnkit...`
+3. 修正配置，让运行 / 构建 / 测试都指向新 package
+
+### 7.2 预期改动面
+
+- `src/app-hosts/**`
+- `src/features/**`
+- `src/electron-main/**`
+- `src/tools/**`
+- `src/integrations/**`
+- `src/testkit/**`
+- `apps/**`
+- `scripts/**`
+- 根配置：`tsconfig.json` / `vite.config.mjs` / `vitest.config.ts` / `package.json`
+
+### 7.3 强制顺序
+
+1. 先 `git mv`
+2. 再跑 codemod
+3. 再修正脚本/构建配置
+4. 再跑聚焦验证
+
+不得颠倒成“先手改 import，最后再 move”。
+
+### 7.4 聚焦验证
+
+至少覆盖：
+
+- `guard:agent-boundary`
+- `lint:codename`
+- `tsc --noEmit -p tsconfig.json`
+- `npm --prefix packages/linnkit run test:smoke`
+- 一组 host flow / child-runs / context-builder 聚焦测试
+
+当前实测状态：
+
+- `testkit` deep import 与 `runtime-kernel` 测试 deep import 已全部收口
+- `agentRunner.interrupted.integration.test.ts` 与 `flow.followup-tool-history.integration.test.ts` 已切到 public seam
+- codemod dry-run 已能完整扫描目标目录并给出稳定统计（`filesChanged = 134` / `rewrittenImports = 209`）
+- PR-C 前置已清空，可直接进入 `git mv + codemod`
+
+### 7.5 失败回滚口径
+
+- codemod 输出若出现未映射 deep import → **ABORT**
+- 若 `git mv` 后需要靠长期 alias 才能让仓库工作 → **ABORT**，回到 PR-A 扩脚本，不允许把临时兼容层 merge 进去
+
+---
+
+## 8. PR-D：dryrun sunset + 全量回归
+
+### 8.1 目标
+
+删除所有 dryrun 残留，让 `packages/linnkit/` 成为唯一真源。
+
+### 8.2 必做动作
+
+1. 删除 `packages/agent-engine-dryrun/`
+2. 删除 `src/agent/__tests__/dryrun.workspace.test.ts`
+3. 删 `vitest.config.ts` 中对 dryrun 的 exclude
+4. 删 `scripts/agent-package-boundary-guard.ts` 中的 dryrun ignore
+5. 删 `scripts/__tests__/agent-package-boundary-guard.test.ts` 里的 dryrun 豁免断言
+6. 同步 README / INTEGRATION_GUIDE / engine 文档路径
+
+### 8.3 最终验证
+
+- `npm run guard:agent-boundary`
+- `npm run lint:codename`
+- `npx tsc --noEmit -p tsconfig.json`
+- `npm test`
+- `git diff --check`
+- 桌面主流程手测：
+  - 创建对话
+  - LLM 调用
+  - 工具调用
+  - 子 agent
+  - abort
+  - persistence / history replay
+
+如果遇到 SQL 版本不匹配：
+
+1. `npm run rebuild:better:node`
+2. `npm run rebuild:better:electron`
+3. 然后重跑测试
+
+---
+
+## 9. 完成判据
+
+以下必须同时满足，才算 Phase E 完成：
+
+- [ ] `packages/linnkit/` 成为唯一 agent package 真源
+- [ ] 仓库中不再存在 `packages/agent-engine-dryrun/`
+- [ ] 仓库中不再存在消费侧 `from 'src/agent...'`
+- [ ] `src/agent/` 已从原位置移除
+- [ ] `npm run guard:agent-boundary` 通过
+- [ ] `npm run lint:codename` 通过
+- [ ] `tsc` 不高于当前 baseline
+- [ ] `npm test` 不高于当前 baseline
+- [ ] 包级 smoke 通过
+- [ ] 桌面手测主链通过
+- [ ] 文档入口改到新路径
+
+---
+
+## 10. 异常协议
+
+### A1. codemod 遇到 deep import 无法映射
+
+操作：
+
+1. 停止全仓替换
+2. 先补公开入口或修正单个消费方
+3. 给 codemod 加显式用例后再继续
+
+### A2. move 后需要长期 alias 才能运行
+
+操作：
+
+1. 不合并
+2. 回到 PR-A / PR-B，把脚本或 package 壳子补完整
+
+### A3. dryrun 删除后发现正式包 smoke 不稳
+
+操作：
+
+1. 不恢复 dryrun 双源
+2. 直接在 `packages/linnkit/` 修真源
+
+### A4. 测试碰到 SQLite / better-sqlite3 版本不匹配
+
+操作：
+
+1. `npm run rebuild:better:node`
+2. `npm run rebuild:better:electron`
+3. 再重跑
+
+### A5. 发现文档与代码冲突
+
+操作：
+
+1. 以代码与已落地测试为准
+2. 回写本 runbook / `engine/07` / `engine/README`
+
+---
+
+## 11. 执行建议
+
+最稳的起手动作不是立刻 `git mv`，而是：
+
+1. [x] **先做 PR-A**：把通用 import rewrite codemod 和测试落地
+2. [ ] **再做 PR-B**：把 `packages/linnkit/` 壳子建起来
+3. [ ] **然后再做 PR-C**：一次性真 move + 路径改写
+
+原因很简单：
+
+- 现在真正的大风险不是“搬目录”，而是 **248 处消费侧 import 的机械改写**
+- 先把脚本和测试钉牢，后面的物理迁移就是大体力活，不是脑补活
+
+---
+
+## 12. 文档同步清单
+
+Phase E 完成后至少同步：
+
+- [`engine/07-public-api-and-package-boundary.md`](./07-public-api-and-package-boundary.md)
+- [`engine/11-phase-e-hard-blockers.md`](./11-phase-e-hard-blockers.md)
+- [`engine/README.md`](./README.md)
+- [`src/agent/INTEGRATION_GUIDE.md`](/Users/tiansi/code/linnya/src/agent/INTEGRATION_GUIDE.md) 或其新路径版本
+- 根 [`README.md`](/Users/tiansi/code/linnya/README.md)

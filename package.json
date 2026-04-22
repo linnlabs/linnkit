@@ -1,0 +1,29 @@
+{
+  "name": "linnkit",
+  "version": "0.0.0-dev",
+  "private": true,
+  "type": "module",
+  "description": "Formal linnkit package shell for Phase E. Runtime source lands via git mv in PR-C.",
+  "scripts": {
+    "typecheck": "npx tsc --noEmit -p tsconfig.json",
+    "test:smoke": "npx vitest run __tests__/package.shell.test.ts"
+  },
+  "exports": {
+    ".": "./src/index.ts",
+    "./ports": "./src/ports/index.ts",
+    "./contracts": "./src/contracts/index.ts",
+    "./runtime-kernel": "./src/runtime-kernel/index.ts",
+    "./context-manager": "./src/context-manager/index.ts",
+    "./testkit": "./src/testkit/index.ts"
+  },
+  "linnkit": {
+    "phase": "E-PR-B shell",
+    "sourceOfTruth": "src/agent/docs/engine/24-phase-e-implementation-runbook.md",
+    "movePlan": "src/agent -> packages/linnkit/src",
+    "notes": [
+      "本包当前只建立正式 package 壳子，不复制第二份 src",
+      "PR-C 使用 git mv 将 src/agent 物理迁入 packages/linnkit/src",
+      "在 PR-C 完成前，不允许把本目录变成回指 src/agent 的过渡 re-export 层"
+    ]
+  }
+}
