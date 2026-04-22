@@ -1,44 +1,21 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AgentInvocationRequest } from '../../../../ports/agent-invocation';
-import type { TickPipelineContext } from '../types';
+import { createTestTickPipelineContext } from '../__tests__/createTestTickPipelineContext';
 
 const getModelByIdMock = vi.fn();
 
-function createRequest(): AgentInvocationRequest {
-  return {
-    query: '继续执行',
-    promptKey: 'default',
-    model_id: 'requested-model',
-    mode: 'agent',
-    maxSteps: 8,
-    enableTools: true,
-    availableTools: ['tool_a'],
-  };
-}
-
-function createContext(): TickPipelineContext {
-  const request = createRequest();
-  return {
-    input: {
-      request,
-      history: [],
-      stream: false,
+function createContext() {
+  return createTestTickPipelineContext({
+    request: {
+      model_id: 'requested-model',
+      enableTools: true,
+      availableTools: ['tool_a'],
     },
-    newEvents: [],
-    request,
-    history: [],
-    forceFinalAnswer: false,
-    executorLocal: {
-      stepCount: 1,
+    context: {
+      executorLocal: { stepCount: 1 },
+      conversationId: 'conv_prepare_call',
+      turnId: 'turn_prepare_call',
     },
-    modelId: '',
-    toolSchemas: [],
-    llmOptions: {},
-    llmMessages: [],
-    mode: 'agent',
-    conversationId: 'conv_prepare_call',
-    turnId: 'turn_prepare_call',
-  };
+  });
 }
 
 describe('createPrepareCallStage', () => {

@@ -75,6 +75,9 @@ describe('Gemini thought_signature 透传', () => {
       turn_id: 't2',
     });
     expect(runtime.type).toBe('final_answer');
+    if (runtime.type !== 'final_answer') {
+      throw new Error('expected final_answer event');
+    }
     expect(runtime.content).toBe('');
   });
 });

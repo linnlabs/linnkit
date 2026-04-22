@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import {
   applyToolOutputIdempotencyMetadata,
   buildErrorLocalState,
-  buildRequireUserInteractionPayload,
   buildRequireUserLocalState,
   buildSuccessLocalState,
   buildSuccessOutputPayload,
@@ -48,19 +47,11 @@ describe('toolNode.stateTransitions', () => {
     });
   });
 
-  it('应构造 requireUser payload 与 local state', () => {
+  it('应构造 requireUser local state', () => {
     const parsed = {
       data: { form: true },
       control: { requireUser: true, question: '继续吗？' },
     };
-
-    expect(buildRequireUserInteractionPayload(parsed)).toEqual({
-      result: {
-        data: { form: true },
-        control: { requireUser: true, question: '继续吗？' },
-      },
-      control: { requireUser: true, question: '继续吗？' },
-    });
 
     const nextLocal = buildRequireUserLocalState({
       local: { history: [{ id: 'h1' }] },

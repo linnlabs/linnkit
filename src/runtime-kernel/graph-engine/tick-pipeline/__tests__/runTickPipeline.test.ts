@@ -1,44 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import type { AgentInvocationRequest } from '../../../../ports/agent-invocation';
 import { runTickPipeline } from '../runTickPipeline';
-import type {
-  TickAroundMiddleware,
-  TickPipelineContext,
-  TickStage,
-} from '../types';
+import type { TickAroundMiddleware, TickStage } from '../types';
+import { createTestTickPipelineContext } from './createTestTickPipelineContext';
 
-function createRequest(): AgentInvocationRequest {
-  return {
-    query: '继续执行',
-    promptKey: 'default',
-    model_id: 'mock-model',
-    mode: 'agent',
-    maxSteps: 8,
-    enableTools: false,
-    availableTools: [],
-  };
-}
-
-function createPipelineContext(): TickPipelineContext {
-  const request = createRequest();
-  return {
-    input: {
-      request,
-      history: [],
-      stream: false,
+function createPipelineContext() {
+  return createTestTickPipelineContext({
+    context: {
+      conversationId: 'conv_tick_pipeline',
+      turnId: 'turn_tick_pipeline',
     },
-    newEvents: [],
-    request,
-    history: [],
-    forceFinalAnswer: false,
-    modelId: '',
-    toolSchemas: [],
-    llmOptions: {},
-    llmMessages: [],
-    mode: 'agent',
-    conversationId: 'conv_tick_pipeline',
-    turnId: 'turn_tick_pipeline',
-  };
+  });
 }
 
 describe('runTickPipeline', () => {

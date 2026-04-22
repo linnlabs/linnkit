@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AgentInvocationRequest } from '../../../../ports/agent-invocation';
-import type { TickPipelineContext, TickStage } from '../types';
+import type { TickStage } from '../types';
+import { createTestTickPipelineContext } from '../__tests__/createTestTickPipelineContext';
 
 const loggerWarnMock = vi.fn();
 
@@ -10,41 +10,16 @@ vi.mock('../../../../shared/logger', () => ({
   })),
 }));
 
-function createRequest(): AgentInvocationRequest {
-  return {
-    query: '继续执行',
-    promptKey: 'default',
-    model_id: 'cloud-primary-model',
-    mode: 'agent',
-    maxSteps: 8,
-    enableTools: false,
-    availableTools: [],
-  };
-}
-
-function createContext(): TickPipelineContext {
-  const request = createRequest();
-  return {
-    input: {
-      request,
-      history: [],
-      stream: false,
+function createContext() {
+  return createTestTickPipelineContext({
+    request: { model_id: 'cloud-primary-model' },
+    context: {
+      executorLocal: { stepCount: 1 },
+      modelId: 'cloud-primary-model',
+      conversationId: 'conv_model_lock',
+      turnId: 'turn_model_lock',
     },
-    newEvents: [],
-    request,
-    history: [],
-    forceFinalAnswer: false,
-    executorLocal: {
-      stepCount: 1,
-    },
-    modelId: 'cloud-primary-model',
-    toolSchemas: [],
-    llmOptions: {},
-    llmMessages: [],
-    mode: 'agent',
-    conversationId: 'conv_model_lock',
-    turnId: 'turn_model_lock',
-  };
+  });
 }
 
 describe('runModelLockMiddleware', () => {

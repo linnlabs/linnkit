@@ -53,7 +53,7 @@ describe('BaseAgentTask.buildMessages', () => {
 
     expect(messages.map((message) => message.role)).toEqual(['system', 'user', 'assistant', 'tool']);
     expect(matchedUsers).toHaveLength(1);
-    expect(messages.at(-1)).toMatchObject({
+    expect(messages[messages.length - 1]).toMatchObject({
       role: 'tool',
       type: 'tool_output',
       content: '搜索结果：linnya',
