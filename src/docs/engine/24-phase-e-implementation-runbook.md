@@ -69,14 +69,15 @@
 
 **结论**：Phase E 不需要重新设计包形状，只需要把 dryrun 里已经证实可用的 package 结构升格为正式包。
 
-### 2.3 dryrun sunset 的真实触点
+### 2.3 dryrun sunset 的真实触点（PR-D 已落地）
 
-当前与 dryrun 绑定的仓库真点位：
+历史上与 dryrun 绑定的仓库真点位（全部已在 PR-D 中清除）：
 
-- [`vitest.config.ts`](/Users/tiansi/code/linnya/vitest.config.ts) 排除了 `packages/agent-engine-dryrun/**`
-- [`scripts/agent-package-boundary-guard.ts`](/Users/tiansi/code/linnya/scripts/agent-package-boundary-guard.ts) 的 `IGNORED_RELATIVE_PREFIXES` 忽略了 `packages/agent-engine-dryrun/`
-- [`src/agent/__tests__/dryrun.workspace.test.ts`](/Users/tiansi/code/linnya/src/agent/__tests__/dryrun.workspace.test.ts) 锁住 dryrun workspace 契约
-- `scripts/__tests__/agent-package-boundary-guard.test.ts` 含 dryrun 豁免测试
+- ~~`vitest.config.ts` 排除 `packages/agent-engine-dryrun/**`~~ → 已删除该 exclude
+- ~~`scripts/agent-package-boundary-guard.ts` 的 `IGNORED_RELATIVE_PREFIXES` 忽略 `packages/agent-engine-dryrun/`~~ → 已置空数组
+- ~~`packages/linnkit/src/__tests__/dryrun.workspace.test.ts` 锁住 dryrun workspace 契约~~ → 已删除
+- ~~`scripts/__tests__/agent-package-boundary-guard.test.ts` 含 `exempts dry-run workspace copies` 豁免测试~~ → 已删除该用例
+- ~~`packages/agent-engine-dryrun/` 整目录~~ → 已 `git rm -r`
 
 ### 2.4 E-4 的真实改写面
 
@@ -300,20 +301,35 @@
 
 ---
 
-## 8. PR-D：dryrun sunset + 全量回归
+## 8. PR-D：dryrun sunset + 全量回归（已完成主体）
 
 ### 8.1 目标
 
 删除所有 dryrun 残留，让 `packages/linnkit/` 成为唯一真源。
 
-### 8.2 必做动作
+### 8.2 必做动作（状态：✅ 已落地，桌面手测除外）
 
-1. 删除 `packages/agent-engine-dryrun/`
-2. 删除 `src/agent/__tests__/dryrun.workspace.test.ts`
-3. 删 `vitest.config.ts` 中对 dryrun 的 exclude
-4. 删 `scripts/agent-package-boundary-guard.ts` 中的 dryrun ignore
-5. 删 `scripts/__tests__/agent-package-boundary-guard.test.ts` 里的 dryrun 豁免断言
-6. 同步 README / INTEGRATION_GUIDE / engine 文档路径
+- [x] 1. 删除 `packages/agent-engine-dryrun/`（`git rm -r`）
+- [x] 2. 删除 `packages/linnkit/src/__tests__/dryrun.workspace.test.ts`
+- [x] 3. 删 `vitest.config.ts` 中对 `packages/agent-engine-dryrun/**` 的 exclude
+- [x] 4. 清 `scripts/agent-package-boundary-guard.ts` 中 `IGNORED_RELATIVE_PREFIXES`（保留空数组作未来扩展点）
+- [x] 5. 删 `scripts/__tests__/agent-package-boundary-guard.test.ts` 里 `exempts dry-run workspace copies` 用例
+- [x] 6. 同步本 runbook / 相关文档路径
+- [ ] 7. 桌面手测主链（待用户人工跑，见 §8.3）
+
+### 8.2.x 包内端到端 smoke（PR-D 期间补强）
+
+`packages/linnkit/src/testkit/__tests__/graphLoop.endToEnd.contract.test.ts` 用最小 mock 在
+linnkit 内部跑通完整 `user → llm → tool → llm → answer` graph loop，覆盖 4 个核心场景：
+
+1. 成功路径：LLM 决策 tool → ToolNode 真实 executeTool → 回灌 → 最终答案
+2. 错误恢复：tool 返回 `{ success: false }` → ToolNode 路由回 `llm` → 兜底答案
+3. abort：已 abort 的 signal → ToolNode 抛 AbortError、`executeTool` 不被调用
+4. seam 一致：`createDefaultGraphExecutor` 与 `createGraphLoopHarness` 共用同一图调度
+
+意义：未来若有 PR 不小心破坏 testkit / runtime-kernel 的公开装配 seam，
+这组测试会在 packages/linnkit 内部第一时间挂掉，作为 agent 行为永久回归门
+（与 host 侧 `src/app-hosts/linnya/testkit/agent-harness/__tests__/graphLoop.integration.test.ts` 互补）。
 
 ### 8.3 最终验证
 
@@ -342,17 +358,17 @@
 
 以下必须同时满足，才算 Phase E 完成：
 
-- [ ] `packages/linnkit/` 成为唯一 agent package 真源
-- [ ] 仓库中不再存在 `packages/agent-engine-dryrun/`
-- [ ] 仓库中不再存在消费侧 `from 'src/agent...'`
-- [ ] `src/agent/` 已从原位置移除
-- [ ] `npm run guard:agent-boundary` 通过
-- [ ] `npm run lint:codename` 通过
-- [ ] `tsc` 不高于当前 baseline
-- [ ] `npm test` 不高于当前 baseline
-- [ ] 包级 smoke 通过
-- [ ] 桌面手测主链通过
-- [ ] 文档入口改到新路径
+- [x] `packages/linnkit/` 成为唯一 agent package 真源
+- [x] 仓库中不再存在 `packages/agent-engine-dryrun/`
+- [x] 仓库中不再存在消费侧 `from 'src/agent...'`
+- [x] `src/agent/` 已从原位置移除
+- [x] `npm run guard:agent-boundary` 通过
+- [x] `npm run lint:codename` 通过
+- [x] `tsc` 不高于当前 baseline（488，与 P1 收尾后 baseline 持平）
+- [x] `npm test` 不高于当前 baseline（PR-D 后 7 files / 12 cases，较 P1 收尾后 8/15 净改进 -1/-3）
+- [x] 包级 smoke 通过（含新增的端到端 graph loop smoke，4 个场景）
+- [ ] 桌面手测主链通过（需用户人工跑）
+- [x] 文档入口改到新路径
 
 ---
 
