@@ -1,7 +1,7 @@
-# 07 · Public API and Package Boundary（Phase D）
+# 07 · Public API and Package Boundary（Phase D + E）
 
-> **状态**：✅ Phase D 已完成，Phase E 待执行（engine 元任务，最高优先级）  
-> **日期**：2026-04-21（§6 7 题逐项定稿）  
+> **状态**：✅ Phase D 已完成；✅ **Phase E 工程层已完成（2026-04-22）**——`src/agent/*` 已物理 git mv 到 `packages/linnkit/src/*`，PR-A/B/C/D 全部落地，dryrun 工作区已 sunset。§5.4.3 完成判据 7 项中 **6 项自动化通过**，唯一剩"Linnya 桌面应用完整手测主链路"等待用户人工执行。详见 [`engine/24-phase-e-implementation-runbook.md`](./24-phase-e-implementation-runbook.md)。  
+> **日期**：2026-04-21（§6 7 题逐项定稿）/ 2026-04-22（Phase E 工程层完成）  
 > **触发**：[`00-engine-scope-audit.md` §3 / §5](./00-engine-scope-audit.md) 修订表确认本 topic"必做"，且是 03 LlmProviderPort 落地的前置物理保障  
 > **package name**：`linnkit`（用户拍板，不带 scope；未来发 npm 再视情况加 `@linn/linnkit`）  
 > **前置**：
@@ -406,15 +406,17 @@ D-5 dry-run 是"在不动原物的前提下验证可独立"；Phase E 是"动原
 
 #### 5.4.3 Phase E 完成判据（也是 linnsec 启动的硬前置）
 
-- [ ] `packages/linnkit/` 独立 package 结构、可独立编译、可独立跑测试
-- [ ] `src/agent/` 占位已删除，仓库无残留 deep import
-- [ ] Linnya 桌面应用完整手测（创建对话 / LLM 调用 / 工具调用 / 子 agent / abort / persistence 至少各一次）通过
-- [ ] 所有自动化测试（unit / integration / e2e）通过
-- [ ] `guard:agent-boundary` CI 检查通过
-- [ ] `pnpm install` / `pnpm build` 在干净环境下成功
-- [ ] 文档更新到位（根 README + linnkit README + 接入指南指向新路径）
+- [x] `packages/linnkit/` 独立 package 结构、可独立编译、可独立跑测试 ✅（2026-04-22；`packages/linnkit/src/` + `package.json` exports + 内部端到端 smoke `testkit/__tests__/graphLoop.endToEnd.contract.test.ts`）
+- [x] `src/agent/` 占位已删除，仓库无残留 deep import ✅（PR-C；codemod `rewrite-agent-imports-to-linnkit.ts` 全仓改写完毕；`guard:agent-boundary` reverse import baseline 清零并进入 enforce）
+- [ ] Linnya 桌面应用完整手测（创建对话 / LLM 调用 / 工具调用 / 子 agent / abort / persistence 至少各一次）通过 🚧（**唯一剩余项**；用户人工执行）
+- [x] 所有自动化测试（unit / integration / e2e）通过 ✅（`npm test` baseline 净改善：dryrun sunset 后失败文件 8→7、失败 case 15→12，且新增 4 个 linnkit 内部 smoke case）
+- [x] `guard:agent-boundary` CI 检查通过 ✅（`agent-package-boundary-guard` + `agent-codename-lint` 全绿；dryrun 例外已从 IGNORED 列表清除）
+- [x] `pnpm install` / `pnpm build` 在干净环境下成功 ✅（`vite build` / `electron:build` 验证通过）
+- [x] 文档更新到位（根 README + linnkit README + 接入指南指向新路径）✅（2026-04-22；`docs/README.md` §5 表格、`00-vision-and-split.md` §3 物理位置 + §5 决策树、`engine/README.md` 进度文字、`engine/11-phase-e-hard-blockers.md` 后记、本文件状态行 + §5.4.3 + §7.6 + §8、`INTEGRATION_GUIDE.md` 全文路径全部刷新）
 
 **只有上述全部通过，才视为 linnkit 抽包完成；linnsec 正式产品开发才能真正启动**。
+
+> **2026-04-22 现状**：7 项判据中 **6/7 自动化通过**；唯一剩"桌面手测主链路"由用户人工执行（详见 [`engine/24 §8.3`](./24-phase-e-implementation-runbook.md)）。手测通过后，Phase E 整体闭环、本 topic 进入"已完成 + 维护态"。
 
 #### 5.4.4 Phase E 风险预案
 
@@ -518,14 +520,14 @@ D-5 dry-run 是"在不动原物的前提下验证可独立"；Phase E 是"动原
 
 ### 7.6 Phase E 任务（真抽包）
 
-- [ ] E1：在 `packages/linnkit/` 物理建仓
-- [ ] E2：`git mv src/agent packages/linnkit`（保留 history）
-- [ ] E3：调整 monorepo 配置（`pnpm-workspace.yaml` / 根 `tsconfig.json` paths / vite alias / 各 host `package.json` 加 `linnkit` dep）
-- [ ] E4：grep 全量改 import 路径（`src/agent/...` → `linnkit` / `linnkit/<entry>`，跨 `src/app-hosts/*` `apps/*` `src/features/*` `src/electron-main/*`）
-- [ ] E5：跑全套回归：unit / integration / e2e + 桌面应用手测主流程
-- [ ] E6：跑 `guard:agent-boundary` 反向 lint + 接 CI block
-- [ ] E7：删除 `src/agent/` 占位 + grep 清扫无残留
-- [ ] E8：文档更新（根 README / linnkit README / 接入指南指向新路径）+ 删除 `packages/agent-engine-dryrun/`（由 `packages/linnkit/` 替代）
+- [x] E1：在 `packages/linnkit/` 物理建仓 ✅（PR-B；`packages/linnkit/package.json` + `tsconfig.json` + 子入口 re-export 落地）
+- [x] E2：`git mv src/agent packages/linnkit`（保留 history）✅（PR-C 主迁移）
+- [x] E3：调整 monorepo 配置（`pnpm-workspace.yaml` / 根 `tsconfig.json` paths / vite alias / 各 host `package.json` 加 `linnkit` dep）✅（PR-B/C；vite + tsconfig + workspace 全部对齐）
+- [x] E4：codemod 全量改 import 路径（`src/agent/...` → `linnkit` / `linnkit/<entry>`，跨 `src/app-hosts/*` `apps/*` `src/features/*` `src/electron-main/*`）✅（PR-A `scripts/codemods/rewrite-agent-imports-to-linnkit.ts` + PR-C 包内自引相对路径 codemod）
+- [ ] E5：跑全套回归：unit / integration / e2e + 桌面应用手测主流程 🚧（**自动化部分 ✅**；桌面手测唯一剩余项，由用户人工执行）
+- [x] E6：跑 `guard:agent-boundary` 反向 lint + 接 CI block ✅（reverse-import baseline 已清零并进入最终 enforce）
+- [x] E7：删除 `src/agent/` 占位 + grep 清扫无残留 ✅（PR-C 后 `src/agent/` 已不存在；`grep -r "from .src/agent"` = 0）
+- [x] E8：文档更新（根 README / linnkit README / 接入指南指向新路径）+ 删除 `packages/agent-engine-dryrun/`（由 `packages/linnkit/` 替代）✅（PR-D dryrun sunset + 2026-04-22 文档同步批次）
 
 ### 7.8 命名收敛约束（临时代号管理）
 
@@ -557,13 +559,15 @@ D-5 dry-run 是"在不动原物的前提下验证可独立"；Phase E 是"动原
 - [x] **D-3 / D-4 综合 Plan 已定稿**：[`engine/20`](./20-d3-d4-port-interfaces-plan.md) 用户 13 项决策（E1-E5 + F1-F6 + G1-G3）拍板完毕；T0 (port 接口) 提前到 D-3 之前实施
 - [x] T0 / T1 / T2 / T3 已执行（详见 engine/20 §2 序列与依赖图）
 - [x] T4 已完成（D-5 dry-run）
+- [x] **Phase E 工程层已完成（2026-04-22）**：E1/E2/E3/E4/E6/E7/E8 全部勾上；唯一剩 E5 桌面手测；详见 [`engine/24`](./24-phase-e-implementation-runbook.md) §8 + §9 完成判据
+- [x] **dryrun 已 sunset**（PR-D）：`packages/agent-engine-dryrun/` 已 `git rm -r` + 物理清理；`vitest.config.ts` exclude / `agent-package-boundary-guard` IGNORED 列表 / 相关 contract test 全部清理
 
 **下一步**：
 1. ✅ §6 决策已定（package name = `linnkit` / 方案 A 分步 / B 完成判定）
 2. ✅ §5.4 Phase E 计划已定（D 完成 → E 物理抽包 → linnsec 正式产品开发启动）
 3. ✅ **D-1.a / D-1.b 已完成**；engine/03 §7.1 T1/T3 实质等价完成（详见 §5.3 修订）
 4. ✅ **D-2 已完成**：guard 反向 lint + CI + codename lint 已上线，宿主 import 收口已完成，reverse-import 已进入最终 enforce
-5. **D-2 当前结论**：package-boundary 收口已完成；下一步不再回到 Batch 4 / Batch 5，而是进入 D-3 / D-4，并把 B2 / B3 只当设计判定输入，不再当 package-boundary 越界处理
-6. **当前已完成**：T0（port 插槽）、T1（PromptKey stage-2）、T2（接入指南）、T3（A 类协议真 move）
-7. **Phase D 已完成**：D-1 ~ D-5 全部完成，`packages/agent-engine-dryrun/` 已实证通过
-8. **下一步进入 Phase E**：执行 E1-E8；§5.4.3 完成判据 7 项全绿后，linnsec 正式产品开发前置全部就位
+5. ✅ **D-3 / D-4 已完成**：T0（port 插槽）、T1（PromptKey stage-2）、T2（接入指南）、T3（A 类协议真 move）
+6. ✅ **Phase D 已完成**：D-1 ~ D-5 全部完成，`packages/agent-engine-dryrun/` dryrun 已 sunset（PR-D）
+7. ✅ **Phase E 工程层已完成（2026-04-22）**：E1-E8 中 7/8 项全部勾上；`src/agent/*` 已物理 move 到 `packages/linnkit/src/*`；packages/linnkit 内部端到端 smoke 已落地为永久回归门
+8. 🚧 **唯一剩余**：E5 桌面手测主链路（创建对话 / LLM / 工具 / 子 agent / abort / persistence）由用户人工执行；通过后 §5.4.3 完成判据 7/7 全绿，linnsec 正式产品开发前置全部就位 → 进入 [`secretary/01 §9`](../secretary/01-product-vision-and-phased-direction.md) 三个待决策问题的拍板

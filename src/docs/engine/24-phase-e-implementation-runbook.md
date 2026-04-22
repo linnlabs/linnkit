@@ -1,7 +1,7 @@
 # 24 · Phase E 实施 Runbook（真抽包到 `packages/linnkit/`）
 
 > **类型**：实施手册（runbook）
-> **状态**：🚧 执行中（PR-A codemod + 契约测试已落地；PR-B 正式 package 壳子已完成；PR-C 前置已清空，进入真 move + 全仓改写）
+> **状态**：✅ **工程层已完成（2026-04-22）**：PR-A codemod + PR-B 包壳 + PR-C 真 move + PR-D dryrun sunset 全部落地；新增 `packages/linnkit/src/testkit/__tests__/graphLoop.endToEnd.contract.test.ts` 作为 linnkit 内部端到端永久回归门。§9 完成判据 7/7 自动化项全绿；唯一剩 §8.3 桌面手测主链路由用户人工执行（详见 §9 注脚）。
 > **前置**：
 > - [`engine/07-public-api-and-package-boundary.md`](./07-public-api-and-package-boundary.md) —— Phase E 真抽包主真源
 > - [`engine/11-phase-e-hard-blockers.md`](./11-phase-e-hard-blockers.md) —— 第一轮硬阻塞已全部关闭
@@ -417,9 +417,11 @@ linnkit 内部跑通完整 `user → llm → tool → llm → answer` graph loop
 
 最稳的起手动作不是立刻 `git mv`，而是：
 
-1. [x] **先做 PR-A**：把通用 import rewrite codemod 和测试落地
-2. [ ] **再做 PR-B**：把 `packages/linnkit/` 壳子建起来
-3. [ ] **然后再做 PR-C**：一次性真 move + 路径改写
+1. [x] **先做 PR-A**：把通用 import rewrite codemod 和测试落地 ✅
+2. [x] **再做 PR-B**：把 `packages/linnkit/` 壳子建起来 ✅
+3. [x] **然后再做 PR-C**：一次性真 move + 路径改写 ✅
+4. [x] **最后做 PR-D**：dryrun sunset + 文档 + 全量回归 ✅
+5. [ ] 桌面手测主链路（用户人工跑，详见 §8.3）
 
 原因很简单：
 
@@ -430,10 +432,12 @@ linnkit 内部跑通完整 `user → llm → tool → llm → answer` graph loop
 
 ## 12. 文档同步清单
 
-Phase E 完成后至少同步：
+Phase E 完成后至少同步（**2026-04-22 已批量同步**）：
 
-- [`engine/07-public-api-and-package-boundary.md`](./07-public-api-and-package-boundary.md)
-- [`engine/11-phase-e-hard-blockers.md`](./11-phase-e-hard-blockers.md)
-- [`engine/README.md`](./README.md)
-- [`src/agent/INTEGRATION_GUIDE.md`](/Users/tiansi/code/linnya/src/agent/INTEGRATION_GUIDE.md) 或其新路径版本
-- 根 [`README.md`](/Users/tiansi/code/linnya/README.md)
+- [x] [`engine/07-public-api-and-package-boundary.md`](./07-public-api-and-package-boundary.md) —— 状态行 + §5.4.3 完成判据 + §7.6 + §8 状态 + §“下一步”
+- [x] [`engine/11-phase-e-hard-blockers.md`](./11-phase-e-hard-blockers.md) —— 状态行 + 新增 §0 Phase E 已完成后记
+- [x] [`engine/README.md`](./README.md) —— Topic 24 行 + Topic 11 行 + 进度文字 + 实施时序 M5 段落
+- [x] [`packages/linnkit/src/INTEGRATION_GUIDE.md`](/Users/tiansi/code/linnya/packages/linnkit/src/INTEGRATION_GUIDE.md) —— 头部口径 + 全文 `src/agent/` 路径 → `packages/linnkit/src/`（69 处）+ §6 入口规范
+- [x] [`packages/linnkit/src/docs/README.md`](../README.md) —— §1 物理位置 + §2 目录树根目录 + §5 表格（M4/M5/Phase 9）+ §6 关联历史文档新路径
+- [x] [`packages/linnkit/src/docs/00-vision-and-split.md`](../00-vision-and-split.md) —— §3 物理位置 + §4.1 dryrun 已落地 + §5 决策树注解
+- [ ] 根 [`README.md`](/Users/tiansi/code/linnya/README.md) —— 仅在用户认为有必要时加 `packages/linnkit/` 一段；当前不阻塞

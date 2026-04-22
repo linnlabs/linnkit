@@ -13,7 +13,7 @@
 
 ### 1.1 Agent Engine
 
-- **物理位置**：当前 `src/agent/`*，未来抽成独立 package（**已定名 `linnkit`**，详见 [`engine/07-public-api-and-package-boundary.md`](./engine/07-public-api-and-package-boundary.md) §6 Q1）
+- **物理位置**：`packages/linnkit/src/`*（**Phase E 已于 2026-04-22 完成 git mv，源目录已从 `src/agent/*` 物理迁移到 `packages/linnkit/src/*`**；package 名 `linnkit`，详见 [`engine/07-public-api-and-package-boundary.md`](./engine/07-public-api-and-package-boundary.md) §6 Q1）
 - **角色**：**通用 Agent 运行平台**——graph engine、event model、tool runtime、context manager、child-run protocol、run-context、telemetry port、checkpointer 接口
 - **不属于任何产品**。任何 Agent 产品都可以装配它使用。
 - **演进原则**：每次新增能力，必须能解释"为什么所有消费者都需要"。只为某一个消费者定制的能力一律不进。
@@ -22,7 +22,7 @@
 
 ### 1.2 Linnya
 
-- **物理位置**：当前主仓库（除 `src/agent/`* 之外的部分）
+- **物理位置**：当前主仓库（除 `packages/linnkit/`* 之外的部分；历史上曾是 `src/agent/*`，Phase E 后只保留宿主装配）
 - **角色**：**桌面知识工作工作台**——文档、表格、思维导图、幻灯片、知识库、深度研究等。
 - **是 Agent Engine 的消费者之一**。
 - **对 linnsec 的角色**：通过 HTTP API 暴露能力（kb_search / create_doc / run_workflow / ...），让 linnsec 把它当作可调用的"专业工具"。
@@ -141,7 +141,7 @@
 - 候选曾包含 `linnflow / linngent / linnai`，最终决定 `linnkit`：取其"linn 系列开发套件"语义，承认它**听起来更像一个工程依赖而非 AI 产品**——这正是 engine 该有的位置感（基础设施而非品牌产品）
 - 唯一权威定义点：`engine/07-public-api-and-package-boundary.md` §6 Q1
 - 设计要求：禁止发明第二个 package 别名，避免双名长期并存
-- 已落地的预演：`packages/agent-engine-dryrun/`（`name: linnkit-dryrun`，`exports` 已用 `linnkit/*` 路径）已经在 dryrun 工作区证明这个名字能立得住
+- 历史落地预演：`packages/agent-engine-dryrun/`（`name: linnkit-dryrun`，`exports` 已用 `linnkit/*` 路径）曾在 dryrun 工作区验证这个名字能立得住；**Phase E PR-D 已 sunset 该 dryrun 工作区**（2026-04-22；其角色由 `packages/linnkit/` 真包替代，源目录、配置、guard 例外全部清理完毕）
 
 ---
 
@@ -169,22 +169,22 @@
 所有 engine topic 决策完成（2026-04-21 已完成：8 份 topic 全部决策定稿）
   │
   ▼
-M4 实施：执行需要的 engine 升级（01 / 02 / 03 / 06 / 07 D-1 / 08 / 10）
+M4 实施：执行需要的 engine 升级（01 / 02 / 03 / 06 / 07 D-1 / 08 / 10）  ✅ 2026-04-22 完成
   │
   ▼
-完成 Phase D (D-1~D-5：exports + boundary 强化 + 接入指南 + schema 治理 + dry-run)
+完成 Phase D (D-1~D-5：exports + boundary 强化 + 接入指南 + schema 治理 + dry-run)  ✅ 2026-04-22 完成
   │
   ▼
-M5 Phase E 真抽包（E1~E8：物理 git mv `src/agent` → `packages/linnkit` + 全量改 import + 回归全绿）
+M5 Phase E 真抽包（E1~E8：物理 git mv `src/agent` → `packages/linnkit` + 全量改 import + 回归全绿）  ✅ 工程层完成（2026-04-22；唯一剩桌面手测）
   │
   ▼
-§5.4.3 完成判据 7 项全绿（详见 [`engine/07 §5.4.3`](./engine/07-public-api-and-package-boundary.md)）
+§5.4.3 完成判据 7 项全绿（详见 [`engine/07 §5.4.3`](./engine/07-public-api-and-package-boundary.md)）  🚧 6/7（仅桌面手测主链待用户人工跑）
   │
   ▼
-启动 linnsec 产品开发
+启动 linnsec 产品开发  🚧 进入门口（待桌面手测通过 + `secretary/01 §9` 三个待决策问题拍板）
 ```
 
-> **2026-04-21 关键修订**：原决策树写"完成 Phase D → 抽 src/agent/* 成独立 package → 启动 linnsec"，**实际**：Phase D 只是"准备好可抽"，**Phase E 才是真抽包**——`src/agent/` 必须物理 move 到 `packages/linnkit/` 并完成全套回归验证后，才视为"linnsec 正式产品开发前置就位"。详见 [`engine/07 §5.4`](./engine/07-public-api-and-package-boundary.md)。
+> **2026-04-22 状态更新**：Phase E 工程层（PR-A codemod / PR-B 包壳 / PR-C 真 move / PR-D dryrun sunset）已全部落地，`src/agent/*` 已物理 move 到 `packages/linnkit/src/*`。`§5.4.3 完成判据`七项中**六项已自动化验证通过**（结构、占位删除、自动化测试、guard、build、文档），唯一剩"Linnya 桌面应用完整手测主链路"需要用户人工执行。详见 [`engine/24-phase-e-implementation-runbook.md §9`](./engine/24-phase-e-implementation-runbook.md)。
 
 ---
 

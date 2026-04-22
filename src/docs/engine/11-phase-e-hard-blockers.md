@@ -1,7 +1,7 @@
 # 11 · Phase E Hard Blockers
 
-> **状态**：✅ 第一轮硬阻塞已全部关闭；**B4（公开入口）已在 D-1.a/b 关闭，B1 / B5 已在 D-2 + PR-J 关闭，EventStore 的 Phase E 硬阻塞已由 engine/23 关闭，B2 / B3 已判定为 host-owned default，不再作为 Phase E blocker**
-> **日期**：2026-04-21（首版）/ 2026-04-22（D-1.a/b 落地后小幅更新）  
+> **状态**：✅ **Phase E 工程层已完成（2026-04-22）** —— 本文档转入"历史归档参考"。Phase E PR-A/B/C/D 全部落地，`src/agent/*` 已物理 move 到 `packages/linnkit/src/*`，所有列入本文档的硬阻塞均已实证关闭，无回归。详见 [`engine/24-phase-e-implementation-runbook.md §9`](./24-phase-e-implementation-runbook.md)。第一轮硬阻塞历史结论：**B4（公开入口）已在 D-1.a/b 关闭，B1 / B5 已在 D-2 + PR-J 关闭，EventStore 的 Phase E 硬阻塞已由 engine/23 关闭，B2 / B3 已判定为 host-owned default，不再作为 Phase E blocker**。
+> **日期**：2026-04-21（首版）/ 2026-04-22（D-1.a/b 落地后小幅更新；同日 Phase E 工程层全部完成，本文档转归档参考状态）  
 > **作用**：把 `engine/07` Phase E 真抽包前会卡死的硬阻塞集中列出来，避免“边搬目录边踩雷”  
 > **关联主文档**：
 > - [`07-public-api-and-package-boundary.md`](./07-public-api-and-package-boundary.md)
@@ -9,9 +9,21 @@
 
 ---
 
+## 0. Phase E 已完成后记（2026-04-22）
+
+**Phase E 工程层于 2026-04-22 全部完成**：`src/agent/*` 已物理 git mv 到 `packages/linnkit/src/*`；codemod 全仓改写 import；`packages/agent-engine-dryrun/` sunset；`packages/linnkit` 内部端到端 smoke 已落地为永久回归门。本文档列出的所有硬阻塞均**已被实施验证关闭**，详见 [`engine/24 §9`](./24-phase-e-implementation-runbook.md)。
+
+本文档保留为：
+- **历史决策审计追踪**：用于回看"Phase E 启动前我们识别了哪些硬阻塞、各自如何解除"
+- **未来抽包项目的方法论参考**：分析硬阻塞的 4 个维度（reverse import / 公开入口 / guard 缺口 / 装配缝死点）可作为下一次包提取的清单模板
+
+如果你只想知道"Phase E 现在到哪一步了"，请直接读 [`engine/24-phase-e-implementation-runbook.md`](./24-phase-e-implementation-runbook.md)。
+
+---
+
 ## 1. 结论先说
 
-当前已经从“实现阻塞一堆”收敛到“第一轮硬阻塞全部关闭”。最初那批“宿主大面积 deep import + guard 不拦”的硬阻塞已经拆掉，EventStore 这条 Phase E 硬阻塞也已完成；B2 / B3 经代码实查后确认属于宿主默认装配，不再阻塞真抽包。
+当前已经从“实现阻塞一堆”收敛到“第一轮硬阻塞全部关闭”。最初那批“宿主大面积 deep import + guard 不拦”的硬阻塞已经拆掉，EventStore 这条 Phase E 硬阻塞也已完成；B2 / B3 经代码实查后确认属于宿主默认装配，不再阻塞真抽包。**2026-04-22 补充**：Phase E PR-A/B/C/D 已全部完成，本节以下分析转为历史归档。
 
 本轮结论：
 
