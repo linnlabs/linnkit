@@ -14,13 +14,13 @@ vi.mock('../../system-reminder/rules', () => ({
   SYSTEM_REMINDER_RULES: [],
 }));
 
-vi.mock('src/agent/shared/llmAuditRecorder', () => ({
+vi.mock('../../../shared/llmAuditRecorder', () => ({
   recordBeforeContextManager: vi.fn(),
   recordAfterContextManager: vi.fn(),
   recordAfterContextManagerOnSystemReminderHit: vi.fn(),
 }));
 
-vi.mock('src/agent/shared/llmTelemetryContext', () => ({
+vi.mock('../../../shared/llmTelemetryContext', () => ({
   normalizeLlmUsage: vi.fn(),
   recordLlmCallTelemetry: vi.fn(),
 }));

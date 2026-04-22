@@ -19,7 +19,7 @@ vi.mock('src/infra/adapters/llm/adapter-factory', () => ({
   })),
 }));
 
-vi.mock('src/agent/shared/TokenCalculator', () => ({
+vi.mock('../../shared/TokenCalculator', () => ({
   TokenCalculator: {
     estimateTokens: vi.fn(() => 0),
     estimateMessagesTokens: vi.fn(() => 0),

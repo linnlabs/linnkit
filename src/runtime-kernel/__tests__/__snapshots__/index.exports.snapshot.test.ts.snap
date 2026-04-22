@@ -2,18 +2,48 @@
 
 exports[`src/agent/runtime-kernel public exports snapshot > exposes the documented runtime-kernel namespaces 1`] = `
 [
+  "AnswerNode",
+  "BaseTool",
+  "CommonParameterTypes",
   "ENGINE_ERROR_CODES",
+  "ENGINE_STATE_SCHEMA_VERSION",
+  "EventBusSubRunTracePublisher",
+  "GraphAgentExecutor",
+  "GraphExecutor",
+  "LlmCaller",
+  "LlmNode",
+  "MemoryCheckpointer",
+  "MemoryEventStore",
+  "ModelResolver",
+  "ToolNode",
+  "UserNode",
+  "WaitUserNode",
   "childRuns",
+  "computeToolIdempotencyKey",
   "createDefaultGraphExecutor",
   "createGraphLoopHarness",
+  "createMonotonicEventIdFactory",
+  "defaultPolicyEngine",
   "enrichment",
+  "ensureToolContextRuntimeCapability",
   "events",
   "execution",
+  "findCachedToolOutputByIdempotencyKey",
+  "getToolContextRuntimeBinding",
   "graph",
   "llm",
+  "normalizeToolArgs",
+  "readToolContextModelId",
+  "readToolContextPersistedHistory",
+  "readToolContextRunContext",
+  "readToolContextUserQuery",
+  "readToolContextWorkingHistory",
+  "requestEnricherRegistry",
   "runContext",
   "runSupervisor",
+  "stripRuntimeReservedToolContextPatch",
   "subrun",
+  "summarizeCheckpoint",
   "telemetry",
   "tools",
 ]
@@ -56,12 +86,16 @@ exports[`src/agent/runtime-kernel public exports snapshot > snapshots the execut
 
 exports[`src/agent/runtime-kernel public exports snapshot > snapshots the graph namespace 1`] = `
 [
+  "AnswerNode",
   "ENGINE_STATE_SCHEMA_VERSION",
   "GraphAgentExecutor",
   "GraphExecutor",
   "LlmNode",
   "MemoryCheckpointer",
   "MemoryEventStore",
+  "ToolNode",
+  "UserNode",
+  "WaitUserNode",
   "createMonotonicEventIdFactory",
   "summarizeCheckpoint",
 ]
@@ -71,6 +105,7 @@ exports[`src/agent/runtime-kernel public exports snapshot > snapshots the llm na
 [
   "LlmCaller",
   "ModelResolver",
+  "defaultPolicyEngine",
 ]
 `;
 
@@ -102,9 +137,11 @@ exports[`src/agent/runtime-kernel public exports snapshot > snapshots the teleme
 exports[`src/agent/runtime-kernel public exports snapshot > snapshots the tools namespace 1`] = `
 [
   "BaseTool",
+  "CommonParameterTypes",
   "computeToolIdempotencyKey",
   "ensureToolContextRuntimeCapability",
   "findCachedToolOutputByIdempotencyKey",
+  "getToolContextRuntimeBinding",
   "normalizeToolArgs",
   "readToolContextModelId",
   "readToolContextPersistedHistory",

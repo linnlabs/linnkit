@@ -19,7 +19,7 @@ const { getToolDefinitionMock, executeToolMock } = vi.hoisted(() => ({
   executeToolMock: vi.fn(),
 }));
 
-vi.mock('src/agent/shared/ids', () => ({
+vi.mock('../../../../shared/ids', () => ({
   generateMessageId: vi.fn(() => `msg_${Math.random().toString(16).slice(2)}`),
 }));
 

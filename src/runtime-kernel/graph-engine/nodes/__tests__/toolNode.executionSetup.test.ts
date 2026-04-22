@@ -5,7 +5,7 @@ const { getToolDefinitionMock } = vi.hoisted(() => ({
   getToolDefinitionMock: vi.fn(),
 }));
 
-vi.mock('src/agent/runtime-kernel/tools/idempotency/toolIdempotency', () => ({
+vi.mock('../../tools/idempotency/toolIdempotency', () => ({
   computeToolIdempotencyKey: vi.fn(() => 'idem_exec_setup'),
 }));
 

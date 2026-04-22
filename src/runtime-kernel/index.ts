@@ -12,9 +12,11 @@ export * as subrun from './subrun';
 export * as runSupervisor from './run-supervisor';
 export * as telemetry from './telemetry';
 
-// === 扁平 re-export（业界标准；消费侧主入口） ===
-// 与上方 namespace 共存：namespace 暴露分层结构，扁平暴露被消费符号。
-// 子 entry index.ts 控制公开面粒度；本入口仅做 1:1 透出。
+// === 扁平 re-export（业界 namespace + flat 双重暴露惯例） ===
+// 与上方 namespace 共存：namespace 暴露分层结构，扁平暴露 P1 收口的消费符号。
+// 说明：消费侧 `linnkit/runtime-kernel` 子入口直接 import `BaseTool` /
+// `ToolExecutionContext` / `ToolSchemaContext` 等大量符号，依赖此扁平入口；
+// 子 entry index.ts 控制公开面粒度，本入口仅 1:1 透出。
 export * from './tools';
 export * from './llm';
 export * from './graph-engine';

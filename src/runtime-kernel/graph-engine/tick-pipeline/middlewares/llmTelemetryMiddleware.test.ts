@@ -8,12 +8,12 @@ const recordLlmCallTelemetryMock = vi.fn();
 const estimateMessagesTokensPreciseMock = vi.fn();
 const estimateTokensPreciseMock = vi.fn();
 
-vi.mock('src/agent/shared/llmTelemetryContext', () => ({
+vi.mock('../../../../shared/llmTelemetryContext', () => ({
   normalizeLlmUsage: normalizeLlmUsageMock,
   recordLlmCallTelemetry: recordLlmCallTelemetryMock,
 }));
 
-vi.mock('src/agent/shared/TokenCalculator', () => ({
+vi.mock('../../../../shared/TokenCalculator', () => ({
   TokenCalculator: {
     estimateMessagesTokensPrecise: estimateMessagesTokensPreciseMock,
     estimateTokensPrecise: estimateTokensPreciseMock,

@@ -28,7 +28,7 @@ describe('contracts migration boundary', () => {
 
   it('removes legacy A-class subpath exports from @app/schemas package metadata', () => {
     const packageJson = JSON.parse(
-      readFileSync(new URL('../../../../packages/schemas/package.json', import.meta.url), 'utf8'),
+      readFileSync(new URL('../../../../../packages/schemas/package.json', import.meta.url), 'utf8'),
     ) as {
       exports?: Record<string, unknown>;
     };
@@ -40,23 +40,23 @@ describe('contracts migration boundary', () => {
 
   it('removes legacy A-class source files and their derived dead surfaces from packages/schemas', () => {
     expect(
-      readFileSync(new URL('../../../../packages/schemas/src/index.ts', import.meta.url), 'utf8'),
+      readFileSync(new URL('../../../../../packages/schemas/src/index.ts', import.meta.url), 'utf8'),
     ).not.toContain("./view-models");
     expect(
-      readFileSync(new URL('../../../../packages/schemas/src/index.ts', import.meta.url), 'utf8'),
+      readFileSync(new URL('../../../../../packages/schemas/src/index.ts', import.meta.url), 'utf8'),
     ).not.toContain("./runtime-models");
 
     expect(
-      existsSync(new URL('../../../../packages/schemas/src/domain-models.ts', import.meta.url)),
+      existsSync(new URL('../../../../../packages/schemas/src/domain-models.ts', import.meta.url)),
     ).toBe(false);
     expect(
-      existsSync(new URL('../../../../packages/schemas/src/runtime-events.ts', import.meta.url)),
+      existsSync(new URL('../../../../../packages/schemas/src/runtime-events.ts', import.meta.url)),
     ).toBe(false);
     expect(
-      existsSync(new URL('../../../../packages/schemas/src/view-models.ts', import.meta.url)),
+      existsSync(new URL('../../../../../packages/schemas/src/view-models.ts', import.meta.url)),
     ).toBe(false);
     expect(
-      existsSync(new URL('../../../../packages/schemas/src/runtime-models.ts', import.meta.url)),
+      existsSync(new URL('../../../../../packages/schemas/src/runtime-models.ts', import.meta.url)),
     ).toBe(false);
   });
 });

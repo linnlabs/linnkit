@@ -3,9 +3,15 @@
 exports[`src/agent/testkit public exports snapshot > exposes the documented testkit surface 1`] = `
 [
   "assertions",
+  "createDefaultGraphExecutor",
   "createGraphLoopHarness",
   "createReplayHarness",
   "createScriptedAiEngineHarness",
   "createToolContextFixture",
+  "expectFinalStepForcedTools",
+  "expectMessagesContainText",
+  "expectMessagesContainToolResult",
+  "expectRunEndedWithFinalAnswer",
+  "expectToolOutputFedBackToHistory",
 ]
 `;

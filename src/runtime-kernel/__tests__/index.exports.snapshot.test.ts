@@ -14,7 +14,9 @@ describe('src/agent/runtime-kernel public exports snapshot', () => {
     expect(symbols).not.toContain('LlmNodeState');
     expect(symbols).not.toContain('LlmNodeEventBridge');
     expect(symbols).not.toContain('toolIdempotency');
-    expect(symbols).not.toContain('MemoryCheckpointer');
+    // 注：MemoryCheckpointer / MemoryEventStore 是 testkit-grade 的 in-memory 实现，
+    // 既在 `graph` namespace 暴露（用于消费侧测试 setup），也通过扁平 re-export
+    // 出现在 runtime-kernel root；这是公开 surface 的 sugar，非内部 helper。
   });
 
   it('snapshots the graph namespace', async () => {

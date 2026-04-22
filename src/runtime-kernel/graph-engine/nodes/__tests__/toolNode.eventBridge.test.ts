@@ -18,7 +18,7 @@ vi.mock('../../../events/eventMappers', () => ({
   },
 }));
 
-vi.mock('src/agent/shared/ids', () => ({
+vi.mock('../../../../shared/ids', () => ({
   generateMessageId: generateMessageIdMock,
 }));
 
