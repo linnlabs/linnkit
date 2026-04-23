@@ -8,7 +8,6 @@ exports[`src/agent public exports snapshot > exposes the documented root public 
   "linnkitCompat",
   "ports",
   "runtimeKernel",
-  "testkit",
   "withLLMTelemetryContext",
 ]
 `;
