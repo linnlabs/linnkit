@@ -6,12 +6,12 @@
   "license": "UNLICENSED",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/linnya/linnya.git",
+    "url": "git+https://github.com/BCAutumn/Tingtalk_official_version.git",
     "directory": "packages/linnkit"
   },
-  "homepage": "https://github.com/linnya/linnya/tree/main/packages/linnkit",
+  "homepage": "https://github.com/BCAutumn/Tingtalk_official_version/tree/main/packages/linnkit",
   "bugs": {
-    "url": "https://github.com/linnya/linnya/issues"
+    "url": "https://github.com/BCAutumn/Tingtalk_official_version/issues"
   },
   "publishConfig": {
     "registry": "https://npm.pkg.github.com/",

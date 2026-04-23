@@ -216,10 +216,11 @@ S0 启动会后由 linnkit owner 执行，必须先于 S1 完成。
 - [x] **5.5a** **新建 GitHub org `linnlabs`**（GitHub UI 操作；Free plan 即可）—— 2026-04-23 落地；GitHub username `linnlabs` 可注册并已锁定，未来 `@linnlabs/linnya`、`@linnlabs/linnsy` 也都挂同 scope
 - [x] **5.5b** **走 dedicated PAT 路径**（不做仓库 transfer）—— 2026-04-23 落地：在 `BCAutumn/Tingtalk_official_version` repo settings 加 secret `LINNLABS_NPM_TOKEN`（classic PAT, scope = `repo` + `write:packages` + `read:packages`，90 天过期）；workflow yml `NODE_AUTH_TOKEN` 引用从 `secrets.GITHUB_TOKEN` 切到 `secrets.LINNLABS_NPM_TOKEN`。理由：本仓 owner 是个人账号、包 scope owner 是 org（linnlabs），repo-scoped 的 `secrets.GITHUB_TOKEN` 不能跨 owner publish。等 `linnkit` source 未来迁到 `linnlabs/linnkit` 独立仓时（同 owner），可改回 `secrets.GITHUB_TOKEN` 并删除该 PAT。
   - **PAT rotate 流程**（90 天到期或泄漏时）：①`https://github.com/settings/tokens` revoke 旧 token → ②同页面新建同 scope token → ③本地 `nano ~/.npmrc` 替换（**不要 cat / heredoc，避免泄漏到 shell history**）→ ④`https://github.com/BCAutumn/Tingtalk_official_version/settings/secrets/actions` 编辑 `LINNLABS_NPM_TOKEN` 重新粘贴 → ⑤`npm whoami --registry=https://npm.pkg.github.com/` 验证本地 → ⑥workflow_dispatch dry-run 验证 CI
-- [ ] **5.6** 在 GitHub Actions UI 触发 [`release-linnkit.yml`](../../.github/workflows/release-linnkit.yml) 一次 `workflow_dispatch` + `dry_run=true`，看 tarball 内容（已本地跑过 `npm pack --dry-run`，3.2 MB / 69 文件 / 含 RELEASE.md + 三份指南，结构正确）
-- [ ] **5.7** 打第一个 tag `linnkit-v0.1.0` → CI 自动 publish 到 `https://github.com/orgs/linnlabs/packages`
-- [ ] **5.8** 在新建的 `packages/linnsy-daemon/` 内通过 `.npmrc`（参考 [`packages/linnkit/.npmrc.example`](./.npmrc.example)）+ `"@linnlabs/linnkit": "^0.1.0"` 装一次，跑通 `linnsy doctor` 验证装配链路
-- [ ] **5.9** 同步更新 [`linnsy/02c-tech-stack.md §3`](../../linnsy/02c-tech-stack.md) 的 `package.json` 草稿，把 `"linnkit": "workspace:*"` 注释成历史，正式形态改为 `"@linnlabs/linnkit": "^0.1.0"`（草稿当前已是新形态，复核即可）
+- [x] **5.6** workflow_dispatch + `dry_run=true` 跑通 —— 2026-04-23 落地：CI run 2m 2s Success，`Publish to GitHub Packages` 步骤按预期 skipped；`https://github.com/orgs/linnlabs/packages` 仍为引导页（零包）确认 dry-run 没真发
+- [x] **5.7** 打 tag `linnkit-v0.1.0` → CI 真发 —— 2026-04-23 落地：包已上 `https://github.com/orgs/linnlabs/packages`；`npm view @linnlabs/linnkit --registry=https://npm.pkg.github.com/` 输出 `@linnlabs/linnkit@0.1.0 | UNLICENSED | deps: none | versions: 1 | latest: 0.1.0 | published by BCAutumn`，shasum + sha512 integrity 齐全
+  - **0.1.0 manifest 已知瑕疵**（不影响包可用性，下版本修）：homepage / repository.url / bugs.url 在发包当时错写为虚构的 `linnya/linnya`，0.1.1 已修正为真实仓库 `BCAutumn/Tingtalk_official_version`；GitHub Packages 不支持改已发版本 manifest，所以 0.1.0 元数据保持原样直至 0.1.1 出现
+- [ ] **5.8** 在新建的 `packages/linnsy-daemon/` 内通过 `.npmrc`（参考 [`packages/linnkit/.npmrc.example`](./.npmrc.example)）+ `"@linnlabs/linnkit": "^0.1.0"` 装一次，跑通 `linnsy doctor` 验证装配链路 —— **留待 S1 启动时执行**
+- [ ] **5.9** 同步更新 [`linnsy/02c-tech-stack.md §3`](../../linnsy/02c-tech-stack.md) 的 `package.json` 草稿，把 `"linnkit": "workspace:*"` 注释成历史，正式形态改为 `"@linnlabs/linnkit": "^0.1.0"`（草稿当前已是新形态，复核即可）—— **留待 S1 启动时执行**
 
 ---
 
@@ -245,4 +246,6 @@ S0 启动会后由 linnkit owner 执行，必须先于 S1 完成。
 - [x] S0 实施 checklist 落地
 - [x] **§5.1 ~ §5.4 工程层就位**（2026-04-23）：tsup config / build / package.json / paths-alias 双名机制 + smoke test + boundary guard 全绿
 - [x] **§5.5 凭据层就位**（2026-04-23）：`linnlabs` org 已注册 + classic PAT 已生成（90 天过期）+ 本地 `~/.npmrc` 配置 + `npm whoami` 验证为 `BCAutumn` + repo secret `LINNLABS_NPM_TOKEN` 已加 + workflow yml 切到 dedicated PAT
-- [ ] **§5.6 ~ §5.9 待手动触发**：workflow_dispatch dry-run + 首发 tag `linnkit-v0.1.0` + linnsy daemon 第一次装包验证 + 02c-tech-stack 草稿复核
+- [x] **§5.6 ~ §5.7 首发完成**（2026-04-23）：workflow_dispatch dry-run 2m 2s Success + 打 tag `linnkit-v0.1.0` 触发 CI 真发，`@linnlabs/linnkit@0.1.0` 已活在 GitHub Packages（npm view 验证 sha512 integrity 齐全；published by BCAutumn）
+- [ ] **§5.8 ~ §5.9 留待 S1 启动**：linnsy daemon 第一次装包验证 + 02c-tech-stack 草稿复核（必须在 `packages/linnsy-daemon/` 实体存在后才能做）
+- [x] **CI workflow 升级 + 0.1.0 manifest 瑕疵修正**（2026-04-23 收尾）：actions/checkout / setup-node `@v4 → @v5`（修 Node 20 deprecation warning）+ package.json 三个 URL 字段从虚构 `linnya/linnya` 改为真实 `BCAutumn/Tingtalk_official_version`（0.1.0 已带瑕疵字段无法回炉，下次 0.1.1 出现时即修正）
