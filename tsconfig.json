@@ -25,6 +25,7 @@
       "linnkit/ports": ["./src/ports/index.ts"],
       "linnkit/contracts": ["./src/contracts/index.ts"],
       "linnkit/runtime-kernel": ["./src/runtime-kernel/index.ts"],
+      "linnkit/runtime-kernel/events": ["./src/runtime-kernel/events/index.ts"],
       "linnkit/context-manager": ["./src/context-manager/index.ts"],
       "linnkit/testkit": ["./src/testkit/index.ts"],
       "@app/schemas": ["../schemas/src/index.ts"],

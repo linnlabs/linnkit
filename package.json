@@ -3,7 +3,7 @@
   "version": "0.0.0-dev",
   "private": true,
   "type": "module",
-  "description": "Formal linnkit package shell for Phase E. Runtime source lands via git mv in PR-C.",
+  "description": "Linnkit agent platform package. Phase E true extraction completed at 2026-04-22.",
   "scripts": {
     "typecheck": "npx tsc --noEmit -p tsconfig.json",
     "test:smoke": "npx vitest run __tests__/package.shell.test.ts"
@@ -13,17 +13,17 @@
     "./ports": "./src/ports/index.ts",
     "./contracts": "./src/contracts/index.ts",
     "./runtime-kernel": "./src/runtime-kernel/index.ts",
+    "./runtime-kernel/events": "./src/runtime-kernel/events/index.ts",
     "./context-manager": "./src/context-manager/index.ts",
     "./testkit": "./src/testkit/index.ts"
   },
   "linnkit": {
-    "phase": "E-PR-B shell",
-    "sourceOfTruth": "src/agent/docs/engine/24-phase-e-implementation-runbook.md",
-    "movePlan": "src/agent -> packages/linnkit/src",
+    "phase": "E-completed (engineering layer)",
+    "sourceOfTruth": "packages/linnkit/src/docs/engine/24-phase-e-implementation-runbook.md",
     "notes": [
-      "本包当前只建立正式 package 壳子，不复制第二份 src",
-      "PR-C 使用 git mv 将 src/agent 物理迁入 packages/linnkit/src",
-      "在 PR-C 完成前，不允许把本目录变成回指 src/agent 的过渡 re-export 层"
+      "Phase E 工程层已于 2026-04-22 完成；唯一剩桌面手测主链路（用户人工跑）",
+      "子入口 `./runtime-kernel/events` 是 browser-safe slim seam：仅暴露 events governance 纯函数，禁止扩展任何 Node-only 依赖",
+      "前端代码禁止从 `./runtime-kernel`（namespace 全展开入口）import，否则会把 `crypto` / `node:async_hooks` 等 Node-only 子树拖进 frontend bundle"
     ]
   }
 }
