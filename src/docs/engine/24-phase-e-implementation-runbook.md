@@ -1,7 +1,9 @@
 # 24 · Phase E 实施 Runbook（真抽包到 `packages/linnkit/`）
 
 > **类型**：实施手册（runbook）
-> **状态**：✅ **工程层已完成（2026-04-22）**：PR-A codemod + PR-B 包壳 + PR-C 真 move + PR-D dryrun sunset 全部落地；新增 `packages/linnkit/src/testkit/__tests__/graphLoop.endToEnd.contract.test.ts` 作为 linnkit 内部端到端永久回归门。§9 完成判据 7/7 自动化项全绿；唯一剩 §8.3 桌面手测主链路由用户人工执行（详见 §9 注脚）。
+> **状态**：✅✅ **彻底完成（2026-04-23）**：§9 完成判据 11/11 全绿，桌面手测主链路用户已亲手验证通过。
+> 收官期间顺手做了一波架构加固（详见 §12 收官归档清单），Phase E 至此封盘，进入维护态。
+> linnsec 正式立项前置全部就位。
 > **前置**：
 > - [`engine/07-public-api-and-package-boundary.md`](./07-public-api-and-package-boundary.md) —— Phase E 真抽包主真源
 > - [`engine/11-phase-e-hard-blockers.md`](./11-phase-e-hard-blockers.md) —— 第一轮硬阻塞已全部关闭
@@ -307,7 +309,7 @@
 
 删除所有 dryrun 残留，让 `packages/linnkit/` 成为唯一真源。
 
-### 8.2 必做动作（状态：✅ 已落地，桌面手测除外）
+### 8.2 必做动作（状态：✅ 全部完成 2026-04-23）
 
 - [x] 1. 删除 `packages/agent-engine-dryrun/`（`git rm -r`）
 - [x] 2. 删除 `packages/linnkit/src/__tests__/dryrun.workspace.test.ts`
@@ -315,7 +317,7 @@
 - [x] 4. 清 `scripts/agent-package-boundary-guard.ts` 中 `IGNORED_RELATIVE_PREFIXES`（保留空数组作未来扩展点）
 - [x] 5. 删 `scripts/__tests__/agent-package-boundary-guard.test.ts` 里 `exempts dry-run workspace copies` 用例
 - [x] 6. 同步本 runbook / 相关文档路径
-- [ ] 7. 桌面手测主链（待用户人工跑，见 §8.3）
+- [x] 7. 桌面手测主链路用户已亲手验证通过（2026-04-23）
 
 ### 8.2.x 包内端到端 smoke（PR-D 期间补强）
 
@@ -367,8 +369,11 @@ linnkit 内部跑通完整 `user → llm → tool → llm → answer` graph loop
 - [x] `tsc` 不高于当前 baseline（488，与 P1 收尾后 baseline 持平）
 - [x] `npm test` 不高于当前 baseline（PR-D 后 7 files / 12 cases，较 P1 收尾后 8/15 净改进 -1/-3）
 - [x] 包级 smoke 通过（含新增的端到端 graph loop smoke，4 个场景）
-- [ ] 桌面手测主链通过（需用户人工跑）
+- [x] 桌面手测主链通过（用户已亲手验证：创建对话 / LLM 调用 / 工具调用 / 子 agent / abort / persistence / history replay 全部正常，2026-04-23）
 - [x] 文档入口改到新路径
+
+> **判据 11/11 全绿（2026-04-23）**：Phase E 至此封盘，进入维护态。
+> 收官期间额外做了一波架构加固（详见 §12 收官归档清单 §12.2 一节）。
 
 ---
 
@@ -421,7 +426,7 @@ linnkit 内部跑通完整 `user → llm → tool → llm → answer` graph loop
 2. [x] **再做 PR-B**：把 `packages/linnkit/` 壳子建起来 ✅
 3. [x] **然后再做 PR-C**：一次性真 move + 路径改写 ✅
 4. [x] **最后做 PR-D**：dryrun sunset + 文档 + 全量回归 ✅
-5. [ ] 桌面手测主链路（用户人工跑，详见 §8.3）
+5. [x] 桌面手测主链路用户已亲手验证通过 ✅（2026-04-23）
 
 原因很简单：
 
@@ -430,14 +435,33 @@ linnkit 内部跑通完整 `user → llm → tool → llm → answer` graph loop
 
 ---
 
-## 12. 文档同步清单
+## 12. 收官归档清单
 
-Phase E 完成后至少同步（**2026-04-22 已批量同步**）：
+### 12.1 文档同步（2026-04-22 + 2026-04-23 两轮收尾完成）
 
 - [x] [`engine/07-public-api-and-package-boundary.md`](./07-public-api-and-package-boundary.md) —— 状态行 + §5.4.3 完成判据 + §7.6 + §8 状态 + §“下一步”
 - [x] [`engine/11-phase-e-hard-blockers.md`](./11-phase-e-hard-blockers.md) —— 状态行 + 新增 §0 Phase E 已完成后记
-- [x] [`engine/README.md`](./README.md) —— Topic 24 行 + Topic 11 行 + 进度文字 + 实施时序 M5 段落
+- [x] [`engine/README.md`](./README.md) —— Topic 24 行 + Topic 11 行 + 进度文字 + 实施时序 M5 段落 + §6 收官归档声明（2026-04-23）
 - [x] [`packages/linnkit/src/INTEGRATION_GUIDE.md`](/Users/tiansi/code/linnya/packages/linnkit/src/INTEGRATION_GUIDE.md) —— 头部口径 + 全文 `src/agent/` 路径 → `packages/linnkit/src/`（69 处）+ §6 入口规范
-- [x] [`packages/linnkit/src/docs/README.md`](../README.md) —— §1 物理位置 + §2 目录树根目录 + §5 表格（M4/M5/Phase 9）+ §6 关联历史文档新路径
-- [x] [`packages/linnkit/src/docs/00-vision-and-split.md`](../00-vision-and-split.md) —— §3 物理位置 + §4.1 dryrun 已落地 + §5 决策树注解
+- [x] [`packages/linnkit/src/docs/README.md`](../README.md) —— §1 物理位置 + §2 目录树根目录 + §5 表格（M4/M5/Phase 9）+ §6 关联历史文档新路径 + §7 归档与下一阶段（2026-04-23 新增）
+- [x] [`packages/linnkit/src/docs/00-vision-and-split.md`](../00-vision-and-split.md) —— §3 物理位置 + §4.1 dryrun 已落地 + §5 决策树注解 + §6 阶段终态快照（2026-04-23 新增）
+- [x] [`packages/linnkit/src/docs/secretary/README.md`](../secretary/README.md) —— §0 顶部 banner + §3 第 4 步状态升级（2026-04-23 新增）
 - [ ] 根 [`README.md`](/Users/tiansi/code/linnya/README.md) —— 仅在用户认为有必要时加 `packages/linnkit/` 一段；当前不阻塞
+
+### 12.2 Phase E 收官期"硬件升级"（2026-04-23 顺手做的架构加固）
+
+桌面手测期间陆续暴露并彻底解决的若干历史隐患，作为 Phase E 真抽包的"附赠加固"一并归档：
+
+| # | 问题域 | 现象 | 根因 | 修法 |
+|---|--------|------|------|------|
+| 1 | **bundler externalize** | `vite build` 失败：`randomUUID is not exported from 'crypto'` | `packages/linnkit/src/shared/ids.ts` 直接 `import { randomUUID } from 'crypto'`，被 Vite externalize 后浏览器路径炸 | `ids.ts` 同构化（优先 `globalThis.crypto.randomUUID()` → fallback 自实现 v4）+ 新增浏览器子入口 `linnkit/runtime-kernel/events`（不引 Node-only 依赖） |
+| 2 | **bundler externalize** | Electron 启动：`Vitest failed to access its internal state` | `packages/linnkit/src/index.ts` 中 `export * as testkit from './testkit'` 把 `vitest` 拖进了生产 bundle | 从 root entry 删除 testkit 再导出；3 个测试文件改为显式 `linnkit/testkit` 子入口；新增 `AGENT-GUARD-10-no-testkit-in-production` 规则永久守门 |
+| 3 | **codemod 漏改** | Electron 启动：`Cannot find module '../../agent/runtime-kernel/graph-engine/nodes/userNode'` | `src/electron-main/routes/index.ts` 里 4 处 `require('../../agent/...')` 是动态 require，Phase E codemod 没扫到 | 4 处全部重写为顶层 ESM `import { userNode, ... } from 'linnkit/runtime-kernel'` |
+| 4 | **boundary guard 健壮性** | guard 误报正则跳过引发的 false positive | 旧版 `agent-package-boundary-guard.ts` 用纯正则扫 import，遇到注释 / 字符串字面量 / 动态 import 时分不清 | 整体重构为 `TypeScript Compiler API` AST 遍历（`ts.createSourceFile` + `ts.isImportDeclaration` / `ts.isCallExpression`），rule 统一为 `(importPath, isStatic) => boolean`；新增对抗测试 |
+| 5 | **DB schema drift（核心）** | Electron 启动 WARN：`no such table: engine_checkpoints` / `engine_telemetry` | `DatabaseService.initialize()` 历史上只在 `user_version === 0` 时跑 `createTables()`；新加的 schema-provider 表只对**新库**生效，老库必须配对一条 migration —— DRY 违反 + 长期隐患 | (a) 先用 `v23→v24` migration 临时止血；(b) 然后做根本修复：`createTables()` 改成**每次 init 都跑**；(c) 全量审计 94 条 schema-provider DDL，确认 100% `CREATE ... IF NOT EXISTS` 幂等；(d) 全量审计 24 条 migration，把 v14/v19 两条数据回填非幂等的修成"列存在不 ALTER、UPDATE 永远跑（WHERE 兜底幂等）"；(e) 新增 `database-service.idempotent-init.test.ts`（fresh / idempotent / auto-heal 三大用例）+ `v014-v019-idempotency.test.ts`（6 用例覆盖 legacy / always-create / repeat 三场景）；(f) 重写 `migrations/README.md` §5/§6 把"schema-provider vs migration 职责分工 + migration 幂等纪律"写死 |
+| 6 | **better-sqlite3 ABI** | Electron 启动：`NODE_MODULE_VERSION 127 vs 133` | Vitest 跑 Node ABI / Electron 跑 Electron ABI，来回切环境会 ABI mismatch | `npm run rebuild:better:node` / `npm run rebuild:better:electron` 双脚本切换；约定写在 §8.3 / §A4 |
+| 7 | **dead mock 清理** | `flow.followup-tool-history.integration.test.ts` 里 `vi.mock('src/agent/shared/TokenCalculator', ...)` 不再生效 | Phase E 后路径已变，mock 落空 | 直接删除（已确认不影响测试结果） |
+
+**意义**：第 5 项是真正的"核心 architectural invariant 加固" —— 把"新加 schema-provider 表必须配对写一条 migration"这个长期 DRY 违反**从根上消除**。
+未来任何加表 / 加索引只需改 schema-provider，老库会在下次启动时被 `createTables()` 自动补齐，不再可能出现"开发机能跑、用户机器报 no such table"的事故。
+该不变式由 `database-service.idempotent-init.test.ts` 的 auto-heal 用例长期看护。

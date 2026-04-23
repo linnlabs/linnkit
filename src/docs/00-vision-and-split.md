@@ -1,5 +1,8 @@
 # 00 · 愿景与三方边界
 
+> ✅✅ **2026-04-23 阶段终态 banner**：Phase E 已**彻底完成**（包括桌面手测主链路用户亲手验证通过），三方边界从"规划态"正式落到"已交付态"。`linnkit` 真 package 已成型，已具备 linnsec 运行所需的全部基础能力，同时 Linnya 也将自然受益。
+> 本文档由"边界设计草案"切换为"已落地三方边界的稳定参考"，§5 决策树已走到最后一步，下一步是 linnsec 立项（详见 [`secretary/README.md`](./secretary/README.md)）。
+
 本文回答两个问题：
 
 1. **目标形态长什么样？**
@@ -13,7 +16,7 @@
 
 ### 1.1 Agent Engine
 
-- **物理位置**：`packages/linnkit/src/`*（**Phase E 已于 2026-04-22 完成 git mv，源目录已从 `src/agent/*` 物理迁移到 `packages/linnkit/src/*`**；package 名 `linnkit`，详见 [`engine/07-public-api-and-package-boundary.md`](./engine/07-public-api-and-package-boundary.md) §6 Q1）
+- **物理位置**：`packages/linnkit/src/`*（**Phase E 已彻底完成**：2026-04-22 完成 git mv，2026-04-23 桌面手测主链路验证通过，源目录已从 `src/agent/*` 物理迁移到 `packages/linnkit/src/*`；package 名 `linnkit`，详见 [`engine/07-public-api-and-package-boundary.md`](./engine/07-public-api-and-package-boundary.md) §6 Q1）
 - **角色**：**通用 Agent 运行平台**——graph engine、event model、tool runtime、context manager、child-run protocol、run-context、telemetry port、checkpointer 接口
 - **不属于任何产品**。任何 Agent 产品都可以装配它使用。
 - **演进原则**：每次新增能力，必须能解释"为什么所有消费者都需要"。只为某一个消费者定制的能力一律不进。
@@ -175,20 +178,48 @@ M4 实施：执行需要的 engine 升级（01 / 02 / 03 / 06 / 07 D-1 / 08 / 10
 完成 Phase D (D-1~D-5：exports + boundary 强化 + 接入指南 + schema 治理 + dry-run)  ✅ 2026-04-22 完成
   │
   ▼
-M5 Phase E 真抽包（E1~E8：物理 git mv `src/agent` → `packages/linnkit` + 全量改 import + 回归全绿）  ✅ 工程层完成（2026-04-22；唯一剩桌面手测）
+M5 Phase E 真抽包（E1~E8：物理 git mv `src/agent` → `packages/linnkit` + 全量改 import + 回归全绿）  ✅✅ 彻底完成（2026-04-23）
   │
   ▼
-§5.4.3 完成判据 7 项全绿（详见 [`engine/07 §5.4.3`](./engine/07-public-api-and-package-boundary.md)）  🚧 6/7（仅桌面手测主链待用户人工跑）
+§5.4.3 完成判据 11/11 全绿（详见 [`engine/07 §5.4.3`](./engine/07-public-api-and-package-boundary.md)）  ✅✅ 全部通过（桌面手测主链路用户已亲手验证）
   │
   ▼
-启动 linnsec 产品开发  🚧 进入门口（待桌面手测通过 + `secretary/01 §9` 三个待决策问题拍板）
+启动 linnsec 产品开发  🚧 立项就位（前置已全部满足，待 [`secretary/01 §9`](./secretary/01-product-vision-and-phased-direction.md) 三个待决策问题拍板即可启动 Phase 1）
 ```
 
-> **2026-04-22 状态更新**：Phase E 工程层（PR-A codemod / PR-B 包壳 / PR-C 真 move / PR-D dryrun sunset）已全部落地，`src/agent/*` 已物理 move 到 `packages/linnkit/src/*`。`§5.4.3 完成判据`七项中**六项已自动化验证通过**（结构、占位删除、自动化测试、guard、build、文档），唯一剩"Linnya 桌面应用完整手测主链路"需要用户人工执行。详见 [`engine/24-phase-e-implementation-runbook.md §9`](./engine/24-phase-e-implementation-runbook.md)。
+> **2026-04-23 阶段终态**：Phase E 已**彻底完成**。`§5.4.3 完成判据 11/11` 全绿，含桌面手测主链路（创建对话 / LLM 调用 / 工具调用 / 子 agent / abort / persistence / history replay 全部正常，用户亲手验证）。收官期顺手做了 7 项"硬件升级"（bundler externalize / boundary guard AST 重构 / DB createTables-always 架构加固 等），详见 [`engine/24-phase-e-implementation-runbook.md §12.2`](./engine/24-phase-e-implementation-runbook.md)。
 
 ---
 
-## 6. 状态
+## 6. 阶段终态快照（2026-04-23）
 
-- 本文档随讨论推进持续更新
+> 本节冻结当前已落地的三方现状，作为后续 linnsec 立项的稳定参考。
+
+### 6.1 三方代码资产现状
+
+| 资产 | 物理位置 | 状态 | 公开入口 |
+|------|---------|------|---------|
+| **Agent Engine** | `packages/linnkit/src/`* | ✅✅ 真 package 已成型 | 4 个稳定子入口（`linnkit` root / `linnkit/runtime-kernel` / `linnkit/context-manager` / `linnkit/testkit`）+ 1 个浏览器子入口（`linnkit/runtime-kernel/events`） |
+| **Linnya** | 主仓库去 `packages/*` 后剩余部分 | ✅ 已成功迁移到消费 `linnkit` | 桌面 Electron 应用（含主流程手测验证） |
+| **linnsec** | 暂未独立建仓 | 🚧 立项就位，待第一阶段问题拍板 | 详见 [`secretary/`](./secretary/README.md) |
+
+### 6.2 已落地的"engine 主升级清单"
+
+详见 [`engine/README.md §6.1`](./engine/README.md)。一句话：linnkit 已具备 linnsec 运行所需的全部基础能力（多 provider LLM / RunHandle / Checkpointer / EventStore / Telemetry / 工具并行 / 跨切面错误模型），Linnya 也同步受益。
+
+### 6.3 收官期的"硬件加固"
+
+详见 [`engine/24-phase-e-implementation-runbook.md §12.2`](./engine/24-phase-e-implementation-runbook.md)。其中第 5 项 `DatabaseService.createTables-always` 架构加固消除了"新加表必须配对写 migration"的长期 DRY 违反，未来加表只需改 schema-provider，老库自动补齐。
+
+### 6.4 文档归档约定
+
+- `engine/` 子目录冻结为**现状参考**，不再持续 living-doc 维护；任何后续改动只在对应 topic **末尾追加 changelog 条目**
+- `secretary/` 子目录从"调研归档" → "linnsec 立项工作面"
+- 本文档（`00-vision-and-split.md`）作为三方边界稳定参考保留，仅在三方关系本身发生本质变化时才更新
+
+---
+
+## 7. 状态
+
+- 本文档已切换为"阶段终态稳定参考"
 - 任何对"三方边界"的修改必须先改本文档，再改对应 topic 文档
