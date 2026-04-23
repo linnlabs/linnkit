@@ -1,4 +1,4 @@
-# `@linnya/linnkit` publish whitelist 已通过 package.json#files 控制（dist + 三份指南 .md + RELEASE.md）。
+# `@linnlabs/linnkit` publish whitelist 已通过 package.json#files 控制（dist + 三份指南 .md + RELEASE.md）。
 # 这里再加一道兜底黑名单，避免误把开发期文件打进 tarball。
 # 任何变动必须同时同步 packages/linnkit/__tests__/package.shell.test.ts 中的 files 断言。
 

@@ -1,7 +1,7 @@
 import { defineConfig } from 'tsup';
 
 /**
- * tsup build config for `@linnya/linnkit`.
+ * tsup build config for `@linnlabs/linnkit`.
  *
  * 6 个稳定公开子入口（与 package.json#exports 1:1）：
  *   .                       → dist/index.{js,cjs,d.ts}

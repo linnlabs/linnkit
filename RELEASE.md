@@ -2,21 +2,22 @@
 
 > **状态**：✅ 0.1.0 工程层就位（2026-04-23）；剩 §5 checklist 的 token / tag / 首发动作尚未触发
 > **拍板背景**：linnsy 准备独立建仓，必须有"linnsy 通过包管理器装 linnkit"的稳定路径。本文是这条路径的**单一权威**。
-> **目标**：让任意外部仓库（首先是 linnsy）能用 `npm install @linnya/linnkit` 装到一份**编译后的、版本化的** linnkit。
+> **目标**：让任意外部仓库（首先是 linnsy）能用 `npm install @linnlabs/linnkit` 装到一份**编译后的、版本化的** linnkit。
 >
 > **修订记录**：
 > - 2026-04-23 v0：立项 + 规格草稿（拍板表 + 草拟 customConditions 双入口方案）
 > - 2026-04-23 v1：工程层全部落地。**关键修订**：dev 体验改用 **paths/alias 平行别名**（`linnkit*` + `@linnya/linnkit*` 两组同时登记），而非 `customConditions: ["linnya-dev"]` —— 因为 linnya 主仓本就不通过 node_modules 解析 linnkit，而是靠 `tsconfig.paths` + `vite.alias` + `vitest.alias` 直读 src，customConditions 在这条路径上不会生效。详见 §1.3。
 > - 2026-04-23 v2：**架构归位**——把 `LlmCallOptions` / `ToolCallChunk` / `LlmResponseContent` / `LlmRetryConfig` / `ToolCall` 5 个 AI 引擎协议 type 从 `runtime-kernel/llm/caller.types.ts`（实现层）搬到 `ports/ai-engine.types.ts`（协议层）。原位置改为从 `../../ports` barrel re-export，保持 `llm.LlmCallOptions` namespace 访问语法不变。效果：`ports ⇄ runtime-kernel` 反向循环依赖彻底消除，rollup dts 打包层不再有 circular 警告；`LlmCaller` 全部 47 个单测 + linnya 主仓 boundary guard / harness integration test 全绿。
+> - 2026-04-23 v3：**scope 重选 `@linnya` → `@linnlabs`**。发包前置检查时实测发现 v0 拍板表里"`@linnya` org 已存在"是错的——`github.com/linnya` 是一个 2016 年注册、2018 年后废弃的个人 user 账号（type=User，name="linnya network"），不属于自己；同时 `@linn` 这个最干净的总品牌 scope 被英国 Hi-Fi 公司 Linn Products（github.com/linn，verified org，2014 注册）永久占用。新拍板：用 `@linnlabs`（GitHub username 可注册，命名学上明确表达 "linn 系列总品牌伞"），未来 `@linnlabs/linnya`、`@linnlabs/linnsy` 也都挂同一 scope。所有出现 `@linnya/linnkit` 的位置（包名、tsconfig paths、vite/vitest alias、shell test、CI workflow scope、各种文档表格）一并替换为 `@linnlabs/linnkit`，旧名 `linnkit*` 别名仍保留，linnya 主仓 ~170 处 `import 'linnkit'` 零改动。详见 §0 拍板表 + §1.3。
 
 ---
 
-## 0. 拍板表（2026-04-23）
+## 0. 拍板表（2026-04-23 v3）
 
 | 维度 | 选择 | 理由 |
 |------|------|------|
-| **包名** | `@linnya/linnkit`（scoped）| scope 占位防冲突；与 GitHub Packages org 天然对齐；未来发公开 npm 也不会被现有 `linnkit` 名字阻挡 |
-| **registry** | **GitHub Packages**（私有 scope）| 免费；不必承诺公开 API 稳定；`@linnya` org 已存在；CI 一条 token 搞定 |
+| **包名** | `@linnlabs/linnkit`（scoped）| scope `@linnlabs` 是 linn 系列总品牌伞（不是单一产品名），未来 linnya / linnsy 都挂同 scope；`@linn`（被音响公司占）/ `@linnya`（被废弃 user 占）实测都不可注册 |
+| **registry** | **GitHub Packages**（私有 scope）| 免费；不必承诺公开 API 稳定；`linnlabs` org 待新建（GitHub username 经探测可用）；CI 一条 token 搞定 |
 | **何时发** | **S0 阶段**（在 S1 启动**前**完成 0.1.0 首发）| 用户拍板：S0 启动会后立刻把 build/dist/publish 全链路打通；linnsy daemon 第一次 install 就走 registry，不再走 workspace |
 | **当前版本** | `0.1.0`（首发）| 0.x = pre-release 期，不承诺 semver minor 兼容性，只承诺 patch 兼容；任何"加新 export / 改既有签名"都 bump minor |
 | **稳定性边界** | 公开面 = `package.json#exports` 的 6 个子入口（详见 §3）| 任何不在 exports 里的内部模块都不算 public API；接入方深 import 视为越界 |
@@ -57,7 +58,7 @@
 
 要点：
 
-- `name`：`@linnya/linnkit`
+- `name`：`@linnlabs/linnkit`
 - `version`：`0.1.0`
 - 不再设 `private`
 - `type`：`module`；`main` / `module` / `types` 都指 `./dist/index.{cjs,js,d.ts}`
@@ -80,30 +81,30 @@
 | [`vite.config.mjs#resolve.alias`](../../vite.config.mjs) | electron renderer 运行时 |
 | [`vitest.config.ts#resolve.alias`](../../vitest.config.ts) | 单测运行时 |
 
-所以 `customConditions: ["linnya-dev"]` 这种 conditional exports 方案在 linnya 这条路径上**不会被触发**。`exports` 字段只在 Node/打包器走 `node_modules/@linnya/linnkit/package.json` 时才生效，而 linnya 根本不读它。
+所以 `customConditions: ["linnya-dev"]` 这种 conditional exports 方案在 linnya 这条路径上**不会被触发**。`exports` 字段只在 Node/打包器走 `node_modules/@linnlabs/linnkit/package.json` 时才生效，而 linnya 根本不读它。
 
 正确的做法：**两套别名同时登记到同一份 src**。
 
-linnya 三处 alias 在 `linnkit*` 系列的基础上，**平行**加一份 `@linnya/linnkit*`：
+linnya 三处 alias 在 `linnkit*` 系列的基础上，**平行**加一份 `@linnlabs/linnkit*`：
 
 | 别名（旧） | 别名（新真包名） | 解析到 |
 |------------|------------------|--------|
-| `linnkit` | `@linnya/linnkit` | `packages/linnkit/src/index.ts` |
-| `linnkit/ports` | `@linnya/linnkit/ports` | `packages/linnkit/src/ports/index.ts` |
-| `linnkit/contracts` | `@linnya/linnkit/contracts` | `packages/linnkit/src/contracts/index.ts` |
-| `linnkit/runtime-kernel` | `@linnya/linnkit/runtime-kernel` | `packages/linnkit/src/runtime-kernel/index.ts` |
-| `linnkit/runtime-kernel/events` | `@linnya/linnkit/runtime-kernel/events` | `packages/linnkit/src/runtime-kernel/events/index.ts`（**前缀必须排在 `runtime-kernel` 之前**，否则被前缀劫持，把 Node-only 子树拖进 frontend bundle） |
-| `linnkit/context-manager` | `@linnya/linnkit/context-manager` | `packages/linnkit/src/context-manager/index.ts` |
-| `linnkit/testkit` | `@linnya/linnkit/testkit` | `packages/linnkit/src/testkit/index.ts` |
+| `linnkit` | `@linnlabs/linnkit` | `packages/linnkit/src/index.ts` |
+| `linnkit/ports` | `@linnlabs/linnkit/ports` | `packages/linnkit/src/ports/index.ts` |
+| `linnkit/contracts` | `@linnlabs/linnkit/contracts` | `packages/linnkit/src/contracts/index.ts` |
+| `linnkit/runtime-kernel` | `@linnlabs/linnkit/runtime-kernel` | `packages/linnkit/src/runtime-kernel/index.ts` |
+| `linnkit/runtime-kernel/events` | `@linnlabs/linnkit/runtime-kernel/events` | `packages/linnkit/src/runtime-kernel/events/index.ts`（**前缀必须排在 `runtime-kernel` 之前**，否则被前缀劫持，把 Node-only 子树拖进 frontend bundle） |
+| `linnkit/context-manager` | `@linnlabs/linnkit/context-manager` | `packages/linnkit/src/context-manager/index.ts` |
+| `linnkit/testkit` | `@linnlabs/linnkit/testkit` | `packages/linnkit/src/testkit/index.ts` |
 
 效果：
 
 - linnya 主仓 ~170 处 `import 'linnkit'` / `import 'linnkit/...'` **零成本保留**（兼容旧名）
-- 新代码、`linnsy` daemon、任何外部消费者都用真包名 `@linnya/linnkit`
+- 新代码、`linnsy` daemon、任何外部消费者都用真包名 `@linnlabs/linnkit`
 - 两组别名指向同一份 src，dev 体验完全一致
-- `package.shell.test.ts` 同时断言两组 alias 的存在，删旧别名前必须先 codemod 把全部 `import 'linnkit'` → `import '@linnya/linnkit'`
+- `package.shell.test.ts` 同时断言两组 alias 的存在，删旧别名前必须先 codemod 把全部 `import 'linnkit'` → `import '@linnlabs/linnkit'`
 
-> **未来路径**：S1+ 任意时机做一次性 codemod 把 linnya 内全部 `linnkit*` 旧名改成 `@linnya/linnkit*`，然后从三处 alias 删掉旧条目，保留单一名字。这是独立 PR，不阻塞 linnsy。
+> **未来路径**：S1+ 任意时机做一次性 codemod 把 linnya 内全部 `linnkit*` 旧名改成 `@linnlabs/linnkit*`，然后从三处 alias 删掉旧条目，保留单一名字。这是独立 PR，不阻塞 linnsy。
 
 ---
 
@@ -118,9 +119,9 @@ linnya 三处 alias 在 `linnkit*` 系列的基础上，**平行**加一份 `@li
 - 触发：push tag `linnkit-v*` 或 `workflow_dispatch`（手动；带 `dry_run` 选项）
 - 步骤（在 `packages/linnkit` 工作目录）：
   1. checkout
-  2. `actions/setup-node@v4`（registry-url=`https://npm.pkg.github.com/`、scope=`@linnya`，自动注入 `NODE_AUTH_TOKEN`）
+  2. `actions/setup-node@v4`（registry-url=`https://npm.pkg.github.com/`、scope=`@linnlabs`，自动注入 `NODE_AUTH_TOKEN`）
   3. 根目录 `npm ci`（拉 tsup / vitest 等）
-  4. **校验 `package.json#name === '@linnya/linnkit'`**（防误改）
+  4. **校验 `package.json#name === '@linnlabs/linnkit'`**（防误改）
   5. **校验 git tag 版本号 === `package.json#version`**（防 tag 漂移；只在 push 触发时校验）
   6. `npm run test:smoke` → `npm run build`
   7. **校验 7 份 dist 入口产物全部就位**（`index` / `ports` / `contracts` / `runtime-kernel` / `runtime-kernel/events` / `context-manager` / `testkit` 各 3 件套，缺一即红）
@@ -140,14 +141,14 @@ git tag linnkit-v0.1.1
 git push origin main linnkit-v0.1.1
 ```
 
-CI 看到 `linnkit-v*` tag 就自动校验 + build + publish 到 `https://github.com/orgs/linnya/packages`。
+CI 看到 `linnkit-v*` tag 就自动校验 + build + publish 到 `https://github.com/orgs/linnlabs/packages`。
 
 ### 2.2 消费者侧（linnsy 仓 / 任何接入方）
 
 仓库根加 `.npmrc`（参考模板：[`packages/linnkit/.npmrc.example`](./.npmrc.example)）：
 
 ```
-@linnya:registry=https://npm.pkg.github.com/
+@linnlabs:registry=https://npm.pkg.github.com/
 //npm.pkg.github.com/:_authToken=${NPM_TOKEN}
 ```
 
@@ -161,7 +162,7 @@ CI / 本地都需要 token：
 ```jsonc
 {
   "dependencies": {
-    "@linnya/linnkit": "^0.1.0"
+    "@linnlabs/linnkit": "^0.1.0"
   }
 }
 ```
@@ -174,18 +175,18 @@ CI / 本地都需要 token：
 
 | 子入口 | 用途 | 稳定性承诺 |
 |--------|------|------------|
-| `@linnya/linnkit` | 框架总入口 | 0.x = patch 兼容，minor 可能 break |
-| `@linnya/linnkit/ports` | host 必须实现的 ports | ⭐ 最核心稳定面 |
-| `@linnya/linnkit/contracts` | host ⇔ engine 共享 contracts / 类型 | ⭐ 最核心稳定面 |
-| `@linnya/linnkit/runtime-kernel` | runtime 全展开（**Node-only**）| 内部演进可能频繁；接入方装配时小心 |
-| `@linnya/linnkit/runtime-kernel/events` | events governance 纯函数（**browser-safe**） | ⭐ slim seam，**永远不允许引入 Node-only 依赖** |
-| `@linnya/linnkit/context-manager` | 上下文子系统 | preprocessor / provider 可能新增；既有签名稳定 |
-| `@linnya/linnkit/testkit` | **测试代码专用**（生产路径禁用，由 `AGENT-GUARD-10` 强制）| 测试夹具签名稳定 |
+| `@linnlabs/linnkit` | 框架总入口 | 0.x = patch 兼容，minor 可能 break |
+| `@linnlabs/linnkit/ports` | host 必须实现的 ports | ⭐ 最核心稳定面 |
+| `@linnlabs/linnkit/contracts` | host ⇔ engine 共享 contracts / 类型 | ⭐ 最核心稳定面 |
+| `@linnlabs/linnkit/runtime-kernel` | runtime 全展开（**Node-only**）| 内部演进可能频繁；接入方装配时小心 |
+| `@linnlabs/linnkit/runtime-kernel/events` | events governance 纯函数（**browser-safe**） | ⭐ slim seam，**永远不允许引入 Node-only 依赖** |
+| `@linnlabs/linnkit/context-manager` | 上下文子系统 | preprocessor / provider 可能新增；既有签名稳定 |
+| `@linnlabs/linnkit/testkit` | **测试代码专用**（生产路径禁用，由 `AGENT-GUARD-10` 强制）| 测试夹具签名稳定 |
 
 **红线**：
 
-- ❌ 接入方禁止 deep import `@linnya/linnkit/runtime-kernel/internal/...` 之类路径（exports 不暴露 = 私有）
-- ❌ 接入方生产代码禁止 import `@linnya/linnkit/testkit`（与 linnya 同款 `AGENT-GUARD-10-no-testkit-in-production` 守门规则）
+- ❌ 接入方禁止 deep import `@linnlabs/linnkit/runtime-kernel/internal/...` 之类路径（exports 不暴露 = 私有）
+- ❌ 接入方生产代码禁止 import `@linnlabs/linnkit/testkit`（与 linnya 同款 `AGENT-GUARD-10-no-testkit-in-production` 守门规则）
 - ❌ 0.x 期间不接受 "linnkit 帮我加协议" 的请求；按 [`docs/framework/04-protocol-roadmap.md`](./src/docs/framework/04-protocol-roadmap.md) 的 4 thresholds 评估
 
 ---
@@ -210,13 +211,14 @@ S0 启动会后由 linnkit owner 执行，必须先于 S1 完成。
 
 - [x] **5.1** 在 `packages/linnkit/` 加 `tsup.config.ts`，7 份入口（6 公开 + 1 events slim）都 emit cjs + esm + .d.ts
 - [x] **5.2** 跑 `npm run build`，验证 dist/ 生成完整；`./runtime-kernel/events` 的 dist 不含任何 `node:*` import（已 grep 验证）
-- [x] **5.3** 改 `package.json`：去掉 `"private"`、改 `name` 为 `@linnya/linnkit`、`version` 为 `0.1.0`、exports 指向 dist（conditional `types`/`import`/`require`）、加 `publishConfig` / `repository` / `files` / `.npmignore`
-- [x] **5.4** **paths/alias 平行别名**（替代原计划的 `customConditions`）：linnya 三处 alias（tsconfig / vite / vitest）同时登记 `linnkit*` + `@linnya/linnkit*`，`package.shell.test.ts` 守门两组别名同时存在；linnya 主仓 dev 体验零变化（已抽样 `src/tools/__tests__/registry.test.ts` 验证 alias 解析无回归）
-- [ ] **5.5** 在 GitHub `linnya` org 下创建 token（write:packages），加进当前仓库 secrets（如直接用 `secrets.GITHUB_TOKEN` 则跳过本步）
+- [x] **5.3** 改 `package.json`：去掉 `"private"`、改 `name` 为 `@linnlabs/linnkit`、`version` 为 `0.1.0`、exports 指向 dist（conditional `types`/`import`/`require`）、加 `publishConfig` / `repository` / `files` / `.npmignore`
+- [x] **5.4** **paths/alias 平行别名**（替代原计划的 `customConditions`）：linnya 三处 alias（tsconfig / vite / vitest）同时登记 `linnkit*` + `@linnlabs/linnkit*`，`package.shell.test.ts` 守门两组别名同时存在；linnya 主仓 dev 体验零变化（已抽样 `src/tools/__tests__/registry.test.ts` 验证 alias 解析无回归）
+- [ ] **5.5a** **新建 GitHub org `linnlabs`**（GitHub UI 操作；个人 plan 即可）；这是 v3 修订引入的前置步骤，因为旧拍板 `@linnya` org 实测已被他人占用
+- [ ] **5.5b** （可选）把当前仓库 transfer 到 `linnlabs/<新名>` 下，否则 CI 里 `secrets.GITHUB_TOKEN` 跨 org publish 不到 `@linnlabs/*`，得在 secrets 里加一个 dedicated PAT（write:packages）并改 workflow yml 的 secret 引用
 - [ ] **5.6** 在 GitHub Actions UI 触发 [`release-linnkit.yml`](../../.github/workflows/release-linnkit.yml) 一次 `workflow_dispatch` + `dry_run=true`，看 tarball 内容（已本地跑过 `npm pack --dry-run`，3.2 MB / 69 文件 / 含 RELEASE.md + 三份指南，结构正确）
-- [ ] **5.7** 打第一个 tag `linnkit-v0.1.0` → CI 自动 publish 到 `https://github.com/orgs/linnya/packages`
-- [ ] **5.8** 在新建的 `packages/linnsy-daemon/` 内通过 `.npmrc`（参考 [`packages/linnkit/.npmrc.example`](./.npmrc.example)）+ `"@linnya/linnkit": "^0.1.0"` 装一次，跑通 `linnsy doctor` 验证装配链路
-- [ ] **5.9** 同步更新 [`linnsy/02c-tech-stack.md §3`](../../linnsy/02c-tech-stack.md) 的 `package.json` 草稿，把 `"linnkit": "workspace:*"` 注释成历史，正式形态改为 `"@linnya/linnkit": "^0.1.0"`（草稿当前已是新形态，复核即可）
+- [ ] **5.7** 打第一个 tag `linnkit-v0.1.0` → CI 自动 publish 到 `https://github.com/orgs/linnlabs/packages`
+- [ ] **5.8** 在新建的 `packages/linnsy-daemon/` 内通过 `.npmrc`（参考 [`packages/linnkit/.npmrc.example`](./.npmrc.example)）+ `"@linnlabs/linnkit": "^0.1.0"` 装一次，跑通 `linnsy doctor` 验证装配链路
+- [ ] **5.9** 同步更新 [`linnsy/02c-tech-stack.md §3`](../../linnsy/02c-tech-stack.md) 的 `package.json` 草稿，把 `"linnkit": "workspace:*"` 注释成历史，正式形态改为 `"@linnlabs/linnkit": "^0.1.0"`（草稿当前已是新形态，复核即可）
 
 ---
 

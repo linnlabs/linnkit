@@ -1,5 +1,5 @@
 {
-  "name": "@linnya/linnkit",
+  "name": "@linnlabs/linnkit",
   "version": "0.1.0",
   "type": "module",
   "description": "linnkit · vendor-neutral Agent framework. runtime-kernel + context-manager + ports + testkit + browser-safe events seam.",
@@ -81,10 +81,10 @@
     "phase": "shippable (0.1.0 — first publishable cut)",
     "sourceOfTruth": "packages/linnkit/RELEASE.md",
     "notes": [
-      "0.1.0 是 linnkit 首个可发布版本；发到 GitHub Packages 私有 scope @linnya；详见 RELEASE.md",
+      "0.1.0 是 linnkit 首个可发布版本；发到 GitHub Packages 私有 scope @linnlabs（linn 系列总品牌 scope；@linn / @linnya GitHub username 已被他人占用，详见 RELEASE.md §0 v3 修订）；详见 RELEASE.md",
       "子入口 ./runtime-kernel/events 是 browser-safe slim seam：仅暴露 events governance 纯函数，禁止扩展任何 Node-only 依赖（如 node:async_hooks / crypto / fs）",
       "前端代码禁止从 ./runtime-kernel（namespace 全展开入口）import，否则会把 crypto / node:async_hooks 等 Node-only 子树拖进 frontend bundle",
-      "linnya monorepo 内的消费者通过 tsconfig.paths + vite/vitest alias 直读 packages/linnkit/src，零成本；外部消费者（如 linnsy daemon）通过 npm install @linnya/linnkit 走 dist 编译产物",
+      "linnya monorepo 内的消费者通过 tsconfig.paths + vite/vitest alias 直读 packages/linnkit/src，零成本；外部消费者（如 linnsy daemon）通过 npm install @linnlabs/linnkit 走 dist 编译产物",
       "0.x 版本号策略：任何加 export / 改既有签名都 bump minor（不是 patch），保证 ^0.1.0 不会偶然吃到 break；详见 RELEASE.md §4"
     ]
   }
