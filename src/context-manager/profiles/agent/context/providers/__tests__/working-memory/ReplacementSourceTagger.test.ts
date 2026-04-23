@@ -1,28 +1,17 @@
-/**
- * @file src/agent/context-manager/profiles/agent/context/providers/__tests__/working-memory/ReplacementSourceTagger.test.ts
- * @description ReplacementSourceTagger 单元测试
- *
- * 运行测试:
- * npx tsx src/agent/context-manager/profiles/agent/context/providers/__tests__/working-memory/ReplacementSourceTagger.test.ts
- */
+import { describe, expect, it } from 'vitest';
 
-import { describe } from 'vitest';
-describe.skip('TODO: 恢复历史测试（tsx-script 风格，未接入 vitest）', () => { /* see git history */ });
-
-import { ReplacementSourceTagger } from '../../working-memory/ReplacementSourceTagger';
-import type { MessageProcessingState } from '../../base';
 import type { AiMessage } from '../../../../../../../contracts';
+import type { MessageProcessingState } from '../../base';
+import { ReplacementSourceTagger } from '../../working-memory/ReplacementSourceTagger';
 
-function assert(condition: boolean, message: string) {
-  if (!condition) {
-    throw new Error(`Assertion failed: ${message}`);
-  }
-}
-
-function makeMessage(id: string, role: string, type: string): AiMessage {
+function makeMessage(
+  id: string,
+  role: AiMessage['role'],
+  type: AiMessage['type'],
+): AiMessage {
   return {
     id,
-    role: role as 'user' | 'assistant' | 'system' | 'tool',
+    role,
     type,
     content: 'content',
     timestamp: Date.now(),
@@ -39,77 +28,53 @@ function makeState(message: AiMessage, index: number): MessageProcessingState {
   };
 }
 
-async function runTests() {
-  console.log('🧪 Starting ReplacementSourceTagger tests...');
-
-  const tagger = new ReplacementSourceTagger();
-
-  // Test 1: addReplacementSources
-  console.log('  Test 1: addReplacementSources');
-  {
+describe('ReplacementSourceTagger', () => {
+  it('adds replacement source ids with deduplication', () => {
+    const tagger = new ReplacementSourceTagger();
     const state = makeState(makeMessage('m1', 'assistant', 'final_answer'), 0);
-    tagger.addReplacementSources(state, ['id1', 'id2']);
-    assert(state.replacementSourceIds?.includes('id1'), 'should include id1');
-    assert(state.replacementSourceIds?.includes('id2'), 'should include id2');
-    assert(state.replacementSourceIds?.length === 2, 'should have 2 ids');
-  }
 
-  // Test 2: addReplacementSources with deduplication
-  console.log('  Test 2: addReplacementSources with deduplication');
-  {
-    const state = makeState(makeMessage('m2', 'assistant', 'final_answer'), 0);
-    state.replacementSourceIds = ['id1'];
     tagger.addReplacementSources(state, ['id1', 'id2']);
-    assert(state.replacementSourceIds?.length === 2, 'should deduplicate ids');
-  }
+    tagger.addReplacementSources(state, ['id1', 'id3']);
 
-  // Test 3: findAdjacentState - forward
-  console.log('  Test 3: findAdjacentState - forward');
-  {
+    expect(state.replacementSourceIds).toEqual(['id1', 'id2', 'id3']);
+  });
+
+  it('finds adjacent states in both directions and returns null when missing', () => {
+    const tagger = new ReplacementSourceTagger();
     const states = [
       makeState(makeMessage('m1', 'user', 'user_input'), 0),
       makeState(makeMessage('m2', 'assistant', 'tool_calls'), 1),
       makeState(makeMessage('m3', 'tool', 'tool_output'), 2),
       makeState(makeMessage('m4', 'assistant', 'final_answer'), 3),
     ];
-    const stateMap = new Map(states.map(s => [s.originalIndex, s]));
+    const stateMap = new Map(states.map((state) => [state.originalIndex, state]));
 
-    const found = tagger.findAdjacentState(stateMap, 2, 1, s => s.message.type === 'final_answer');
-    assert(found !== null, 'should find adjacent state');
-    assert(found!.message.id === 'm4', 'should find final_answer');
-  }
+    const forward = tagger.findAdjacentState(
+      stateMap,
+      2,
+      1,
+      (state) => state.message.type === 'final_answer',
+    );
+    const backward = tagger.findAdjacentState(
+      stateMap,
+      2,
+      -1,
+      (state) => state.message.type === 'user_input',
+    );
+    const missing = tagger.findAdjacentState(
+      stateMap,
+      0,
+      -1,
+      (state) => state.message.type === 'history_summary',
+    );
 
-  // Test 4: findAdjacentState - backward
-  console.log('  Test 4: findAdjacentState - backward');
-  {
-    const states = [
-      makeState(makeMessage('m1', 'user', 'user_input'), 0),
-      makeState(makeMessage('m2', 'assistant', 'tool_calls'), 1),
-      makeState(makeMessage('m3', 'tool', 'tool_output'), 2),
-    ];
-    const stateMap = new Map(states.map(s => [s.originalIndex, s]));
+    expect(forward?.message.id).toBe('m4');
+    expect(backward?.message.id).toBe('m1');
+    expect(missing).toBeNull();
+  });
 
-    const found = tagger.findAdjacentState(stateMap, 2, -1, s => s.message.type === 'user_input');
-    assert(found !== null, 'should find adjacent state');
-    assert(found!.message.id === 'm1', 'should find user_input');
-  }
-
-  // Test 5: findAdjacentState - not found
-  console.log('  Test 5: findAdjacentState - not found');
-  {
-    const states = [
-      makeState(makeMessage('m1', 'assistant', 'tool_calls'), 0),
-      makeState(makeMessage('m2', 'tool', 'tool_output'), 1),
-    ];
-    const stateMap = new Map(states.map(s => [s.originalIndex, s]));
-
-    const found = tagger.findAdjacentState(stateMap, 0, -1, s => s.message.type === 'user_input');
-    assert(found === null, 'should not find non-existent state');
-  }
-
-  // Test 6: tagReplacementSources
-  console.log('  Test 6: tagReplacementSources');
-  {
+  it('tags only the pair members and does not spread to adjacent messages', () => {
+    const tagger = new ReplacementSourceTagger();
     const states = [
       makeState(makeMessage('user1', 'user', 'user_input'), 0),
       makeState(makeMessage('tc1', 'assistant', 'tool_calls'), 1),
@@ -117,35 +82,20 @@ async function runTests() {
       makeState(makeMessage('fa1', 'assistant', 'final_answer'), 3),
     ];
 
-    const pair = [states[1], states[2]];
-    tagger.tagReplacementSources(pair, states);
+    tagger.tagReplacementSources([states[1], states[2]], states);
 
-    // Check that pair members have replacement source ids
-    assert(states[1].replacementSourceIds?.includes('tc1'), 'tool_calls should have its own id');
-    assert(states[1].replacementSourceIds?.includes('to1'), 'tool_calls should have tool_output id');
-    assert(states[2].replacementSourceIds?.includes('tc1'), 'tool_output should have tool_calls id');
-    assert(states[2].replacementSourceIds?.includes('to1'), 'tool_output should have its own id');
+    expect(states[1].replacementSourceIds).toEqual(['tc1', 'to1']);
+    expect(states[2].replacementSourceIds).toEqual(['tc1', 'to1']);
+    expect(states[0].replacementSourceIds).toBeUndefined();
+    expect(states[3].replacementSourceIds).toBeUndefined();
+  });
 
-    // 相邻 user_input / final_answer 不再扩散标记
-    assert(states[0].replacementSourceIds === undefined, 'user_input should not be tagged');
-    assert(states[3].replacementSourceIds === undefined, 'final_answer should not be tagged');
-  }
+  it('does nothing for an empty pair', () => {
+    const tagger = new ReplacementSourceTagger();
+    const state = makeState(makeMessage('m1', 'user', 'user_input'), 0);
 
-  // Test 7: tagReplacementSources with empty pair
-  console.log('  Test 7: tagReplacementSources with empty pair');
-  {
-    const states = [makeState(makeMessage('m1', 'user', 'user_input'), 0)];
-    const pair: MessageProcessingState[] = [];
+    tagger.tagReplacementSources([], [state]);
 
-    // Should not throw
-    tagger.tagReplacementSources(pair, states);
-    assert(states[0].replacementSourceIds === undefined, 'should not tag when pair is empty');
-  }
-
-  console.log('🎉 All ReplacementSourceTagger tests passed!');
-}
-
-// vitest 加载本文件时跳过自调用；npx tsx <file> 直跑时仍执行
-if (!process.env.VITEST) {
-  runTests().catch(console.error);
-}
+    expect(state.replacementSourceIds).toBeUndefined();
+  });
+});

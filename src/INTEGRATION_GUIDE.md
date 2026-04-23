@@ -1,4 +1,6 @@
-# Agent Integration Guide
+# linnkit Integration Guide
+
+> ✅✅ **2026-04-23 阶段终态 banner**：Phase E 真抽包已**彻底完成**（§9 完成判据 11/11 全绿，桌面手测主链路用户已亲手验证通过）。`linnkit` 已是稳定可装配的独立 package，下面所有例子都基于这一终态形态。
 
 这份文档回答的是一件事：
 
@@ -6,11 +8,11 @@
 
 当前真实口径先说在前面：
 
-- `packages/linnkit/src/*` 是平台本体，也是 `linnkit` 包的真源（**Phase E 已于 2026-04-22 完成物理 git mv：源目录已从历史的 agent 工作区迁到 `packages/linnkit/src/*`，本文中所有路径已统一刷新**）。
-- `src/app-hosts/linnya/*` 是 Linnya 这一个宿主实现，不是“标准答案目录”。
-- `packages/linnkit/package.json` 的 `exports` 当前稳定子入口是 `.` / `./ports` / `./runtime-kernel` / `./context-manager` / `./testkit`。
-- `D-2` 已完成 package-boundary 收口，宿主不该再 deep import `packages/linnkit/src/<sub>/<deep>`，应该统一从 `linnkit` 或 `linnkit/<entry>` 入口 import。
-- `D-3/T0` 已先把持久化与 telemetry 的 port 插槽补到 `runtime-kernel` 公开面里，所以第一版接入指南可以直接写 5 个完整例子。
+- `packages/linnkit/src/*` 是平台本体，也是 `linnkit` 包的真源（**Phase E 已于 2026-04-22 完成物理 git mv + 2026-04-23 桌面手测主链路验证全绿**）。
+- `src/app-hosts/linnya/*` 是 Linnya 这一个宿主实现，不是"标准答案目录"。
+- `packages/linnkit/package.json` 的 `exports` 当前稳定子入口是 6 个：`.` / `./ports` / `./contracts` / `./runtime-kernel` / `./runtime-kernel/events` / `./context-manager` / `./testkit`。其中 `./runtime-kernel/events` 是 **browser-safe slim seam**，`./testkit` 是 **测试专用**（生产代码 import 会被 guard 拦掉）。
+- `D-2` 已完成 package-boundary 收口（且已升级为 AST 级 guard），宿主不该再 deep import `packages/linnkit/src/<sub>/<deep>`，应该统一从 `linnkit` 或 `linnkit/<entry>` 入口 import。
+- `D-3/T0` 已先把持久化与 telemetry 的 port 插槽补到 `runtime-kernel` 公开面里，所以下面 5 个完整例子可以直接套用。
 
 一句大白话：
 
@@ -45,11 +47,13 @@ Linnya 当前的参考目录：
 
 ### 2.2 子入口
 
-- `packages/linnkit/src/package.json:7`：当前 `exports` 草案已有 `./ports`、`./runtime-kernel`、`./context-manager`、`./testkit`。
-- `packages/linnkit/src/ports/index.ts`：宿主最小调用合同。
-- `packages/linnkit/src/runtime-kernel/index.ts:1`：graph / tools / execution / events / llm / runSupervisor / telemetry 等长期依赖面。
-- `packages/linnkit/src/context-manager/index.ts`：context 与 task resolver 的兼容导出层。
-- `packages/linnkit/src/testkit/index.ts`：package-neutral 测试 primitive。
+- `packages/linnkit/package.json` 的 `exports` 字段（**真源**）：当前已收口为 6 个稳定入口：`.` / `./ports` / `./contracts` / `./runtime-kernel` / `./runtime-kernel/events` / `./context-manager` / `./testkit`。
+- `packages/linnkit/src/ports/index.ts`：宿主最小调用合同（→ `linnkit/ports`）。
+- `packages/linnkit/src/contracts/index.ts`：长期稳定 contract 定义（→ `linnkit/contracts`）。
+- `packages/linnkit/src/runtime-kernel/index.ts:1`：graph / tools / execution / events / llm / runSupervisor / telemetry 等长期依赖面（→ `linnkit/runtime-kernel`，**Node-only**）。
+- `packages/linnkit/src/runtime-kernel/events/index.ts`：browser-safe slim seam，仅 events governance 纯函数（→ `linnkit/runtime-kernel/events`，**前端必须走这个**）。
+- `packages/linnkit/src/context-manager/index.ts`：context 与 task resolver 的兼容导出层（→ `linnkit/context-manager`）。
+- `packages/linnkit/src/testkit/index.ts`：package-neutral 测试 primitive（→ `linnkit/testkit`，**测试专用**，`AGENT-GUARD-10-no-testkit-in-production` 强制守门）。
 
 ### 2.3 选择规则
 
@@ -331,15 +335,17 @@ Linnya 当前的参考目录：
 - agent/chat/task registry
 - project-specific policy
 
-## 6. D-2 之后的硬约束
+## 6. D-2 之后的硬约束（Phase E 终态加强版）
 
-`D-2` 已经把 package-boundary 门禁切到最终 enforce，所以新接入方要遵守下面几条硬规则：
+`D-2` 已经把 package-boundary 门禁切到最终 enforce，且在 Phase E 收尾期已升级为 **AST 级 guard**（基于 TypeScript Compiler API，不再用纯正则）。所以新接入方要遵守下面几条硬规则：
 
-1. 只能从 `linnkit` 根入口或公开子入口（`linnkit/ports` / `linnkit/runtime-kernel` / `linnkit/context-manager` / `linnkit/testkit`）导入。
+1. 只能从 `linnkit` 根入口或 6 个公开子入口（`linnkit/ports` / `linnkit/contracts` / `linnkit/runtime-kernel` / `linnkit/runtime-kernel/events` / `linnkit/context-manager` / `linnkit/testkit`）导入。
 2. 不能 deep import `packages/linnkit/src/<sub>/<deep>`。
 3. 不能依赖 `packages/linnkit/src/shared/logger`、`packages/linnkit/src/shared/errorClassifier`、`packages/linnkit/src/shared/TokenCalculator` 这类 internal-only 文件。
 4. 不要把你自己的 provider/tool/adapter 反向塞回 `packages/linnkit/src/*`。
 5. `promptKey` 在 ports 层是 opaque string，平台不认识你的产品菜单。
+6. **前端代码禁止 import `linnkit/runtime-kernel`**（namespace 全展开入口，含 `node:async_hooks` / `crypto` 等 Node-only 子树）。前端只能从 `linnkit/runtime-kernel/events` slim seam 取 events governance 纯函数。
+7. **生产代码（包括根 `index.ts`）禁止 import `linnkit/testkit`**。否则 `vitest` 等测试依赖会被 esbuild/tsup 打入生产 bundle（这是 Phase E 收尾期遇到过的真实事故，详见 [`docs/engine/24 §12.2`](./docs/engine/24-phase-e-implementation-runbook.md)）。`AGENT-GUARD-10-no-testkit-in-production` 强制守门。
 
 如果你违反这些规则，当前 guard/CI 会直接拦。
 

@@ -1,23 +1,28 @@
-# Agent 后端总入口
+# linnkit · Agent Engine 总入口
 
-`src/agent/` 是 Linnya 后端 Agent 主链的真实根目录。
+> ✅✅ **2026-04-23 阶段终态 banner**：Phase E 真抽包已**彻底完成**（§9 完成判据 11/11 全绿，桌面手测主链路用户已亲手验证通过）。
+> 本目录就是 `linnkit` package 的真源（`packages/linnkit/src/*`），不再有任何 `src/agent/*` 历史路径。
+>
+> **当前形态一句话**：`linnkit` 已是独立 package，具备 linnsec 运行所需的全部基础能力；同时这一轮升级也让 Linnya 自然受益于多 provider LLM / RunHandle / Checkpointer / EventStore / Telemetry / 工具并行 / 跨切面错误模型 等高级特性。
+
+`packages/linnkit/src/*` 是 Linnya 后端 Agent 主链的真实根目录，也是 `linnkit` 包的发布真源。Linnya 桌面、未来的 linnsec 秘书产品、以及任何第三方接入方，都通过 `linnkit` package 公开入口装配它。
 
 如果你只记一件事，就记这个：
 
-- `src/agent/runtime-kernel/*` 定义可复用运行时骨架
-- `src/agent/context-manager/*` 承接通用上下文子系统
+- `packages/linnkit/src/runtime-kernel/*` 定义可复用运行时骨架
+- `packages/linnkit/src/context-manager/*` 承接通用上下文子系统
 - `src/app-hosts/linnya/*` 承接已外置出的 Linnya 宿主/产品实现
-- `src/agent/testkit/*` 承接通用后端验证底座
+- `packages/linnkit/src/testkit/*` 承接通用后端验证底座
 
 后端 Agent 主链已经完成收口。旧 `src/core/*`、`src/features/conversation/flow/*`、`src/features/context-manager/*`、`src/features/agent-registry/*` 不再是权威开发入口；其中 Agent bridge 主线已删除完成。
 
-当前状态可以直接说清楚：
+当前真实状态：
 
-- `src/agent/*` 主体边界已经收口，但**还不能宣称已完成真抽包准备**
-- 当前仍缺 public exports 收口、host deep import 清理、Phase D / Phase E 全套回归
+- `packages/linnkit/src/*` 主体边界已彻底收口，**Phase E 真抽包已完成**（详见 [`docs/engine/24 §9`](./docs/engine/24-phase-e-implementation-runbook.md)）
+- public API 已收口为 6 个稳定子入口（详见 §5.2）
 - `src/app-hosts/linnya/*` 是 Linnya 作为接入方的真实宿主树
-- `packages/schemas` 当前继续作为共享 contract 层保留在外部；后续按 D-4 审计结果，再决定把 agent 自有子集并回 `linnkit`
-- 前端 / Electron 验收已通过，当前代码行为与迁移前保持一致
+- `packages/schemas` 当前继续作为共享 contract 层保留在外部；后续按 D-4 审计结果再决定是否把 agent 自有子集并回 `linnkit`
+- 前端 / Electron 验收已通过，桌面主流程手测验证全绿
 
 ---
 
@@ -45,7 +50,8 @@ Layer: `backend umbrella`
 
 位置：
 
-- `src/agent/runtime-kernel/*`
+- `packages/linnkit/src/runtime-kernel/*`
+- 公开入口：`linnkit/runtime-kernel`（Node-only 全展开）/ `linnkit/runtime-kernel/events`（browser-safe slim seam，仅 events governance 纯函数）
 
 它回答的问题是：
 
@@ -84,7 +90,8 @@ Layer: `backend umbrella`
 
 位置：
 
-- `src/agent/testkit/*`
+- `packages/linnkit/src/testkit/*`
+- 公开入口：`linnkit/testkit`（**仅测试代码可 import**；`AGENT-GUARD-10-no-testkit-in-production` 强制守门，禁止生产路径引用）
 
 这层承接：
 
@@ -116,7 +123,7 @@ Layer: `backend umbrella`
 
 位置：
 
-- `src/agent/runtime-kernel/*`
+- `packages/linnkit/src/runtime-kernel/*`
 
 这是 Agent 平台最核心的一层。它定义的不是某个产品如何接入，而是：
 
@@ -128,26 +135,27 @@ Layer: `backend umbrella`
 
 - `graph-engine/*`
   - graph loop、tick pipeline、node 执行、checkpointer、step policy
-  - 它拥有“run 如何前进”的规则
+  - 它拥有"run 如何前进"的规则
   - interactive tool 的正式暂停协议也定义在这里：写入 `pendingInteractionSpec` 后进入 `wait_user`，卡片数据从 `tool_call.arguments` 恢复
   - 这里的 `Checkpointer` 是 **engine-state 层** 的 checkpoint：保存 `EngineState`（`nodeId / pendingToolCalls / executorLocal.stepCount / local`）。它**不是**应用层"对话总结/上下文裁剪 checkpoint"——后者是宿主自己实现的 LLM 工具产物，落宿主的 `EventStore` 而不是这里。详见 §4.5
   - 它不拥有具体宿主的 SSE、持久化、registry、默认 tool 集合
 - `events/*`
   - RuntimeEvent 合同、event mapper、生命周期规则
-  - 它定义“发生了什么”，不定义“前端怎么展示”
+  - 它定义"发生了什么"，不定义"前端怎么展示"
+  - 是浏览器安全的：通过 `linnkit/runtime-kernel/events` slim seam 暴露，前端可以安全 import
 - `execution/*`
   - run sequencer、runtime 错误映射、执行侧公共收口
   - 它负责 run 级执行秩序，不负责具体业务流程
 - `llm/*`
   - caller、model resolver、streaming 规范化、LLM policy
-  - 它拥有“怎么调用模型”的平台骨架
+  - 它拥有"怎么调用模型"的平台骨架
   - 具体默认模型目录和产品策略由宿主提供
 - `tools/*`
   - tool execution context、tool ports、idempotency、artifact context
   - 它定义工具运行协议，不定义具体有哪些工具
 - `child-runs/*`
   - 内部 agent 调用协议、子 run 约束、调用面合同
-  - 它只定义协议，不负责“已注册 agent 怎么解析”
+  - 它只定义协议，不负责"已注册 agent 怎么解析"
 - `run-context/*`
   - run 过程中共享的上下文合同和最小状态
 - `enrichment/*`
@@ -156,17 +164,22 @@ Layer: `backend umbrella`
   - 子 run 相关的共享合同与小型辅助逻辑
 - `system-reminder/*`
   - runtime 级系统提醒拼装与约束
+- `run-supervisor/*`
+  - RunRegistryStore port + memory 实现 + contract 测试；RunSupervisor 本体待按需触发（详见 [`docs/secretary/README.md §4`](./docs/secretary/README.md)）
+- `telemetry/*`
+  - TelemetryPort + 4 类 kind 常量 + noop 默认实现 + contract 测试
 
 一句话：
 
-- `runtime-kernel` 拥有“Agent 平台如何运行”
-- 不拥有“Linnya 默认怎么接”
+- `runtime-kernel` 拥有"Agent 平台如何运行"
+- 不拥有"Linnya 默认怎么接"
 
 ### 3.2 `context-manager/*`
 
 位置：
 
-- `src/agent/context-manager/*`
+- `packages/linnkit/src/context-manager/*`
+- 公开入口：`linnkit/context-manager`
 
 这是 Agent 的通用上下文子系统，不再属于 Linnya 产品包。
 
@@ -175,7 +188,7 @@ Layer: `backend umbrella`
 - 历史消息怎么进入上下文窗口
 - 什么时候压缩、净化、摘要
 - working memory 怎样裁剪
-- 统一 agent pipeline 如何覆盖“可执行 agent”与“无工具对话”两种运行形态
+- 统一 agent pipeline 如何覆盖"可执行 agent"与"无工具对话"两种运行形态
 
 主要子模块：
 
@@ -190,10 +203,11 @@ Layer: `backend umbrella`
   - 这里拥有真正的 context core
 - `profiles/agent/*`
   - agent profile 的 context manager、orchestration、tasks 抽象、tools、utils、preprocessors
-  - 这里放“agent 这种 profile 的通用差异”
+  - 这里放"agent 这种 profile 的通用差异"
 - `profiles/chat/*`
   - chat 兼容层的对应实现
-  - 只承接历史兼容；长期目标是 `chat = tools-disabled agent`
+  - **只承接历史兼容；长期目标是 `chat = tools-disabled agent`**
+  - chat 兼容层冻结计划详见 [`docs/secretary/README.md §4`](./docs/secretary/README.md)（linnsec 立项前 sprint 的 P1 项）
 
 它不拥有的东西：
 
@@ -208,7 +222,8 @@ Layer: `backend umbrella`
 
 位置：
 
-- `src/agent/ports/*`
+- `packages/linnkit/src/ports/*`
+- 公开入口：`linnkit/ports`
 
 这里是 package-neutral 的宿主接入面。它们定义：
 
@@ -224,11 +239,12 @@ Layer: `backend umbrella`
 
 位置：
 
-- `src/agent/shared/*`
+- `packages/linnkit/src/shared/*`
+- **internal-only**：禁止外部 import；接入者通过 root 入口或子入口取等价能力
 
 这是 Agent 平台自己的共享基础设施层，当前主要承接：
 
-- `ids.ts`
+- `ids.ts`（同构：浏览器走 `globalThis.crypto.randomUUID()`，Node 退化路径自实现 v4，不依赖 `crypto`）
 - `logger.ts`
 - `TokenCalculator.ts`
 - `llmTelemetryContext.ts`
@@ -238,13 +254,14 @@ Layer: `backend umbrella`
 这层存在的意义是：
 
 - 把 Agent 真正内部需要的共用能力收回 package 内
-- 避免 `src/agent/*` 继续回头依赖 `src/shared/*`
+- 避免 `packages/linnkit/src/*` 继续回头依赖 `src/shared/*`
 
 ### 3.5 `testkit/*`
 
 位置：
 
-- `src/agent/testkit/*`
+- `packages/linnkit/src/testkit/*`
+- 公开入口：`linnkit/testkit`（**测试代码专用**，`AGENT-GUARD-10-no-testkit-in-production` 强制守门）
 
 这是 package-neutral 的测试底座，只保留通用夹具：
 
@@ -270,9 +287,9 @@ Layer: `backend umbrella`
 
 - `src/app-hosts/linnya/*`
 
-这不是 `src/agent/*` 的一部分，但理解整体架构时必须一起看。
+这不是 `packages/linnkit/src/*` 的一部分，但理解整体架构时必须一起看。
 
-这里承接的是 Linnya 作为“接入方”所拥有的东西：
+这里承接的是 Linnya 作为"接入方"所拥有的东西：
 
 - `adapters/*`
   - `runtime-assembly/*`
@@ -295,7 +312,7 @@ Layer: `backend umbrella`
 
 一句话：
 
-- `src/agent/*` 负责平台能力
+- `packages/linnkit/src/*` 负责平台能力
 - `src/app-hosts/linnya/*` 负责把平台接成 Linnya
 
 ---
@@ -448,7 +465,7 @@ SSE 推送的唯一出口是 `SsePort`：
 2. `host-adapters` 可以装配 `runtime-kernel`，但不能回头定义内核协议
 3. 产品语义不得重新侵入 runtime 协议
 4. 历史兼容出口不得恢复成真实 owner
-5. 工具可以触发 child-run，但 child-run protocol 本体属于 `src/agent/*`
+5. 工具可以触发 child-run，但 child-run protocol 本体属于 `packages/linnkit/src/*`
 
 ### 5.1 Package Boundary Guard
 
@@ -456,35 +473,37 @@ SSE 推送的唯一出口是 `SsePort`：
 
 - `npm run guard:agent-boundary`
 
-它当前强制四件事：
+它已升级为 **AST 级**（基于 TypeScript Compiler API 的 `ts.createSourceFile` + AST 遍历，不再用纯正则），并强制 10 条规则，其中关键 5 条：
 
-1. `src/agent/*` 的生产代码不得直接 import `src/app-hosts/*`
-2. `src/agent/*` 的生产代码不得直接 import `src/agent/*` 之外的其他 `src/*` owner
-3. `src/agent/*` 的生产代码唯一允许的外部 workspace contract 是 `@app/schemas`
-4. `src/agent/host-adapters` / `src/agent/product-extensions` 不得重新出现
+1. `packages/linnkit/src/*` 的生产代码不得直接 import `src/app-hosts/*`
+2. `packages/linnkit/src/*` 的生产代码不得直接 import `packages/linnkit/src/*` 之外的其他 `src/*` owner
+3. `packages/linnkit/src/*` 的生产代码唯一允许的外部 workspace contract 是 `@app/schemas`
+4. `packages/linnkit/src/host-adapters` / `packages/linnkit/src/product-extensions` 不得重新出现
+5. **`AGENT-GUARD-10-no-testkit-in-production`**：生产代码（包括 root `index.ts`）禁止 import `linnkit/testkit` 或任何 `testkit/*` deep path（防止 `vitest` 等测试依赖被 esbuild/tsup 打入生产 bundle）
 
 说明：
 
 - 这是当前 package-boundary 的硬护栏
-- `packages/schemas` 当前继续作为共享协议层保留在 `src/agent/*` 外部
+- `packages/schemas` 当前继续作为共享协议层保留在 `packages/linnkit/src/*` 外部
 - 长远会按 D-4 审计把 agent 自有合同尽量收回 `linnkit`，但不和 Phase E 真抽包绑死
 
-### 5.2 当前最小 Public API
+### 5.2 当前公开 API（Phase E 终态）
 
-当前刻意只暴露最小稳定入口：
+`packages/linnkit/package.json` 的 `exports` 字段明确定义了 6 个稳定子入口：
 
-- `src/agent/index.ts`
-- `src/agent/context-manager/index.ts`
-
-当前只导出：
-
-- ports
-- ids
-- context-manager 的 shared/profile 入口
+| 子入口 | 文件 | 用途 | 浏览器安全？ |
+|--------|------|------|------------|
+| `linnkit` | `./src/index.ts` | root：ports / runtimeKernel namespace / 必要 utility | ❌ Node-only |
+| `linnkit/ports` | `./src/ports/index.ts` | 宿主接入 port 合同 | ❌ Node-only |
+| `linnkit/contracts` | `./src/contracts/index.ts` | 长期稳定的 contract 定义 | ❌ Node-only |
+| `linnkit/runtime-kernel` | `./src/runtime-kernel/index.ts` | runtime-kernel 全展开 namespace | ❌ Node-only（含 `node:async_hooks` / `crypto` 等） |
+| `linnkit/runtime-kernel/events` | `./src/runtime-kernel/events/index.ts` | **browser-safe slim seam**：仅 events governance 纯函数 | ✅ 浏览器安全 |
+| `linnkit/context-manager` | `./src/context-manager/index.ts` | context 与 task resolver 的兼容导出层 | ❌ Node-only |
+| `linnkit/testkit` | `./src/testkit/index.ts` | **测试专用**，guard 强制守门，禁止生产 import | ❌ Node-only |
 
 刻意暂不从根入口导出：
 
-- `runtime-kernel/llm`
+- `runtime-kernel/llm`（仍带宿主装配假设）
 - 其他仍带 app 基础设施假设的 runtime 子模块
 
 原因：
@@ -497,29 +516,45 @@ SSE 推送的唯一出口是 `SsePort`：
 ## 6. 详细目录树
 
 ```text
-src/agent/
-├── README.md
-├── runtime-kernel/
-│   ├── README.md
-│   ├── child-runs/
-│   ├── execution/
-│   ├── events/
-│   ├── graph-engine/
-│   ├── llm/
-│   ├── enrichment/
-│   ├── run-context/
-│   ├── subrun/
-│   ├── system-reminder/
-│   └── tools/
-├── context-manager/
-│   ├── shared/
-│   └── profiles/
-├── shared/
-├── ports/
-└── testkit/
-    ├── tool-fixtures/
-    ├── agent-harness/           # scriptedAiEngineHarness / assertions
-    └── context-harness/
+packages/linnkit/
+├── package.json                # 真 package manifest（exports / linnkit metadata）
+├── tsconfig.json
+├── vitest.config.ts
+├── README.md                   # （包级总览）
+├── __tests__/                  # 包级 smoke（package shell + tsconfig 不变量守护）
+└── src/
+    ├── README.md               # 本文件
+    ├── DEVELOPMENT_GUIDE.md
+    ├── INTEGRATION_GUIDE.md
+    ├── docs/                   # engine + secretary + 99-research-notes 全部文档
+    ├── index.ts                # root 公开入口
+    ├── runtime-kernel/
+    │   ├── README.md
+    │   ├── child-runs/         # child-run 原语、history policy、最小上下文
+    │   ├── execution/          # event-bus / sequencer / runtime error factory
+    │   ├── events/             # agentEvents / eventGovernance / eventMappers（含浏览器安全 slim seam 的真源）
+    │   ├── graph-engine/       # GraphExecutor / tick-pipeline / nodes / checkpointer / event-store
+    │   ├── llm/                # caller / modelResolver / policies / streaming
+    │   ├── enrichment/         # enrichment registry 与 patch 合同
+    │   ├── run-context/        # run trace / parent / tags
+    │   ├── run-supervisor/     # RunRegistryStore port + memory 实现 + contract 测试
+    │   ├── subrun/             # subrun trace publisher 与最小合同
+    │   ├── system-reminder/    # reminder 规则与 apply
+    │   ├── telemetry/          # TelemetryPort + noop 默认 + contract 测试
+    │   └── tools/              # tool contracts / execution context / schema context / helpers
+    ├── context-manager/
+    │   ├── README.md
+    │   ├── shared/             # context core（pipeline / preprocessors / providers / summarization）
+    │   └── profiles/
+    │       ├── agent/          # agent profile owner
+    │       └── chat/           # chat 历史兼容层（长期目标 = tools-disabled agent）
+    ├── shared/                 # internal-only：ids / logger / TokenCalculator / errorClassifier / ...
+    ├── ports/                  # agent-invocation / ai-engine / model-catalog 等接入面
+    ├── contracts/              # 长期稳定 contract 定义
+    └── testkit/
+        ├── tool-fixtures/      # 最小 tool context、I/O 夹具
+        ├── agent-harness/      # scriptedAiEngineHarness / assertions
+        └── context-harness/    # context pipeline / replay 相关 harness
 ```
 
 ```text
@@ -564,7 +599,7 @@ src/app-hosts/linnya/
 如果你改的是：
 
 - graph loop / node / event / llm / tool runtime capability
-  - 去 `runtime-kernel`
+  - 去 `packages/linnkit/src/runtime-kernel/*`
 - Flow 编排 / realtime / persistence / 默认装配
   - 去 `src/app-hosts/linnya/adapters/*`
 - agent definition / context strategy / concrete tools
@@ -580,7 +615,7 @@ src/app-hosts/linnya/
    - 这是 tools/context/product 边界，不是 graph-engine
 3. `stream_end` / SSE 行为
    - 这是 Flow host session，不是 runtime-kernel
-4. child-run 的“已注册 agent 解析”
+4. child-run 的"已注册 agent 解析"
    - 这是 host adapter，不是 child-run kernel 原语
 
 ---
@@ -596,10 +631,11 @@ src/app-hosts/linnya/
 - 前端 projection / UI 相关目录
   - 不属于后端 Agent 模块
 
-下一阶段真正要研究的，不是“再把更多旧目录搬进来”，而是：
+下一阶段真正要研究的，不是"再把更多旧目录搬进来"，而是：
 
 - 哪些 `src/app-hosts/linnya/*` 仍可继续下沉成 product-neutral shared layer
 - 哪些能力应继续保留为 Linnya 专属
+- chat 兼容层何时彻底冻结、统一收敛到"tools-disabled agent"形态（详见 [`docs/secretary/README.md §4`](./docs/secretary/README.md)）
 
 ---
 
@@ -608,37 +644,38 @@ src/app-hosts/linnya/
 ### 理解整体后端架构
 
 1. 本文档
-2. `src/agent/runtime-kernel/README.md`
-3. `src/app-hosts/linnya/adapters/flow/README.md`
-4. `src/agent/runtime-kernel/graph-engine/README.md`
-5. `src/agent/runtime-kernel/tools/README.md`
+2. [`packages/linnkit/src/runtime-kernel/README.md`](./runtime-kernel/README.md)
+3. [`src/app-hosts/linnya/adapters/flow/README.md`](../../../src/app-hosts/linnya/adapters/flow/README.md)
+4. [`packages/linnkit/src/runtime-kernel/graph-engine/README.md`](./runtime-kernel/graph-engine/README.md)
+5. [`packages/linnkit/src/runtime-kernel/tools/README.md`](./runtime-kernel/tools/README.md)
 
 ### 改 graph / event / tool runtime
 
-1. `src/agent/runtime-kernel/graph-engine/README.md`
-2. `src/agent/runtime-kernel/tools/README.md`
-3. `src/agent/runtime-kernel/README.md`
+1. [`packages/linnkit/src/runtime-kernel/graph-engine/README.md`](./runtime-kernel/graph-engine/README.md)
+2. [`packages/linnkit/src/runtime-kernel/tools/README.md`](./runtime-kernel/tools/README.md)
+3. [`packages/linnkit/src/runtime-kernel/README.md`](./runtime-kernel/README.md)
 
 ### 改 Flow / 持久化 / SSE / 默认装配
 
-1. `src/app-hosts/linnya/adapters/flow/README.md`
-2. `src/app-hosts/linnya/adapters/context-injection/README.md`
-3. `src/app-hosts/linnya/adapters/tools/README.md`
+1. [`src/app-hosts/linnya/adapters/flow/README.md`](../../../src/app-hosts/linnya/adapters/flow/README.md)
+2. [`src/app-hosts/linnya/adapters/context-injection/README.md`](../../../src/app-hosts/linnya/adapters/context-injection/README.md)
+3. [`src/app-hosts/linnya/adapters/tools/README.md`](../../../src/app-hosts/linnya/adapters/tools/README.md)
 
 ---
 
 ## 11. 开发注意事项
 
-1. 写代码前先判断 owner，不要先挑一个“顺手的旧路径”
+1. 写代码前先判断 owner，不要先挑一个"顺手的旧路径"
 2. 不要为了目录整齐把 product 语义硬塞进 runtime-kernel
 3. 新 bridge 只能作为过渡，不能作为新开发入口
 4. 修改 runtime 协议时，必须补 contract / integration tests
 5. 文档必须追随真实路径，不追随历史 import 习惯
+6. 前端代码**禁止**从 `linnkit/runtime-kernel`（namespace 全展开入口）import；只能从 `linnkit/runtime-kernel/events` 这个 browser-safe slim seam 取 events governance 纯函数
 
 如果你是准备继续开发或接入，不要只看这份 README：
 
-- 开发指南：`src/agent/DEVELOPMENT_GUIDE.md`
-- 外部接入指南：`src/agent/INTEGRATION_GUIDE.md`
+- 开发指南：[`packages/linnkit/src/DEVELOPMENT_GUIDE.md`](./DEVELOPMENT_GUIDE.md)
+- 外部接入指南：[`packages/linnkit/src/INTEGRATION_GUIDE.md`](./INTEGRATION_GUIDE.md)
 
 ---
 
@@ -646,45 +683,53 @@ src/app-hosts/linnya/
 
 ### Runtime Kernel
 
-- `src/agent/runtime-kernel/README.md`
-- `src/agent/runtime-kernel/graph-engine/README.md`
-- `src/agent/runtime-kernel/llm/README.md`
-- `src/agent/runtime-kernel/tools/README.md`
+- [`packages/linnkit/src/runtime-kernel/README.md`](./runtime-kernel/README.md)
+- [`packages/linnkit/src/runtime-kernel/graph-engine/README.md`](./runtime-kernel/graph-engine/README.md)
+- [`packages/linnkit/src/runtime-kernel/llm/README.md`](./runtime-kernel/llm/README.md)
+- [`packages/linnkit/src/runtime-kernel/tools/README.md`](./runtime-kernel/tools/README.md)
 
 ### Host Adapters
 
-- `src/app-hosts/linnya/adapters/runtime-assembly/README.md`
-- `src/app-hosts/linnya/adapters/context-injection/README.md`
-- `src/app-hosts/linnya/adapters/flow/README.md`
-- `src/app-hosts/linnya/adapters/flow/agent-runner/README.md`
-- `src/app-hosts/linnya/adapters/flow/run-hooks/README.md`
-- `src/app-hosts/linnya/adapters/realtime/README.md`
-- `src/app-hosts/linnya/adapters/persistence/event-store/README.md`
-- `src/app-hosts/linnya/adapters/tools/README.md`
-- `src/app-hosts/linnya/adapters/child-runs/README.md`
+- [`src/app-hosts/linnya/adapters/runtime-assembly/README.md`](../../../src/app-hosts/linnya/adapters/runtime-assembly/README.md)
+- [`src/app-hosts/linnya/adapters/context-injection/README.md`](../../../src/app-hosts/linnya/adapters/context-injection/README.md)
+- [`src/app-hosts/linnya/adapters/flow/README.md`](../../../src/app-hosts/linnya/adapters/flow/README.md)
+- [`src/app-hosts/linnya/adapters/flow/agent-runner/README.md`](../../../src/app-hosts/linnya/adapters/flow/agent-runner/README.md)
+- [`src/app-hosts/linnya/adapters/flow/run-hooks/README.md`](../../../src/app-hosts/linnya/adapters/flow/run-hooks/README.md)
+- [`src/app-hosts/linnya/adapters/realtime/README.md`](../../../src/app-hosts/linnya/adapters/realtime/README.md)
+- [`src/app-hosts/linnya/adapters/persistence/event-store/README.md`](../../../src/app-hosts/linnya/adapters/persistence/event-store/README.md)
+- [`src/app-hosts/linnya/adapters/tools/README.md`](../../../src/app-hosts/linnya/adapters/tools/README.md)
+- [`src/app-hosts/linnya/adapters/child-runs/README.md`](../../../src/app-hosts/linnya/adapters/child-runs/README.md)
 
 ### App Host
 
-- `src/app-hosts/linnya/README.md`
-- `src/app-hosts/linnya/agent-registry/README.md`
-- `src/app-hosts/linnya/context/README.md`
-- `src/app-hosts/linnya/context-policies/README.md`
+- [`src/app-hosts/linnya/README.md`](../../../src/app-hosts/linnya/README.md)
+- [`src/app-hosts/linnya/agent-registry/README.md`](../../../src/app-hosts/linnya/agent-registry/README.md)
+- [`src/app-hosts/linnya/context/README.md`](../../../src/app-hosts/linnya/context/README.md)
+- [`src/app-hosts/linnya/context-policies/README.md`](../../../src/app-hosts/linnya/context-policies/README.md)
 
 ### Testkit
 
-- `src/agent/testkit/README.md`
-- `src/agent/testkit/agent-harness/README.md`
-- `src/agent/testkit/context-harness/README.md`
-- `src/app-hosts/linnya/testkit/README.md`
-- `src/app-hosts/linnya/testkit/agent-harness/README.md`
+- [`packages/linnkit/src/testkit/README.md`](./testkit/README.md)
+- [`packages/linnkit/src/testkit/agent-harness/README.md`](./testkit/agent-harness/README.md)
+- [`packages/linnkit/src/testkit/context-harness/README.md`](./testkit/context-harness/README.md)
+- [`src/app-hosts/linnya/testkit/README.md`](../../../src/app-hosts/linnya/testkit/README.md)
+- [`src/app-hosts/linnya/testkit/agent-harness/README.md`](../../../src/app-hosts/linnya/testkit/agent-harness/README.md)
 
 ### Guide
 
-- `src/agent/DEVELOPMENT_GUIDE.md`
-- `src/agent/INTEGRATION_GUIDE.md`
+- [`packages/linnkit/src/DEVELOPMENT_GUIDE.md`](./DEVELOPMENT_GUIDE.md)
+- [`packages/linnkit/src/INTEGRATION_GUIDE.md`](./INTEGRATION_GUIDE.md)
 
-### Proposal 索引
+### Engine 与 Secretary 文档（已归档/活文档）
 
-- `docs/proposals/agent-architecture-upgrade-and-evolution-plan.md`
-- `docs/proposals/agent-package-boundary-extraction-proposal.md`
-- `docs/archive/agent-proposals/README.md`
+- [`packages/linnkit/src/docs/README.md`](./docs/README.md) —— 总入口（含本目录所有文档的归档/活动状态）
+- [`packages/linnkit/src/docs/00-vision-and-split.md`](./docs/00-vision-and-split.md) —— 三方边界稳定参考
+- [`packages/linnkit/src/docs/engine/README.md`](./docs/engine/README.md) —— engine 升级总览（**已归档**）
+- [`packages/linnkit/src/docs/engine/24-phase-e-implementation-runbook.md`](./docs/engine/24-phase-e-implementation-runbook.md) —— Phase E 终态 runbook（含 §12.2 收官期 7 项硬件加固）
+- [`packages/linnkit/src/docs/secretary/README.md`](./docs/secretary/README.md) —— linnsec 立项工作面（**活文档**）
+
+### 历史归档 Proposal
+
+- [`docs/proposals/agent-architecture-upgrade-and-evolution-plan.md`](../../../docs/proposals/agent-architecture-upgrade-and-evolution-plan.md)
+- [`docs/proposals/agent-package-boundary-extraction-proposal.md`](../../../docs/proposals/agent-package-boundary-extraction-proposal.md)
+- [`docs/archive/agent-proposals/README.md`](../../../docs/archive/agent-proposals/README.md)

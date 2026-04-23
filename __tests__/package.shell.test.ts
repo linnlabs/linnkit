@@ -32,18 +32,23 @@ describe('packages/linnkit shell manifest', () => {
       throw new Error('packages/linnkit/package.json must define an exports object.');
     }
 
+    // Phase E 已彻底完成（2026-04-23），稳定公开入口为 6 个：
+    // - root + 4 个长期稳定子入口
+    // - 1 个 browser-safe slim 子入口（events governance 纯函数）
     expect(Object.keys(exportsField).sort()).toEqual([
       '.',
       './context-manager',
       './contracts',
       './ports',
       './runtime-kernel',
+      './runtime-kernel/events',
       './testkit',
     ]);
     expect(exportsField['.']).toBe('./src/index.ts');
     expect(exportsField['./ports']).toBe('./src/ports/index.ts');
     expect(exportsField['./contracts']).toBe('./src/contracts/index.ts');
     expect(exportsField['./runtime-kernel']).toBe('./src/runtime-kernel/index.ts');
+    expect(exportsField['./runtime-kernel/events']).toBe('./src/runtime-kernel/events/index.ts');
     expect(exportsField['./context-manager']).toBe('./src/context-manager/index.ts');
     expect(exportsField['./testkit']).toBe('./src/testkit/index.ts');
 
@@ -52,16 +57,30 @@ describe('packages/linnkit shell manifest', () => {
       throw new Error('packages/linnkit/package.json must define a linnkit metadata object.');
     }
 
-    expect(linnkitField.phase).toBe('E-PR-B shell');
+    expect(linnkitField.phase).toBe('E-completed (engineering layer)');
     expect(linnkitField.sourceOfTruth).toBe(
-      'src/agent/docs/engine/24-phase-e-implementation-runbook.md',
+      'packages/linnkit/src/docs/engine/24-phase-e-implementation-runbook.md',
     );
-    expect(linnkitField.movePlan).toBe('src/agent -> packages/linnkit/src');
-    expect(linnkitField.notes).toEqual([
-      '本包当前只建立正式 package 壳子，不复制第二份 src',
-      'PR-C 使用 git mv 将 src/agent 物理迁入 packages/linnkit/src',
-      '在 PR-C 完成前，不允许把本目录变成回指 src/agent 的过渡 re-export 层',
-    ]);
+    expect(Array.isArray(linnkitField.notes)).toBe(true);
+    const notes = linnkitField.notes as unknown[];
+    expect(notes.length).toBeGreaterThanOrEqual(2);
+    // 至少其中一条说明必须明确点出 browser-safe slim seam 的不变量
+    expect(
+      notes.some(
+        (n): n is string =>
+          typeof n === 'string' && n.includes('./runtime-kernel/events') && n.includes('browser-safe'),
+      ),
+    ).toBe(true);
+    // 另外必须有一条说明禁止前端 import 全展开 ./runtime-kernel
+    expect(
+      notes.some(
+        (n): n is string =>
+          typeof n === 'string' &&
+          n.includes('前端') &&
+          n.includes('./runtime-kernel') &&
+          (n.includes('Node-only') || n.includes('node:async_hooks') || n.includes('crypto')),
+      ),
+    ).toBe(true);
   });
 });
 

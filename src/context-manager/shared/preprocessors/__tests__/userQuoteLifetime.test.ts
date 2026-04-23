@@ -1,140 +1,204 @@
-/**
- * @file src/agent/context-manager/shared/preprocessors/__tests__/userQuoteLifetime.test.ts
- * @description 用户引用寿命预处理器测试
- * 
- * 运行测试:
- * npx tsx src/agent/context-manager/shared/preprocessors/__tests__/userQuoteLifetime.test.ts
- * 
- * 输入 (Input):
- * - 包含多个 user_input 的消息历史
- * - 其中部分消息带有 user_quote metadata
- * - 配置 keepLatestUserInputs = 2
- * 
- * 期望输出 (Expected Output):
- * - 最近 2 条 user_input 消息的引用被保留（如果 metadata 存在，则确保 content 中有 <user_quote>）
- * - 更早的 user_input 消息的引用被移除（content 中的 <user_quote> 块被删除，metadata 中的 user_quote 被移除）
- * - <user_query> 标签和内容被正确保留
- * 
- * 测试用例说明:
- * 1. 验证最近 N 条消息的引用是否被正确恢复
- * 2. 验证过期消息的引用是否被正确移除
- * 3. 验证无引用消息不受影响
- * 4. 验证边界情况（消息数少于 N 条）
- */
+import { describe, expect, it } from 'vitest';
 
-import { describe } from 'vitest';
-describe.skip('TODO: 恢复历史测试（tsx-script 风格，未接入 vitest）', () => { /* see git history */ });
-
+import type { AiMessage } from '../../../../contracts';
 import { UserQuoteLifetimePreprocessor } from '../userQuoteLifetime';
-import { AiMessage } from '../../../../contracts';
 
-// Mock types for standalone testing
-interface PreprocessorContext {
-  debugMode?: boolean;
+function createUserInput(opts: {
+  id: string;
+  timestamp: number;
+  content: string;
+  quoteText?: string;
+  source?: Record<string, unknown>;
+}): AiMessage {
+  return {
+    id: opts.id,
+    role: 'user',
+    type: 'user_input',
+    content: opts.content,
+    timestamp: opts.timestamp,
+    ...(opts.quoteText
+      ? {
+          metadata: {
+            user_quote: {
+              text: opts.quoteText,
+              ...(opts.source ? { source: opts.source } : {}),
+            },
+          },
+        }
+      : {}),
+  };
 }
 
-// Simple assertion helper
-function assert(condition: boolean, message: string) {
-  if (!condition) {
-    throw new Error(`Assertion failed: ${message}`);
+function createAssistant(id: string, timestamp: number, content: string): AiMessage {
+  return {
+    id,
+    role: 'assistant',
+    type: 'final_answer',
+    content,
+    timestamp,
+  };
+}
+
+function getMessage(messages: AiMessage[], id: string): AiMessage {
+  const message = messages.find((candidate) => candidate.id === id);
+  if (!message) {
+    throw new Error(`Message ${id} not found`);
   }
+  return message;
 }
 
-async function runTest() {
-  console.log('🧪 Starting UserQuoteLifetimePreprocessor Test...');
-  
-  const preprocessor = new UserQuoteLifetimePreprocessor({ keepLatestUserInputs: 2 });
+describe('UserQuoteLifetimePreprocessor', () => {
+  it('strips quotes from expired user inputs and restores them for the latest kept window', async () => {
+    const preprocessor = new UserQuoteLifetimePreprocessor({ keepLatestUserInputs: 2 });
 
-  // Construct test messages
-  // Msg 1: Old message with quote (should be stripped)
-  const user1: AiMessage = {
-    id: 'msg-1',
-    role: 'user',
-    type: 'user_input',
-    content: '<user_quote>Old Quote</user_quote>\n<user_query>Old Query</user_query>',
-    metadata: {
-      user_quote: { text: 'Old Quote' }
-    },
-    timestamp: 1000
-  };
+    const messages: AiMessage[] = [
+      {
+        id: 'msg-1',
+        role: 'user',
+        type: 'user_input',
+        content: '<user_quote>Old Quote</user_quote>\n<user_query>Old Query</user_query>',
+        metadata: {
+          user_quote: { text: 'Old Quote' },
+        },
+        timestamp: 1000,
+      },
+      createAssistant('msg-2', 2000, 'Response 1'),
+      createUserInput({
+        id: 'msg-3',
+        timestamp: 3000,
+        content: 'Recent Query 1',
+        quoteText: 'Recent Quote 1',
+        source: { doc_id: 'doc-1' },
+      }),
+      createAssistant('msg-4', 4000, 'Response 2'),
+      {
+        id: 'msg-5',
+        role: 'user',
+        type: 'user_input',
+        content: '<user_quote>Recent Quote 2</user_quote>\n<user_query>Recent Query 2</user_query>',
+        metadata: {
+          user_quote: { text: 'Recent Quote 2' },
+        },
+        timestamp: 5000,
+      },
+    ];
 
-  const assistant1: AiMessage = {
-    id: 'msg-2',
-    role: 'assistant',
-    type: 'final_answer',
-    content: 'Response 1',
-    timestamp: 2000
-  };
+    const result = await preprocessor.process(messages, { debugMode: false });
 
-  // Msg 2: Recent message 1 (should keep/restore quote)
-  // Simulating a message that lost its quote in content but has metadata
-  const user2: AiMessage = {
-    id: 'msg-3',
-    role: 'user',
-    type: 'user_input',
-    content: 'Recent Query 1', // Quote missing in content
-    metadata: {
-      user_quote: {
-        text: 'Recent Quote 1',
-        source: { doc_id: 'doc-1' }
-      }
-    },
-    timestamp: 3000
-  };
+    const oldUser = getMessage(result.messages, 'msg-1');
+    expect(oldUser.content).not.toContain('<user_quote>');
+    expect(oldUser.metadata?.user_quote).toBeUndefined();
 
-  const assistant2: AiMessage = {
-    id: 'msg-4',
-    role: 'assistant',
-    type: 'final_answer',
-    content: 'Response 2',
-    timestamp: 4000
-  };
+    const restoredUser = getMessage(result.messages, 'msg-3');
+    expect(restoredUser.content).toContain('<user_quote source_doc="doc-1">');
+    expect(restoredUser.content).toContain('Recent Quote 1');
+    expect(restoredUser.content).toContain('<user_query>');
+    expect(result.appliedStrategies).toContain('user_quote_lifetime');
 
-  // Msg 3: Recent message 2 (latest) (should keep quote)
-  const user3: AiMessage = {
-    id: 'msg-5',
-    role: 'user',
-    type: 'user_input',
-    content: '<user_quote>Recent Quote 2</user_quote>\n<user_query>Recent Query 2</user_query>',
-    metadata: {
-      user_quote: { text: 'Recent Quote 2' }
-    },
-    timestamp: 5000
-  };
+    const latestUser = getMessage(result.messages, 'msg-5');
+    expect(latestUser.content).toContain('<user_quote>');
+    expect(latestUser.content).toContain('Recent Quote 2');
+  });
 
-  const messages: AiMessage[] = [user1, assistant1, user2, assistant2, user3];
+  it('preserves quote semantics across a long conversation after a history summary boundary', async () => {
+    const preprocessor = new UserQuoteLifetimePreprocessor({ keepLatestUserInputs: 2 });
 
-  console.log('📥 Input messages:', messages.length);
+    const messages: AiMessage[] = [
+      {
+        id: 'user-old',
+        role: 'user',
+        type: 'user_input',
+        content: '<user_quote>Legacy Quote</user_quote>\n<user_query>Legacy Query</user_query>',
+        metadata: {
+          user_quote: { text: 'Legacy Quote' },
+        },
+        timestamp: 1000,
+      },
+      createAssistant('assistant-old', 1500, '旧回答'),
+      {
+        id: 'summary-1',
+        role: 'system',
+        type: 'history_summary',
+        content: '前面历史已摘要',
+        metadata: {
+          summarySeq: 1,
+          replacedMessageIds: ['user-old', 'assistant-old'],
+        },
+        timestamp: 2000,
+      },
+      createUserInput({
+        id: 'user-kept-1',
+        timestamp: 3000,
+        content: '摘要后的追问 1',
+        quoteText: 'Recent Quote A',
+        source: { doc_id: 'doc-a', start: 3, end: 8 },
+      }),
+      createAssistant('assistant-1', 3500, '回答 1'),
+      createUserInput({
+        id: 'user-kept-2',
+        timestamp: 4000,
+        content: '摘要后的追问 2',
+        quoteText: 'Recent Quote B',
+      }),
+    ];
 
-  const result = await preprocessor.process(messages, { debugMode: true });
-  const processedMessages = result.messages;
+    const result = await preprocessor.process(messages, { debugMode: false });
 
-  console.log('📤 Processed messages:', processedMessages.length);
+    const oldUser = getMessage(result.messages, 'user-old');
+    expect(oldUser.content).not.toContain('<user_quote>');
+    expect(oldUser.content).toContain('<user_query>Legacy Query</user_query>');
 
-  // Verification 1: Oldest user message (msg-1) should NOT have quote
-  const pUser1 = processedMessages.find(m => m.id === 'msg-1');
-  assert(!!pUser1, 'Msg 1 exists');
-  assert(!pUser1?.content.includes('<user_quote>'), 'Msg 1 quote stripped from content');
-  assert(!pUser1?.metadata?.user_quote, 'Msg 1 quote stripped from metadata');
-  console.log('✅ Test Case 1 Passed: Old quote stripped');
+    const keptAfterSummary = getMessage(result.messages, 'user-kept-1');
+    expect(keptAfterSummary.content).toContain('<user_quote source_doc="doc-a" start="3" end="8">');
+    expect(keptAfterSummary.content).toContain('Recent Quote A');
+    expect(keptAfterSummary.content).toContain('<user_query>');
+    expect(keptAfterSummary.content).toContain('摘要后的追问 1');
 
-  // Verification 2: Recent user message 1 (msg-3) SHOULD have quote restored
-  const pUser2 = processedMessages.find(m => m.id === 'msg-3');
-  assert(!!pUser2, 'Msg 3 exists');
-  assert(!!pUser2?.content.includes('<user_quote source_doc="doc-1">'), 'Msg 3 quote restored in content with attributes');
-  assert(!!pUser2?.content.includes('Recent Quote 1'), 'Msg 3 quote text correct');
-  console.log('✅ Test Case 2 Passed: Recent quote restored');
+    const latestAfterSummary = getMessage(result.messages, 'user-kept-2');
+    expect(latestAfterSummary.content).toContain('<user_quote>');
+    expect(latestAfterSummary.content).toContain('Recent Quote B');
 
-  // Verification 3: Latest user message (msg-5) SHOULD keep quote
-  const pUser3 = processedMessages.find(m => m.id === 'msg-5');
-  assert(!!pUser3, 'Msg 5 exists');
-  assert(!!pUser3?.content.includes('<user_quote>'), 'Msg 5 quote preserved');
-  console.log('✅ Test Case 3 Passed: Latest quote preserved');
+    expect(getMessage(result.messages, 'summary-1').content).toBe('前面历史已摘要');
+  });
 
-  console.log('🎉 All tests passed!');
-}
+  it('leaves recent messages unchanged when they already contain quote blocks', async () => {
+    const preprocessor = new UserQuoteLifetimePreprocessor({ keepLatestUserInputs: 2 });
 
-// vitest 加载本文件时跳过自调用；npx tsx <file> 直跑时仍执行
-if (!process.env.VITEST) {
-  runTest().catch(console.error);
-}
+    const messages: AiMessage[] = [
+      createUserInput({
+        id: 'user-1',
+        timestamp: 1000,
+        content: '无需引用',
+      }),
+      {
+        id: 'user-2',
+        role: 'user',
+        type: 'user_input',
+        content: '<user_quote>Kept Quote</user_quote>\n<user_query>Kept Query</user_query>',
+        metadata: {
+          user_quote: { text: 'Kept Quote' },
+        },
+        timestamp: 2000,
+      },
+      {
+        id: 'user-3',
+        role: 'user',
+        type: 'user_input',
+        content: '<user_quote>Latest Quote</user_quote>\n<user_query>Latest Query</user_query>',
+        metadata: {
+          user_quote: { text: 'Latest Quote' },
+        },
+        timestamp: 3000,
+      },
+    ];
+
+    const result = await preprocessor.process(messages, { debugMode: false });
+
+    expect(getMessage(result.messages, 'user-2').content).toBe(
+      '<user_quote>Kept Quote</user_quote>\n<user_query>Kept Query</user_query>',
+    );
+    expect(getMessage(result.messages, 'user-3').content).toBe(
+      '<user_quote>Latest Quote</user_quote>\n<user_query>Latest Query</user_query>',
+    );
+  });
+});
