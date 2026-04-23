@@ -1,29 +1,91 @@
 {
-  "name": "linnkit",
-  "version": "0.0.0-dev",
-  "private": true,
+  "name": "@linnya/linnkit",
+  "version": "0.1.0",
   "type": "module",
-  "description": "Linnkit agent platform package. Phase E true extraction completed at 2026-04-22.",
+  "description": "linnkit · vendor-neutral Agent framework. runtime-kernel + context-manager + ports + testkit + browser-safe events seam.",
+  "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/linnya/linnya.git",
+    "directory": "packages/linnkit"
+  },
+  "homepage": "https://github.com/linnya/linnya/tree/main/packages/linnkit",
+  "bugs": {
+    "url": "https://github.com/linnya/linnya/issues"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com/",
+    "access": "restricted"
+  },
+  "files": [
+    "dist",
+    "src/README.md",
+    "src/INTEGRATION_GUIDE.md",
+    "src/DEVELOPMENT_GUIDE.md",
+    "RELEASE.md"
+  ],
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./ports": {
+      "types": "./dist/ports.d.ts",
+      "import": "./dist/ports.js",
+      "require": "./dist/ports.cjs"
+    },
+    "./contracts": {
+      "types": "./dist/contracts.d.ts",
+      "import": "./dist/contracts.js",
+      "require": "./dist/contracts.cjs"
+    },
+    "./runtime-kernel": {
+      "types": "./dist/runtime-kernel.d.ts",
+      "import": "./dist/runtime-kernel.js",
+      "require": "./dist/runtime-kernel.cjs"
+    },
+    "./runtime-kernel/events": {
+      "types": "./dist/runtime-kernel/events.d.ts",
+      "import": "./dist/runtime-kernel/events.js",
+      "require": "./dist/runtime-kernel/events.cjs"
+    },
+    "./context-manager": {
+      "types": "./dist/context-manager.d.ts",
+      "import": "./dist/context-manager.js",
+      "require": "./dist/context-manager.cjs"
+    },
+    "./testkit": {
+      "types": "./dist/testkit.d.ts",
+      "import": "./dist/testkit.js",
+      "require": "./dist/testkit.cjs"
+    },
+    "./package.json": "./package.json"
+  },
   "scripts": {
+    "build": "tsup",
+    "build:clean": "rm -rf dist",
+    "prepublishOnly": "npm run build:clean && npm run build && npm run test:smoke",
+    "publish:gh": "npm publish",
+    "publish:dry-run": "npm pack --dry-run",
     "typecheck": "npx tsc --noEmit -p tsconfig.json",
     "test:smoke": "npx vitest run __tests__/package.shell.test.ts"
   },
-  "exports": {
-    ".": "./src/index.ts",
-    "./ports": "./src/ports/index.ts",
-    "./contracts": "./src/contracts/index.ts",
-    "./runtime-kernel": "./src/runtime-kernel/index.ts",
-    "./runtime-kernel/events": "./src/runtime-kernel/events/index.ts",
-    "./context-manager": "./src/context-manager/index.ts",
-    "./testkit": "./src/testkit/index.ts"
+  "devDependencies": {
+    "tsup": "^8.0.0"
   },
   "linnkit": {
-    "phase": "E-completed (engineering layer)",
-    "sourceOfTruth": "packages/linnkit/src/docs/engine/24-phase-e-implementation-runbook.md",
+    "phase": "shippable (0.1.0 — first publishable cut)",
+    "sourceOfTruth": "packages/linnkit/RELEASE.md",
     "notes": [
-      "Phase E 工程层已于 2026-04-22 完成；唯一剩桌面手测主链路（用户人工跑）",
-      "子入口 `./runtime-kernel/events` 是 browser-safe slim seam：仅暴露 events governance 纯函数，禁止扩展任何 Node-only 依赖",
-      "前端代码禁止从 `./runtime-kernel`（namespace 全展开入口）import，否则会把 `crypto` / `node:async_hooks` 等 Node-only 子树拖进 frontend bundle"
+      "0.1.0 是 linnkit 首个可发布版本；发到 GitHub Packages 私有 scope @linnya；详见 RELEASE.md",
+      "子入口 ./runtime-kernel/events 是 browser-safe slim seam：仅暴露 events governance 纯函数，禁止扩展任何 Node-only 依赖（如 node:async_hooks / crypto / fs）",
+      "前端代码禁止从 ./runtime-kernel（namespace 全展开入口）import，否则会把 crypto / node:async_hooks 等 Node-only 子树拖进 frontend bundle",
+      "linnya monorepo 内的消费者通过 tsconfig.paths + vite/vitest alias 直读 packages/linnkit/src，零成本；外部消费者（如 linnsy daemon）通过 npm install @linnya/linnkit 走 dist 编译产物",
+      "0.x 版本号策略：任何加 export / 改既有签名都 bump minor（不是 patch），保证 ^0.1.0 不会偶然吃到 break；详见 RELEASE.md §4"
     ]
   }
 }

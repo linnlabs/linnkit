@@ -18,49 +18,100 @@ async function readJson(relativePath: string): Promise<Record<string, unknown>> 
   return parsed;
 }
 
+/**
+ * Smoke test for `@linnya/linnkit` 0.1.0 publishable shape.
+ *
+ * 这个 test 是 RELEASE.md §3 工程层不变量的硬性闸门，覆盖：
+ *   1. 包元数据（name / version / 不再 private / repository / publishConfig）
+ *   2. 6 个公开子入口的 conditional exports（types/import/require 三件套，全部指 dist）
+ *   3. files 字段只发 dist + 必要文档，不会把 src/ 整棵子树打进 tarball
+ *   4. tsconfig.paths 同时为 `linnkit*`（兼容 linnya monorepo）和 `@linnya/linnkit*`（真包名）解析
+ *   5. linnkit 元数据 notes 仍然守住 browser-safe seam 与前端 deep-import 红线
+ *
+ * 任何破坏以上不变量的改动 = break，必须先在 RELEASE.md 留一行变更说明。
+ */
 describe('packages/linnkit shell manifest', () => {
-  it('defines the formal linnkit package shape without duplicating source ownership', async () => {
+  it('declares the publishable @linnya/linnkit 0.1.0 shape with dist-only exports', async () => {
     const manifest = await readJson('package.json');
 
-    expect(manifest.name).toBe('linnkit');
-    expect(manifest.version).toBe('0.0.0-dev');
-    expect(manifest.private).toBe(true);
+    expect(manifest.name).toBe('@linnya/linnkit');
+    expect(manifest.version).toBe('0.1.0');
+    expect(manifest.private).toBeUndefined();
     expect(manifest.type).toBe('module');
+    expect(manifest.main).toBe('./dist/index.cjs');
+    expect(manifest.module).toBe('./dist/index.js');
+    expect(manifest.types).toBe('./dist/index.d.ts');
+
+    const repository = manifest.repository;
+    if (!isRecord(repository)) {
+      throw new Error('packages/linnkit/package.json must define a repository object.');
+    }
+    expect(repository.directory).toBe('packages/linnkit');
+
+    const publishConfig = manifest.publishConfig;
+    if (!isRecord(publishConfig)) {
+      throw new Error('packages/linnkit/package.json must define publishConfig (registry + access).');
+    }
+    expect(publishConfig.registry).toBe('https://npm.pkg.github.com/');
+    expect(publishConfig.access).toBe('restricted');
+
+    const files = manifest.files;
+    if (!Array.isArray(files)) {
+      throw new Error('packages/linnkit/package.json must define a files array (do NOT publish raw src).');
+    }
+    expect(files).toContain('dist');
+    expect(files).not.toContain('src');
+    expect(files.some((entry) => typeof entry === 'string' && entry.startsWith('src/') && entry.endsWith('.md'))).toBe(true);
 
     const exportsField = manifest.exports;
     if (!isRecord(exportsField)) {
       throw new Error('packages/linnkit/package.json must define an exports object.');
     }
 
-    // Phase E 已彻底完成（2026-04-23），稳定公开入口为 6 个：
+    // Phase E 已彻底完成（2026-04-23），稳定公开入口为 6 个 + 1 个 ./package.json：
     // - root + 4 个长期稳定子入口
     // - 1 个 browser-safe slim 子入口（events governance 纯函数）
+    // - ./package.json：允许接入方读元数据（如检测 version），不算 6 入口之一
     expect(Object.keys(exportsField).sort()).toEqual([
       '.',
       './context-manager',
       './contracts',
+      './package.json',
       './ports',
       './runtime-kernel',
       './runtime-kernel/events',
       './testkit',
     ]);
-    expect(exportsField['.']).toBe('./src/index.ts');
-    expect(exportsField['./ports']).toBe('./src/ports/index.ts');
-    expect(exportsField['./contracts']).toBe('./src/contracts/index.ts');
-    expect(exportsField['./runtime-kernel']).toBe('./src/runtime-kernel/index.ts');
-    expect(exportsField['./runtime-kernel/events']).toBe('./src/runtime-kernel/events/index.ts');
-    expect(exportsField['./context-manager']).toBe('./src/context-manager/index.ts');
-    expect(exportsField['./testkit']).toBe('./src/testkit/index.ts');
+
+    const subentryToDistBase: ReadonlyArray<readonly [string, string]> = [
+      ['.', 'index'],
+      ['./ports', 'ports'],
+      ['./contracts', 'contracts'],
+      ['./runtime-kernel', 'runtime-kernel'],
+      ['./runtime-kernel/events', 'runtime-kernel/events'],
+      ['./context-manager', 'context-manager'],
+      ['./testkit', 'testkit'],
+    ];
+
+    for (const [subentry, distBase] of subentryToDistBase) {
+      const value = exportsField[subentry];
+      if (!isRecord(value)) {
+        throw new Error(`exports["${subentry}"] must be a conditional export object`);
+      }
+      expect(value.types).toBe(`./dist/${distBase}.d.ts`);
+      expect(value.import).toBe(`./dist/${distBase}.js`);
+      expect(value.require).toBe(`./dist/${distBase}.cjs`);
+    }
+
+    expect(exportsField['./package.json']).toBe('./package.json');
 
     const linnkitField = manifest.linnkit;
     if (!isRecord(linnkitField)) {
       throw new Error('packages/linnkit/package.json must define a linnkit metadata object.');
     }
 
-    expect(linnkitField.phase).toBe('E-completed (engineering layer)');
-    expect(linnkitField.sourceOfTruth).toBe(
-      'packages/linnkit/src/docs/engine/24-phase-e-implementation-runbook.md',
-    );
+    expect(typeof linnkitField.phase).toBe('string');
+    expect(linnkitField.sourceOfTruth).toBe('packages/linnkit/RELEASE.md');
     expect(Array.isArray(linnkitField.notes)).toBe(true);
     const notes = linnkitField.notes as unknown[];
     expect(notes.length).toBeGreaterThanOrEqual(2);
@@ -85,7 +136,7 @@ describe('packages/linnkit shell manifest', () => {
 });
 
 describe('packages/linnkit shell tsconfig', () => {
-  it('locks the future public entry aliases for the real package path', async () => {
+  it('locks alias paths for both linnkit (monorepo legacy) and @linnya/linnkit (real package name)', async () => {
     const tsconfig = await readJson('tsconfig.json');
     const compilerOptions = tsconfig.compilerOptions;
     if (!isRecord(compilerOptions)) {
@@ -97,12 +148,24 @@ describe('packages/linnkit shell tsconfig', () => {
       throw new Error('packages/linnkit/tsconfig.json must define compilerOptions.paths.');
     }
 
+    // 旧别名（linnkit/*）：linnya 主仓内大量 import 仍走这条路径，必须保留
     expect(paths.linnkit).toEqual(['./src/index.ts']);
     expect(paths['linnkit/ports']).toEqual(['./src/ports/index.ts']);
     expect(paths['linnkit/contracts']).toEqual(['./src/contracts/index.ts']);
     expect(paths['linnkit/runtime-kernel']).toEqual(['./src/runtime-kernel/index.ts']);
+    expect(paths['linnkit/runtime-kernel/events']).toEqual(['./src/runtime-kernel/events/index.ts']);
     expect(paths['linnkit/context-manager']).toEqual(['./src/context-manager/index.ts']);
     expect(paths['linnkit/testkit']).toEqual(['./src/testkit/index.ts']);
+
+    // 新别名（@linnya/linnkit/*）：与发包后的真名 1:1 对齐，linnsy 端用真名 import，monorepo 内同样能解析
+    expect(paths['@linnya/linnkit']).toEqual(['./src/index.ts']);
+    expect(paths['@linnya/linnkit/ports']).toEqual(['./src/ports/index.ts']);
+    expect(paths['@linnya/linnkit/contracts']).toEqual(['./src/contracts/index.ts']);
+    expect(paths['@linnya/linnkit/runtime-kernel']).toEqual(['./src/runtime-kernel/index.ts']);
+    expect(paths['@linnya/linnkit/runtime-kernel/events']).toEqual(['./src/runtime-kernel/events/index.ts']);
+    expect(paths['@linnya/linnkit/context-manager']).toEqual(['./src/context-manager/index.ts']);
+    expect(paths['@linnya/linnkit/testkit']).toEqual(['./src/testkit/index.ts']);
+
     expect(paths['@app/schemas']).toEqual(['../schemas/src/index.ts']);
     expect(paths['@app/schemas/*']).toEqual(['../schemas/src/*']);
   });

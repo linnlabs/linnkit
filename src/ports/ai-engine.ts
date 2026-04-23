@@ -1,8 +1,5 @@
-import { llm } from '../runtime-kernel';
+import type { LlmCallOptions, ToolCallChunk } from './ai-engine.types';
 import type { AiMessage } from '../contracts';
-
-type LlmCallOptions = llm.LlmCallOptions;
-type ToolCallChunk = llm.ToolCallChunk;
 
 export type AgentAiEngineStreamContent =
   | string
