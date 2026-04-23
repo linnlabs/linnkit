@@ -213,8 +213,9 @@ S0 启动会后由 linnkit owner 执行，必须先于 S1 完成。
 - [x] **5.2** 跑 `npm run build`，验证 dist/ 生成完整；`./runtime-kernel/events` 的 dist 不含任何 `node:*` import（已 grep 验证）
 - [x] **5.3** 改 `package.json`：去掉 `"private"`、改 `name` 为 `@linnlabs/linnkit`、`version` 为 `0.1.0`、exports 指向 dist（conditional `types`/`import`/`require`）、加 `publishConfig` / `repository` / `files` / `.npmignore`
 - [x] **5.4** **paths/alias 平行别名**（替代原计划的 `customConditions`）：linnya 三处 alias（tsconfig / vite / vitest）同时登记 `linnkit*` + `@linnlabs/linnkit*`，`package.shell.test.ts` 守门两组别名同时存在；linnya 主仓 dev 体验零变化（已抽样 `src/tools/__tests__/registry.test.ts` 验证 alias 解析无回归）
-- [ ] **5.5a** **新建 GitHub org `linnlabs`**（GitHub UI 操作；个人 plan 即可）；这是 v3 修订引入的前置步骤，因为旧拍板 `@linnya` org 实测已被他人占用
-- [ ] **5.5b** （可选）把当前仓库 transfer 到 `linnlabs/<新名>` 下，否则 CI 里 `secrets.GITHUB_TOKEN` 跨 org publish 不到 `@linnlabs/*`，得在 secrets 里加一个 dedicated PAT（write:packages）并改 workflow yml 的 secret 引用
+- [x] **5.5a** **新建 GitHub org `linnlabs`**（GitHub UI 操作；Free plan 即可）—— 2026-04-23 落地；GitHub username `linnlabs` 可注册并已锁定，未来 `@linnlabs/linnya`、`@linnlabs/linnsy` 也都挂同 scope
+- [x] **5.5b** **走 dedicated PAT 路径**（不做仓库 transfer）—— 2026-04-23 落地：在 `BCAutumn/Tingtalk_official_version` repo settings 加 secret `LINNLABS_NPM_TOKEN`（classic PAT, scope = `repo` + `write:packages` + `read:packages`，90 天过期）；workflow yml `NODE_AUTH_TOKEN` 引用从 `secrets.GITHUB_TOKEN` 切到 `secrets.LINNLABS_NPM_TOKEN`。理由：本仓 owner 是个人账号、包 scope owner 是 org（linnlabs），repo-scoped 的 `secrets.GITHUB_TOKEN` 不能跨 owner publish。等 `linnkit` source 未来迁到 `linnlabs/linnkit` 独立仓时（同 owner），可改回 `secrets.GITHUB_TOKEN` 并删除该 PAT。
+  - **PAT rotate 流程**（90 天到期或泄漏时）：①`https://github.com/settings/tokens` revoke 旧 token → ②同页面新建同 scope token → ③本地 `nano ~/.npmrc` 替换（**不要 cat / heredoc，避免泄漏到 shell history**）→ ④`https://github.com/BCAutumn/Tingtalk_official_version/settings/secrets/actions` 编辑 `LINNLABS_NPM_TOKEN` 重新粘贴 → ⑤`npm whoami --registry=https://npm.pkg.github.com/` 验证本地 → ⑥workflow_dispatch dry-run 验证 CI
 - [ ] **5.6** 在 GitHub Actions UI 触发 [`release-linnkit.yml`](../../.github/workflows/release-linnkit.yml) 一次 `workflow_dispatch` + `dry_run=true`，看 tarball 内容（已本地跑过 `npm pack --dry-run`，3.2 MB / 69 文件 / 含 RELEASE.md + 三份指南，结构正确）
 - [ ] **5.7** 打第一个 tag `linnkit-v0.1.0` → CI 自动 publish 到 `https://github.com/orgs/linnlabs/packages`
 - [ ] **5.8** 在新建的 `packages/linnsy-daemon/` 内通过 `.npmrc`（参考 [`packages/linnkit/.npmrc.example`](./.npmrc.example)）+ `"@linnlabs/linnkit": "^0.1.0"` 装一次，跑通 `linnsy doctor` 验证装配链路
@@ -243,4 +244,5 @@ S0 启动会后由 linnkit owner 执行，必须先于 S1 完成。
 - [x] 公开 API 边界 + 版本号策略落地
 - [x] S0 实施 checklist 落地
 - [x] **§5.1 ~ §5.4 工程层就位**（2026-04-23）：tsup config / build / package.json / paths-alias 双名机制 + smoke test + boundary guard 全绿
-- [ ] **§5.5 ~ §5.9 待 S0 启动会触发**：token + workflow_dispatch dry-run + 首发 tag + linnsy daemon 第一次装包验证 + 02c-tech-stack 草稿复核
+- [x] **§5.5 凭据层就位**（2026-04-23）：`linnlabs` org 已注册 + classic PAT 已生成（90 天过期）+ 本地 `~/.npmrc` 配置 + `npm whoami` 验证为 `BCAutumn` + repo secret `LINNLABS_NPM_TOKEN` 已加 + workflow yml 切到 dedicated PAT
+- [ ] **§5.6 ~ §5.9 待手动触发**：workflow_dispatch dry-run + 首发 tag `linnkit-v0.1.0` + linnsy daemon 第一次装包验证 + 02c-tech-stack 草稿复核
