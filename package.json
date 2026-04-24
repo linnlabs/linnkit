@@ -1,6 +1,6 @@
 {
   "name": "@linnlabs/linnkit",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "type": "module",
   "description": "linnkit · vendor-neutral Agent framework. runtime-kernel + context-manager + ports + testkit + browser-safe events seam.",
   "license": "UNLICENSED",
@@ -80,9 +80,10 @@
     "tsup": "^8.0.0"
   },
   "linnkit": {
-    "phase": "shippable (0.1.1 — D-5 schemas-detach-round-2 + 0.1.0 manifest URL 修正)",
+    "phase": "shippable (0.1.2 — docs/ 文档架构重组 + package files/.npmignore 同步刷新；运行时 / exports / 类型签名零变化)",
     "sourceOfTruth": "packages/linnkit/docs/release/RELEASE.md",
     "notes": [
+      "0.1.2 是文档/打包结构 patch：所有 .md 从 src/ 收口到包根 docs/（docs/{README,INTEGRATION_GUIDE,DEVELOPMENT_GUIDE,framework,release}/），package.json#files + .npmignore 同步刷新，新增包根 README.md 作为 npmjs/GitHub 标准入口；运行时 dist 字节级一致。详见 docs/release/RELEASE.md §0 v5 修订",
       "0.1.1 完成 D-5 schemas detach round 2：6 处生产代码从 @app/schemas 改为本包 contracts，dist 不再 fork @app/schemas 内容；linnkit 真正自包含、零跨包 import。详见 docs/release/RELEASE.md §0 v4 修订",
       "0.1.0 是 linnkit 首个可发布版本；发到 GitHub Packages 私有 scope @linnlabs（linn 系列总品牌 scope；@linn / @linnya GitHub username 已被他人占用，详见 docs/release/RELEASE.md §0 v3 修订）；详见 docs/release/RELEASE.md",
       "子入口 ./runtime-kernel/events 是 browser-safe slim seam：仅暴露 events governance 纯函数，禁止扩展任何 Node-only 依赖（如 node:async_hooks / crypto / fs）",
