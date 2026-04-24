@@ -333,12 +333,12 @@ linnkit 的 package-boundary 由 **AST 级 guard**（基于 TypeScript Compiler 
 
 ## 8. 推荐阅读顺序
 
-1. `packages/linnkit/src/README.md`
-2. `packages/linnkit/src/DEVELOPMENT_GUIDE.md`
+1. `packages/linnkit/docs/README.md`
+2. `packages/linnkit/docs/DEVELOPMENT_GUIDE.md`
 3. `packages/linnkit/src/runtime-kernel/README.md`
 4. `packages/linnkit/src/context-manager/README.md`
 5. `packages/linnkit/src/testkit/README.md`
-6. `packages/linnkit/src/docs/framework/` —— linnkit 作为独立 Agent 框架的演进方向
+6. `packages/linnkit/docs/framework/` —— linnkit 作为独立 Agent 框架的演进方向
 
 ## 9. 术语对照（重要）
 
@@ -373,12 +373,12 @@ agent 生态里有几个名字相同但语义完全不同的概念，外部接�
 
 ### 框架演进与协议路线图
 
-- [`packages/linnkit/src/docs/framework/`](./docs/framework/) —— linnkit 作为独立 Agent 框架的演进活文档
-- [`packages/linnkit/src/docs/framework/04-protocol-roadmap.md`](./docs/framework/04-protocol-roadmap.md) —— 6 条新协议层 + 4 条治理升级
-- [`packages/linnkit/src/docs/framework/07-roi-ranked-priorities.md`](./docs/framework/07-roi-ranked-priorities.md) —— ROI 排序的优先级清单 + Phase F/G/H 时间表
+- [`packages/linnkit/docs/framework/`](./framework/) —— linnkit 作为独立 Agent 框架的演进活文档
+- [`packages/linnkit/docs/framework/04-protocol-roadmap.md`](./framework/04-protocol-roadmap.md) —— 6 条新协议层 + 4 条治理升级
+- [`packages/linnkit/docs/framework/07-roi-ranked-priorities.md`](./framework/07-roi-ranked-priorities.md) —— ROI 排序的优先级清单 + Phase F/G/H 时间表
 
 ### 历史抽包决策档案（已归档）
 
-- [`packages/linnkit/src/docs/archive/engine-phase-a-to-e/13-public-api-surface-and-host-migration-batches.md`](./docs/archive/engine-phase-a-to-e/13-public-api-surface-and-host-migration-batches.md)
-- [`packages/linnkit/src/docs/archive/engine-phase-a-to-e/14-stable-vs-compat-exports.md`](./docs/archive/engine-phase-a-to-e/14-stable-vs-compat-exports.md)
-- [`packages/linnkit/src/docs/archive/engine-phase-a-to-e/20-d3-d4-port-interfaces-plan.md`](./docs/archive/engine-phase-a-to-e/20-d3-d4-port-interfaces-plan.md)
+- [`packages/linnkit/docs/archive/engine-phases/13-public-api-surface-and-host-migration-batches.md`](./archive/engine-phases/13-public-api-surface-and-host-migration-batches.md)
+- [`packages/linnkit/docs/archive/engine-phases/14-stable-vs-compat-exports.md`](./archive/engine-phases/14-stable-vs-compat-exports.md)
+- [`packages/linnkit/docs/archive/engine-phases/20-d3-d4-port-interfaces-plan.md`](./archive/engine-phases/20-d3-d4-port-interfaces-plan.md)

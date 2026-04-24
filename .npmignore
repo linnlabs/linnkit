@@ -1,16 +1,14 @@
-# `@linnlabs/linnkit` publish whitelist 已通过 package.json#files 控制（dist + 三份指南 .md + RELEASE.md）。
-# 这里再加一道兜底黑名单，避免误把开发期文件打进 tarball。
+# `@linnlabs/linnkit` publish whitelist 已通过 package.json#files 控制：
+#   dist + README.md + docs/{README,INTEGRATION_GUIDE,DEVELOPMENT_GUIDE}.md + docs/framework + docs/release
+# 这里再加一道兜底黑名单，避免误把开发期文件 / 不发布的 docs 子集 打进 tarball。
 # 任何变动必须同时同步 packages/linnkit/__tests__/package.shell.test.ts 中的 files 断言。
 
 # 源码本体：以 src/index.ts 形态运行的代码不发布；外部消费者一律从 dist/ 引用
-src/**/*.ts
-src/**/*.tsx
-!src/README.md
-!src/INTEGRATION_GUIDE.md
-!src/DEVELOPMENT_GUIDE.md
+src/
 
-# 文档：内部 docs/ 与 archive 不发包（接入方应从 RELEASE.md / src/*.md 入门）
-src/docs/
+# docs/ 中不发包给消费者的子集（兜底——files 白名单已不带这俩）
+docs/archive/
+docs/99-research-notes/
 
 # 测试 & 构建过程产物
 __tests__/

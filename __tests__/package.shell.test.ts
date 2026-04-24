@@ -21,14 +21,14 @@ async function readJson(relativePath: string): Promise<Record<string, unknown>> 
 /**
  * Smoke test for `@linnlabs/linnkit` 0.1.0 publishable shape.
  *
- * 这个 test 是 RELEASE.md §3 工程层不变量的硬性闸门，覆盖：
+ * 这个 test 是 docs/release/RELEASE.md §3 工程层不变量的硬性闸门，覆盖：
  *   1. 包元数据（name / version / 不再 private / repository / publishConfig）
  *   2. 6 个公开子入口的 conditional exports（types/import/require 三件套，全部指 dist）
- *   3. files 字段只发 dist + 必要文档，不会把 src/ 整棵子树打进 tarball
+ *   3. files 字段只发 dist + 包根 README.md + docs/ 选定子集，不会把 src/ 整棵子树打进 tarball
  *   4. tsconfig.paths 同时为 `linnkit*`（兼容 linnya monorepo）和 `@linnlabs/linnkit*`（真包名）解析
  *   5. linnkit 元数据 notes 仍然守住 browser-safe seam 与前端 deep-import 红线
  *
- * 任何破坏以上不变量的改动 = break，必须先在 RELEASE.md 留一行变更说明。
+ * 任何破坏以上不变量的改动 = break，必须先在 docs/release/RELEASE.md 留一行变更说明。
  */
 describe('packages/linnkit shell manifest', () => {
   it('declares the publishable @linnlabs/linnkit 0.1.1 shape with dist-only exports', async () => {
@@ -61,7 +61,11 @@ describe('packages/linnkit shell manifest', () => {
     }
     expect(files).toContain('dist');
     expect(files).not.toContain('src');
-    expect(files.some((entry) => typeof entry === 'string' && entry.startsWith('src/') && entry.endsWith('.md'))).toBe(true);
+    expect(files).toContain('README.md');
+    expect(files).toContain('docs/framework');
+    expect(files).toContain('docs/release');
+    expect(files.some((entry) => typeof entry === 'string' && entry.startsWith('docs/') && entry.endsWith('.md'))).toBe(true);
+    expect(files.some((entry) => typeof entry === 'string' && entry.startsWith('src/'))).toBe(false);
 
     const exportsField = manifest.exports;
     if (!isRecord(exportsField)) {
@@ -111,7 +115,7 @@ describe('packages/linnkit shell manifest', () => {
     }
 
     expect(typeof linnkitField.phase).toBe('string');
-    expect(linnkitField.sourceOfTruth).toBe('packages/linnkit/RELEASE.md');
+    expect(linnkitField.sourceOfTruth).toBe('packages/linnkit/docs/release/RELEASE.md');
     expect(Array.isArray(linnkitField.notes)).toBe(true);
     const notes = linnkitField.notes as unknown[];
     expect(notes.length).toBeGreaterThanOrEqual(2);
