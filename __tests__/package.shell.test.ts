@@ -31,11 +31,11 @@ async function readJson(relativePath: string): Promise<Record<string, unknown>> 
  * 任何破坏以上不变量的改动 = break，必须先在 RELEASE.md 留一行变更说明。
  */
 describe('packages/linnkit shell manifest', () => {
-  it('declares the publishable @linnlabs/linnkit 0.1.0 shape with dist-only exports', async () => {
+  it('declares the publishable @linnlabs/linnkit 0.1.1 shape with dist-only exports', async () => {
     const manifest = await readJson('package.json');
 
     expect(manifest.name).toBe('@linnlabs/linnkit');
-    expect(manifest.version).toBe('0.1.0');
+    expect(manifest.version).toBe('0.1.1');
     expect(manifest.private).toBeUndefined();
     expect(manifest.type).toBe('module');
     expect(manifest.main).toBe('./dist/index.cjs');

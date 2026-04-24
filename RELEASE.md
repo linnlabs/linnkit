@@ -1,6 +1,6 @@
 # linnkit · Release / Publish 流水
 
-> **状态**：✅ 0.1.0 工程层就位（2026-04-23）；剩 §5 checklist 的 token / tag / 首发动作尚未触发
+> **状态**：✅ 0.1.1 已发布（2026-04-24）；0.1.0 首发（2026-04-23）；剩 §5.8 / §5.9 留待 S1 启动
 > **拍板背景**：linnsy 准备独立建仓，必须有"linnsy 通过包管理器装 linnkit"的稳定路径。本文是这条路径的**单一权威**。
 > **目标**：让任意外部仓库（首先是 linnsy）能用 `npm install @linnlabs/linnkit` 装到一份**编译后的、版本化的** linnkit。
 >
@@ -9,6 +9,7 @@
 > - 2026-04-23 v1：工程层全部落地。**关键修订**：dev 体验改用 **paths/alias 平行别名**（`linnkit*` + `@linnya/linnkit*` 两组同时登记），而非 `customConditions: ["linnya-dev"]` —— 因为 linnya 主仓本就不通过 node_modules 解析 linnkit，而是靠 `tsconfig.paths` + `vite.alias` + `vitest.alias` 直读 src，customConditions 在这条路径上不会生效。详见 §1.3。
 > - 2026-04-23 v2：**架构归位**——把 `LlmCallOptions` / `ToolCallChunk` / `LlmResponseContent` / `LlmRetryConfig` / `ToolCall` 5 个 AI 引擎协议 type 从 `runtime-kernel/llm/caller.types.ts`（实现层）搬到 `ports/ai-engine.types.ts`（协议层）。原位置改为从 `../../ports` barrel re-export，保持 `llm.LlmCallOptions` namespace 访问语法不变。效果：`ports ⇄ runtime-kernel` 反向循环依赖彻底消除，rollup dts 打包层不再有 circular 警告；`LlmCaller` 全部 47 个单测 + linnya 主仓 boundary guard / harness integration test 全绿。
 > - 2026-04-23 v3：**scope 重选 `@linnya` → `@linnlabs`**。发包前置检查时实测发现 v0 拍板表里"`@linnya` org 已存在"是错的——`github.com/linnya` 是一个 2016 年注册、2018 年后废弃的个人 user 账号（type=User，name="linnya network"），不属于自己；同时 `@linn` 这个最干净的总品牌 scope 被英国 Hi-Fi 公司 Linn Products（github.com/linn，verified org，2014 注册）永久占用。新拍板：用 `@linnlabs`（GitHub username 可注册，命名学上明确表达 "linn 系列总品牌伞"），未来 `@linnlabs/linnya`、`@linnlabs/linnsy` 也都挂同一 scope。所有出现 `@linnya/linnkit` 的位置（包名、tsconfig paths、vite/vitest alias、shell test、CI workflow scope、各种文档表格）一并替换为 `@linnlabs/linnkit`，旧名 `linnkit*` 别名仍保留，linnya 主仓 ~170 处 `import 'linnkit'` 零改动。详见 §0 拍板表 + §1.3。
+> - 2026-04-24 v4：**0.1.1 patch release** —— D-5 schemas detach round 2 落地 + 0.1.0 manifest URL 瑕疵兑现修正。**核心结果**：linnkit 现在真正自包含，src 与 dist 都不再依赖 `@app/schemas` 任何一个符号，dist 自然更小（runtime-kernel.cjs 407 KB → 384 KB，-23 KB），未来"linnkit 独立成 `linnlabs/linnkit` repo"路径上的最大 prerequisite 已清。详见 §3 公开 API 边界表（contracts 现在是 SSE/EventEnvelope 系列真源）+ §5.7 v0.1.1 落地说明。**踩坑教训**：首次 `git tag linnkit-v0.1.1` 时漏改了 `package.json#version` 还是 0.1.0，CI 在 `Verify tag matches package.json version` step 兜底 fail（exit 1，未污染 npm）；修复方式 = bump version 后**删除远端旧 tag → 重新打同名 tag → push**。这套兜底机制（workflow yml line 74-84）证明价值，是 v0/v1 工程层就位时设计的"防呆"，2026-04-24 第一次真撞上、第一次确认它工作。
 
 ---
 
@@ -177,7 +178,7 @@ CI / 本地都需要 token：
 |--------|------|------------|
 | `@linnlabs/linnkit` | 框架总入口 | 0.x = patch 兼容，minor 可能 break |
 | `@linnlabs/linnkit/ports` | host 必须实现的 ports | ⭐ 最核心稳定面 |
-| `@linnlabs/linnkit/contracts` | host ⇔ engine 共享 contracts / 类型 | ⭐ 最核心稳定面 |
+| `@linnlabs/linnkit/contracts` | host ⇔ engine 共享 contracts / 类型；**v0.1.1 起也是 `EventEnvelope` / `ExecutionTraceContext` / `SSEEvent` 全系列 + `createSSE*` 工厂 + `DEFAULT_MAX_STEPS` 的真源**（D-5 schemas detach round 2 完成后从 `@app/schemas` 内化）| ⭐ 最核心稳定面 |
 | `@linnlabs/linnkit/runtime-kernel` | runtime 全展开（**Node-only**）| 内部演进可能频繁；接入方装配时小心 |
 | `@linnlabs/linnkit/runtime-kernel/events` | events governance 纯函数（**browser-safe**） | ⭐ slim seam，**永远不允许引入 Node-only 依赖** |
 | `@linnlabs/linnkit/context-manager` | 上下文子系统 | preprocessor / provider 可能新增；既有签名稳定 |
@@ -219,6 +220,7 @@ S0 启动会后由 linnkit owner 执行，必须先于 S1 完成。
 - [x] **5.6** workflow_dispatch + `dry_run=true` 跑通 —— 2026-04-23 落地：CI run 2m 2s Success，`Publish to GitHub Packages` 步骤按预期 skipped；`https://github.com/orgs/linnlabs/packages` 仍为引导页（零包）确认 dry-run 没真发
 - [x] **5.7** 打 tag `linnkit-v0.1.0` → CI 真发 —— 2026-04-23 落地：包已上 `https://github.com/orgs/linnlabs/packages`；`npm view @linnlabs/linnkit --registry=https://npm.pkg.github.com/` 输出 `@linnlabs/linnkit@0.1.0 | UNLICENSED | deps: none | versions: 1 | latest: 0.1.0 | published by BCAutumn`，shasum + sha512 integrity 齐全
   - **0.1.0 manifest 已知瑕疵**（不影响包可用性，下版本修）：homepage / repository.url / bugs.url 在发包当时错写为虚构的 `linnya/linnya`，0.1.1 已修正为真实仓库 `BCAutumn/Tingtalk_official_version`；GitHub Packages 不支持改已发版本 manifest，所以 0.1.0 元数据保持原样直至 0.1.1 出现
+  - **5.7b · v0.1.1 patch release（2026-04-24 落地）**：commit `45b953b6 release: linnkit v0.1.1 (D-5 schemas detach + manifest URL 修正)` 60 files changed / 181+ / 1189- → tag `linnkit-v0.1.1` push → CI 真发。**首发踩坑**：tag 推早了（`package.json#version` 还是 0.1.0），workflow yml `Verify tag matches package.json version` step 按设计 fail（exit 1，1m14s）；npm 上 0.1.1 没出现，证明兜底机制生效。**修复**：bump `package.json#version` → `0.1.1` → `git push --delete origin linnkit-v0.1.1 && git tag -d linnkit-v0.1.1 && git tag linnkit-v0.1.1 && git push origin linnkit-v0.1.1` → CI 重跑 publish。**0.1.1 实质内容**：①D-5 schemas detach round 2（6 处生产代码 `@app/schemas → ../../contracts`，删 `packages/schemas/src/{execution-events,sse-events,sse/*}.ts`，删 `packages/schemas/package.json` 死 subpath exports `./view-models` / `./runtime-models`，加 `schemasDetach.contract.test.ts` 守门）；②manifest URL 三件套修正（homepage / repository.url / bugs.url 由虚构 `linnya/linnya` 改为真实 `BCAutumn/Tingtalk_official_version`）；③CI workflow upgrade（`actions/checkout@v4 → @v5`、`actions/setup-node@v4 → @v5`，修 Node 20 deprecation warning）。**验证**：dist 体积 runtime-kernel.cjs 407 KB → 384 KB（-23 KB，因 SSE/EventEnvelope 不再 fork inline）、contracts.cjs 增厚（成为真源）、`grep -r '@app/schemas' packages/linnkit/dist` 零命中、linnkit 全量单测 + smoke 全绿、linnya host 侧 `import from 'linnkit/contracts'` 抽样无回归
 - [ ] **5.8** 在新建的 `packages/linnsy-daemon/` 内通过 `.npmrc`（参考 [`packages/linnkit/.npmrc.example`](./.npmrc.example)）+ `"@linnlabs/linnkit": "^0.1.0"` 装一次，跑通 `linnsy doctor` 验证装配链路 —— **留待 S1 启动时执行**
 - [ ] **5.9** 同步更新 [`linnsy/02c-tech-stack.md §3`](../../linnsy/02c-tech-stack.md) 的 `package.json` 草稿，把 `"linnkit": "workspace:*"` 注释成历史，正式形态改为 `"@linnlabs/linnkit": "^0.1.0"`（草稿当前已是新形态，复核即可）—— **留待 S1 启动时执行**
 
@@ -249,3 +251,4 @@ S0 启动会后由 linnkit owner 执行，必须先于 S1 完成。
 - [x] **§5.6 ~ §5.7 首发完成**（2026-04-23）：workflow_dispatch dry-run 2m 2s Success + 打 tag `linnkit-v0.1.0` 触发 CI 真发，`@linnlabs/linnkit@0.1.0` 已活在 GitHub Packages（npm view 验证 sha512 integrity 齐全；published by BCAutumn）
 - [ ] **§5.8 ~ §5.9 留待 S1 启动**：linnsy daemon 第一次装包验证 + 02c-tech-stack 草稿复核（必须在 `packages/linnsy-daemon/` 实体存在后才能做）
 - [x] **CI workflow 升级 + 0.1.0 manifest 瑕疵修正**（2026-04-23 收尾）：actions/checkout / setup-node `@v4 → @v5`（修 Node 20 deprecation warning）+ package.json 三个 URL 字段从虚构 `linnya/linnya` 改为真实 `BCAutumn/Tingtalk_official_version`（0.1.0 已带瑕疵字段无法回炉，下次 0.1.1 出现时即修正）
+- [x] **D-5 schemas detach round 2 + 0.1.1 patch release**（2026-04-24 落地）：linnkit src 与 dist 与 `@app/schemas` 完全脱钩（`SSEEvent` 全系列 / `EventEnvelope` / `ExecutionTraceContext` / `DEFAULT_MAX_STEPS` / `createSSE*` 工厂内化到 `linnkit/contracts`，6 处生产 import 改路径，schemas 侧删源 + 删 dead exports，`schemasDetach.contract.test.ts` 守门）；首发踩"tag 推早 / version 没 bump"坑被 workflow `Verify tag matches package.json version` step 按设计兜住，未污染 npm；修复后 `linnkit-v0.1.1` 成功发布到 `https://github.com/orgs/linnlabs/packages`，dist runtime-kernel.cjs -23 KB；详见 §0 v4 修订 + §5.7b
