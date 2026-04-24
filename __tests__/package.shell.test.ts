@@ -166,7 +166,7 @@ describe('packages/linnkit shell tsconfig', () => {
     expect(paths['@linnlabs/linnkit/context-manager']).toEqual(['./src/context-manager/index.ts']);
     expect(paths['@linnlabs/linnkit/testkit']).toEqual(['./src/testkit/index.ts']);
 
-    expect(paths['@app/schemas']).toEqual(['../schemas/src/index.ts']);
-    expect(paths['@app/schemas/*']).toEqual(['../schemas/src/*']);
+    expect(paths).not.toHaveProperty('@app/schemas');
+    expect(paths).not.toHaveProperty('@app/schemas/*');
   });
 });

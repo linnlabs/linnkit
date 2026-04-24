@@ -13,6 +13,5 @@ describe('src/agent/contracts public exports snapshot', () => {
     expect(symbols).not.toContain('PromptKeys');
     expect(symbols).not.toContain('PromptKey');
     expect(symbols).not.toContain('ConversationNextRequest');
-    expect(symbols).not.toContain('SSEEvent');
   });
 });

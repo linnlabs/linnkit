@@ -1,8 +1,8 @@
 import { AGENT_CONTEXT_BUILDER_CONFIG } from './context/config';
-import * as schemas from '@app/schemas';
+import { DEFAULT_MAX_STEPS } from '../../../contracts';
 
 export const AGENT_CONSTANTS = {
-  DEFAULT_MAX_STEPS: schemas.DEFAULT_MAX_STEPS,
+  DEFAULT_MAX_STEPS,
   DEFAULT_TIMEOUT_MS: 300000,
   DEFAULT_MAX_RETRIES: 3,
   DEFAULT_RETRY_DELAY_MS: 1000,

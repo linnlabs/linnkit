@@ -1,4 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
+import { readdirSync, statSync } from 'node:fs';
+import path from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
@@ -12,6 +14,49 @@ const movedRuntimeExports = [
   'createErrorEvent',
   'validateRuntimeEvent',
 ] as const;
+
+const movedExecutionAndSseExports = [
+  'DEFAULT_MAX_STEPS',
+  'EventEnvelope',
+  'ExecutionTraceContext',
+  'SSEEvent',
+  'SSEThoughtEvent',
+  'SSEToolCallDecisionEvent',
+  'SSEToolProcessEvent',
+  'SSEToolOutputEvent',
+  'SSEFinalAnswerChunkEvent',
+  'SSEFinalAnswerEvent',
+  'SSERequiresUserInteractionEvent',
+  'SSEErrorEvent',
+  'createSSEThoughtEvent',
+  'createSSEToolCallDecisionEvent',
+  'createSSEToolProcessEvent',
+  'createSSEToolOutputEvent',
+  'createSSEFinalAnswerChunkEvent',
+  'createSSEFinalAnswerEvent',
+  'createSSERequiresUserInteractionEvent',
+  'createSSEErrorEvent',
+] as const;
+
+function walkProductionTypeScriptFiles(dir: URL): string[] {
+  const files: string[] = [];
+  for (const entry of readdirSync(dir)) {
+    const entryPath = new URL(`${entry}`, dir);
+    const stat = statSync(entryPath);
+    if (stat.isDirectory()) {
+      if (entry === '__tests__' || entry === 'docs') {
+        continue;
+      }
+      files.push(...walkProductionTypeScriptFiles(new URL(`${entry}/`, dir)));
+      continue;
+    }
+    if (!entry.endsWith('.ts') || entry.endsWith('.test.ts') || entry.endsWith('.spec.ts')) {
+      continue;
+    }
+    files.push(entryPath.pathname);
+  }
+  return files;
+}
 
 describe('contracts migration boundary', () => {
   it('keeps moved A-class runtime exports on src/agent/contracts', () => {
@@ -36,6 +81,9 @@ describe('contracts migration boundary', () => {
     expect(packageJson.exports).toBeDefined();
     expect(packageJson.exports).not.toHaveProperty('./runtime-events');
     expect(packageJson.exports).not.toHaveProperty('./domain-models');
+    expect(packageJson.exports).not.toHaveProperty('./view-models');
+    expect(packageJson.exports).not.toHaveProperty('./runtime-models');
+    expect(packageJson.exports).not.toHaveProperty('./sse-events');
   });
 
   it('removes legacy A-class source files and their derived dead surfaces from packages/schemas', () => {
@@ -58,5 +106,27 @@ describe('contracts migration boundary', () => {
     expect(
       existsSync(new URL('../../../../../packages/schemas/src/runtime-models.ts', import.meta.url)),
     ).toBe(false);
+  });
+
+  it('keeps moved execution and SSE protocol exports on linnkit/contracts', () => {
+    for (const exportName of movedExecutionAndSseExports) {
+      expect(agentContracts).toHaveProperty(exportName);
+    }
+  });
+
+  it('does not expose moved execution and SSE protocol exports from @app/schemas root', () => {
+    for (const exportName of movedExecutionAndSseExports) {
+      expect(appSchemas).not.toHaveProperty(exportName);
+    }
+  });
+
+  it('keeps linnkit production code detached from @app/schemas', () => {
+    const linnkitSrcRoot = new URL('../../..', import.meta.url);
+    const offenders = walkProductionTypeScriptFiles(linnkitSrcRoot)
+      .filter((filePath) => readFileSync(filePath, 'utf8').includes('@app/schemas'))
+      .map((filePath) => path.relative(linnkitSrcRoot.pathname, filePath))
+      .sort();
+
+    expect(offenders).toEqual([]);
   });
 });

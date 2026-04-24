@@ -5,8 +5,8 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { EventBus } from '../event-bus';
-import type { EventEnvelope as Envelope } from '@app/schemas';
 import type { RuntimeEvent } from '../../../contracts';
+import type { EventEnvelope as Envelope } from 'linnkit/contracts';
 
 type EventEnvelope = Envelope<RuntimeEvent>;
 

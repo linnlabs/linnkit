@@ -19,9 +19,8 @@
  */
 
 import { generateExecutionId, generateTraceId } from '../../shared/ids';
-import type { EventEnvelope, ExecutionTraceContext } from '@app/schemas';
 import { Logger } from '../../shared/logger';
-import type { RuntimeEvent } from '../../contracts';
+import type { EventEnvelope, ExecutionTraceContext, RuntimeEvent } from '../../contracts';
 
 const logger = new Logger('EventSequencer');
 

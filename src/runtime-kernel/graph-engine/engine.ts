@@ -1,10 +1,9 @@
-import { DEFAULT_MAX_STEPS } from '@app/schemas';
 import { Logger } from '../../shared/logger';
 import { noopTelemetry } from '../telemetry/noopTelemetry';
 import type { TelemetryPort } from '../telemetry/telemetryPort';
 import type { Checkpointer } from './checkpointer/base';
 import { ENGINE_STATE_SCHEMA_VERSION, type EngineState, type GraphNode, type NodeResult } from './types';
-import type { RuntimeEvent } from '../../contracts';
+import { DEFAULT_MAX_STEPS, type RuntimeEvent } from '../../contracts';
 
 const logger = new Logger('GraphExecutor');
 

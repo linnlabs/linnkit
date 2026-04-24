@@ -1,6 +1,6 @@
 import { GraphNode, EngineState, NodeResult } from '../types';
 import { generateMessageId } from '../../../shared/ids';
-import { createSSERequiresUserInteractionEvent } from '@app/schemas';
+import { createSSERequiresUserInteractionEvent } from '../../../contracts';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);

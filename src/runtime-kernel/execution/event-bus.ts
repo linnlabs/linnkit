@@ -11,9 +11,8 @@
  */
 
 import { EventEmitter } from 'events';
-import type { EventEnvelope } from '@app/schemas';
 import { Logger } from '../../shared/logger';
-import type { RuntimeEvent } from '../../contracts';
+import type { EventEnvelope, RuntimeEvent } from '../../contracts';
 
 const logger = new Logger('EventBus');
 

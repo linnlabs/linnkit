@@ -34,9 +34,7 @@
       "@linnlabs/linnkit/runtime-kernel": ["./src/runtime-kernel/index.ts"],
       "@linnlabs/linnkit/runtime-kernel/events": ["./src/runtime-kernel/events/index.ts"],
       "@linnlabs/linnkit/context-manager": ["./src/context-manager/index.ts"],
-      "@linnlabs/linnkit/testkit": ["./src/testkit/index.ts"],
-      "@app/schemas": ["../schemas/src/index.ts"],
-      "@app/schemas/*": ["../schemas/src/*"]
+      "@linnlabs/linnkit/testkit": ["./src/testkit/index.ts"]
     }
   },
   "include": ["__tests__/**/*.ts"]

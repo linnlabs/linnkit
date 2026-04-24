@@ -29,10 +29,6 @@ import {
   isMarkedAsSseDispatched,
 } from './agentEvents';
 
-import type {
-  SSEEvent
-} from '@app/schemas';
-
 import {
   createSSEThoughtEvent,
   createSSEToolCallDecisionEvent,
@@ -40,8 +36,9 @@ import {
   createSSEToolOutputEvent,
   createSSEFinalAnswerChunkEvent,
   createSSEFinalAnswerEvent,
-  createSSEErrorEvent
-} from '@app/schemas';
+  createSSEErrorEvent,
+  type SSEEvent,
+} from '../../contracts';
 
 import { generateMessageId } from '../../shared/ids';
 import type { ToolPresentationPort } from '../tools/ports';

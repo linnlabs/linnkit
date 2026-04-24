@@ -466,7 +466,7 @@ linnkit 不规定具体的实时通道实现，但要求：
 |--------|------|------|------------|
 | `linnkit` | `./src/index.ts` | root：ports / runtimeKernel namespace / 必要 utility | ❌ Node-only |
 | `linnkit/ports` | `./src/ports/index.ts` | 宿主接入 port 合同 | ❌ Node-only |
-| `linnkit/contracts` | `./src/contracts/index.ts` | 长期稳定的 contract 定义 | ❌ Node-only |
+| `linnkit/contracts` | `./src/contracts/index.ts` | 长期稳定的 contract 定义（消息 / RuntimeEvent / EventEnvelope / SSEEvent / 默认执行常量） | ❌ Node-only |
 | `linnkit/runtime-kernel` | `./src/runtime-kernel/index.ts` | runtime-kernel 全展开 namespace | ❌ Node-only（含 `node:async_hooks` / `crypto` 等） |
 | `linnkit/runtime-kernel/events` | `./src/runtime-kernel/events/index.ts` | **browser-safe slim seam**：仅 events governance 纯函数 | ✅ 浏览器安全 |
 | `linnkit/context-manager` | `./src/context-manager/index.ts` | context 与 task resolver 的兼容导出层 | ❌ Node-only |
