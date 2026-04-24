@@ -70,11 +70,12 @@
   "scripts": {
     "build": "tsup",
     "build:clean": "rm -rf dist",
-    "prepublishOnly": "npm run build:clean && npm run build && npm run test:smoke",
+    "prepublishOnly": "npm run build:clean && npm run build && npm run test:smoke && npm run test:smoke:dist",
     "publish:gh": "npm publish",
     "publish:dry-run": "npm pack --dry-run",
     "typecheck": "npx tsc --noEmit -p tsconfig.json",
-    "test:smoke": "npx vitest run __tests__/package.shell.test.ts __tests__/package.runtime-import.test.ts __tests__/package.events-browser-safe.test.ts"
+    "test:smoke": "npx vitest run __tests__/package.shell.test.ts",
+    "test:smoke:dist": "npx vitest run __tests__/package.runtime-import.test.ts __tests__/package.events-browser-safe.test.ts"
   },
   "dependencies": {
     "tiktoken": "^1.0.22"
