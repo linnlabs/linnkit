@@ -1,4 +1,5 @@
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
+import { isBuiltin } from 'node:module';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -19,7 +20,7 @@ async function readJson(relativePath: string): Promise<Record<string, unknown>> 
 }
 
 /**
- * Smoke test for `@linnlabs/linnkit` 0.1.2 publishable shape.
+ * Smoke test for `@linnlabs/linnkit` 0.1.3 publishable shape.
  *
  * 这个 test 是 docs/release/RELEASE.md §3 工程层不变量的硬性闸门，覆盖：
  *   1. 包元数据（name / version / 不再 private / repository / publishConfig）
@@ -27,15 +28,18 @@ async function readJson(relativePath: string): Promise<Record<string, unknown>> 
  *   3. files 字段只发 dist + 包根 README.md + docs/ 选定子集，不会把 src/ 整棵子树打进 tarball
  *   4. tsconfig.paths 同时为 `linnkit*`（兼容 linnya monorepo）和 `@linnlabs/linnkit*`（真包名）解析
  *   5. linnkit 元数据 notes 仍然守住 browser-safe seam 与前端 deep-import 红线
+ *   6. (0.1.3 新增) src/ 里所有非 node-builtin / 非 alias / 非相对路径的 import 都必须在 package.json
+ *     #dependencies 或 #peerDependencies 里声明 —— 防止 0.1.0~0.1.2 那种 tiktoken 既未 declare
+ *     又未 external 导致被 inline + wasm 资源缺失的灾难重演。
  *
  * 任何破坏以上不变量的改动 = break，必须先在 docs/release/RELEASE.md 留一行变更说明。
  */
 describe('packages/linnkit shell manifest', () => {
-  it('declares the publishable @linnlabs/linnkit 0.1.2 shape with dist-only exports', async () => {
+  it('declares the publishable @linnlabs/linnkit 0.1.3 shape with dist-only exports', async () => {
     const manifest = await readJson('package.json');
 
     expect(manifest.name).toBe('@linnlabs/linnkit');
-    expect(manifest.version).toBe('0.1.2');
+    expect(manifest.version).toBe('0.1.3');
     expect(manifest.private).toBeUndefined();
     expect(manifest.type).toBe('module');
     expect(manifest.main).toBe('./dist/index.cjs');
@@ -172,5 +176,129 @@ describe('packages/linnkit shell tsconfig', () => {
 
     expect(paths).not.toHaveProperty('@app/schemas');
     expect(paths).not.toHaveProperty('@app/schemas/*');
+  });
+});
+
+/**
+ * 0.1.3 新增：src/ 第三方 import 反向稽核。
+ *
+ * 真实事故：0.1.0~0.1.2 三个版本的 TokenCalculator.ts 顶层 `import 'tiktoken'`，但
+ * package.json 既没声明 dep 也没 external，导致 tsup 把整个 tiktoken JS inline 进 dist，
+ * 但 tiktoken_bg.wasm 没跟着进 dist —— 任何 import @linnlabs/linnkit/runtime-kernel 都
+ * 立即 "Missing tiktoken_bg.wasm"。
+ *
+ * 这条测试是结构守卫：扫描 src/ 全部 .ts 的 import 语句，提取所有 bare specifier，
+ * 排除 node-builtin / 自身 alias / 相对路径后，剩下的必须**全部**在 package.json
+ * 的 dependencies / peerDependencies 里出现。否则 break。
+ *
+ * 注意：tsup external 数组也必须同步声明（见 tsup.config.ts 顶部注释），但 external 数组
+ * 是构建期 hint，本测试不直接校验 — 只校验 npm install 闭环。external 漏声明会被
+ * package.runtime-import.test.ts 的实际 import 测出来。
+ */
+describe('packages/linnkit src third-party import reverse audit', () => {
+  async function listTsFiles(dir: string): Promise<string[]> {
+    const entries = await readdir(dir, { withFileTypes: true });
+    const out: string[] = [];
+    for (const entry of entries) {
+      const full = resolve(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (entry.name === '__tests__' || entry.name === 'node_modules') continue;
+        out.push(...(await listTsFiles(full)));
+      } else if (entry.isFile() && /\.(ts|tsx|mts|cts)$/.test(entry.name) && !/\.d\.ts$/.test(entry.name)) {
+        out.push(full);
+      }
+    }
+    return out;
+  }
+
+  function extractBareSpecifiers(source: string): string[] {
+    const specs: string[] = [];
+    const re = /(?:^|\s|;|\}|\))\s*(?:import|export)\s+(?:[^'"]+?\s+from\s+)?['"]([^'"]+)['"]/gm;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(source)) !== null) {
+      specs.push(m[1]);
+    }
+    const re2 = /\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)/g;
+    while ((m = re2.exec(source)) !== null) {
+      specs.push(m[1]);
+    }
+    const re3 = /\brequire\s*\(\s*['"]([^'"]+)['"]\s*\)/g;
+    while ((m = re3.exec(source)) !== null) {
+      specs.push(m[1]);
+    }
+    return specs;
+  }
+
+  function isOwnAlias(spec: string): boolean {
+    return (
+      spec === 'linnkit' ||
+      spec.startsWith('linnkit/') ||
+      spec === '@linnlabs/linnkit' ||
+      spec.startsWith('@linnlabs/linnkit/')
+    );
+  }
+
+  function isRelative(spec: string): boolean {
+    return spec.startsWith('./') || spec.startsWith('../') || spec === '.' || spec === '..';
+  }
+
+  function isAbsolute(spec: string): boolean {
+    return spec.startsWith('/') || /^[a-zA-Z]:[\\/]/.test(spec);
+  }
+
+  function packageNameFromSpecifier(spec: string): string {
+    if (spec.startsWith('@')) {
+      const parts = spec.split('/');
+      return parts.length >= 2 ? `${parts[0]}/${parts[1]}` : spec;
+    }
+    const idx = spec.indexOf('/');
+    return idx === -1 ? spec : spec.slice(0, idx);
+  }
+
+  it('src/ 里所有第三方 bare import 都必须在 package.json dependencies / peerDependencies 里声明', async () => {
+    const testDir = dirname(fileURLToPath(import.meta.url));
+    const srcDir = resolve(testDir, '..', 'src');
+    const manifest = await readJson('package.json');
+    const deps = isRecord(manifest.dependencies) ? Object.keys(manifest.dependencies) : [];
+    const peers = isRecord(manifest.peerDependencies) ? Object.keys(manifest.peerDependencies) : [];
+    const declared = new Set([...deps, ...peers]);
+
+    const files = await listTsFiles(srcDir);
+    expect(files.length).toBeGreaterThan(0);
+
+    const undeclared = new Map<string, string[]>();
+
+    for (const file of files) {
+      const content = await readFile(file, 'utf8');
+      const specs = extractBareSpecifiers(content);
+      for (const spec of specs) {
+        if (isRelative(spec) || isAbsolute(spec)) continue;
+        if (isOwnAlias(spec)) continue;
+        if (isBuiltin(spec)) continue;
+        const pkgName = packageNameFromSpecifier(spec);
+        if (declared.has(pkgName)) continue;
+        const list = undeclared.get(pkgName) ?? [];
+        list.push(file.replace(srcDir, 'src'));
+        undeclared.set(pkgName, list);
+      }
+    }
+
+    if (undeclared.size > 0) {
+      const lines: string[] = [
+        '以下第三方包在 src/ 里被 import 但未在 package.json dependencies / peerDependencies 声明，',
+        '这是 0.1.0~0.1.2 tiktoken 灾难的同款风险（tsup 会 inline 进 dist，wasm/native 资源会缺失）：',
+        '',
+      ];
+      for (const [pkg, fileList] of [...undeclared.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+        lines.push(`  - ${pkg}`);
+        const unique = [...new Set(fileList)].slice(0, 3);
+        for (const f of unique) lines.push(`      ${f}`);
+        if (fileList.length > 3) lines.push(`      ... +${fileList.length - 3} more`);
+      }
+      lines.push('');
+      lines.push('修复：把这些包加入 package.json dependencies（或 peerDependencies），');
+      lines.push('     并同步加入 tsup.config.ts external 数组。');
+      throw new Error(lines.join('\n'));
+    }
   });
 });

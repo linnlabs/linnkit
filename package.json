@@ -1,6 +1,6 @@
 {
   "name": "@linnlabs/linnkit",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "type": "module",
   "description": "linnkit · vendor-neutral Agent framework. runtime-kernel + context-manager + ports + testkit + browser-safe events seam.",
   "license": "UNLICENSED",
@@ -74,15 +74,28 @@
     "publish:gh": "npm publish",
     "publish:dry-run": "npm pack --dry-run",
     "typecheck": "npx tsc --noEmit -p tsconfig.json",
-    "test:smoke": "npx vitest run __tests__/package.shell.test.ts"
+    "test:smoke": "npx vitest run __tests__/package.shell.test.ts __tests__/package.runtime-import.test.ts __tests__/package.events-browser-safe.test.ts"
+  },
+  "dependencies": {
+    "tiktoken": "^1.0.22"
+  },
+  "peerDependencies": {
+    "vitest": "^2.0.0 || ^3.0.0",
+    "zod": "^3.22.0"
+  },
+  "peerDependenciesMeta": {
+    "vitest": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "tsup": "^8.0.0"
   },
   "linnkit": {
-    "phase": "shippable (0.1.2 — docs/ 文档架构重组 + package files/.npmignore 同步刷新；运行时 / exports / 类型签名零变化)",
+    "phase": "shippable (0.1.3 — packaging fix: tiktoken externalized + declared as runtime dep, fixes 0.1.0~0.1.2 'Missing tiktoken_bg.wasm' on import @linnlabs/linnkit/runtime-kernel)",
     "sourceOfTruth": "packages/linnkit/docs/release/RELEASE.md",
     "notes": [
+      "0.1.3 是打包闭合 patch：tiktoken 从 dist inline 改为 external + 在 package.json#dependencies 声明（^1.0.22，与主仓 root 对齐）；vitest 改为 peerDependencies (optional)；runtime-kernel / context-manager / index 三个入口现在能在外部消费者环境干净 import；新增 package.runtime-import.test.ts 与 package.events-browser-safe.test.ts 永久守护；package.shell.test.ts 新增 src 第三方 import 反向稽核守卫，防止同款灾难重演。详见 docs/release/RELEASE.md §0 v6 / RELEASE-HISTORY.md §A.7+§C.5",
       "0.1.2 是文档/打包结构 patch：所有 .md 从 src/ 收口到包根 docs/（docs/{README,INTEGRATION_GUIDE,DEVELOPMENT_GUIDE,framework,release}/），package.json#files + .npmignore 同步刷新，新增包根 README.md 作为 npmjs/GitHub 标准入口；运行时 dist 字节级一致。详见 docs/release/RELEASE.md §0 v5 修订",
       "0.1.1 完成 D-5 schemas detach round 2：6 处生产代码从 @app/schemas 改为本包 contracts，dist 不再 fork @app/schemas 内容；linnkit 真正自包含、零跨包 import。详见 docs/release/RELEASE.md §0 v4 修订",
       "0.1.0 是 linnkit 首个可发布版本；发到 GitHub Packages 私有 scope @linnlabs（linn 系列总品牌 scope；@linn / @linnya GitHub username 已被他人占用，详见 docs/release/RELEASE.md §0 v3 修订）；详见 docs/release/RELEASE.md",
