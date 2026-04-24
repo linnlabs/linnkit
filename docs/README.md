@@ -1,5 +1,7 @@
 # linnkit · Agent Engine 总入口
 
+> **2026-04-24 消费者目录变化**：`linnsy`（linnkit 首批消费者，秘书产品）已从本仓的 `linnya/linnsy/` 子目录迁出到独立 repo **`BCAutumn/linnsy`**（私有）。本仓 `linnya/linnsy/` 已删除。本仓后续提到的 "linnsy" 一律指外部独立仓 `BCAutumn/linnsy`，不再是 monorepo 内子目录。`linnkit` 通过 GitHub Packages 私有 scope `@linnlabs/linnkit` 被 linnsy 装包消费（当前 `0.1.2`）。
+
 `packages/linnkit/src/*` 是 `linnkit` 包的发布真源。任何想做 agent 应用的接入方都通过 `linnkit` package 的公开入口装配它。
 
 linnkit 是 vendor-neutral 的 Agent 框架，**不内置任何具体业务实现**——它提供：runtime-kernel + context-manager + ports + testkit + 公开入口面，让接入方在外部装配自己的宿主。
