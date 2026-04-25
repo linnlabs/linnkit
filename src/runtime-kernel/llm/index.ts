@@ -4,9 +4,12 @@ export { defaultPolicyEngine } from './policies/defaultPolicyEngine';
 
 export type {
   LlmCallOptions,
+  LlmRequestMessage,
   LlmRetryConfig,
   LlmResponseContent,
+  ProviderReasoningDetails,
   ToolCall,
   ToolCallChunk,
+  ToolCallExtraContent,
 } from './caller.types';
 export type { ModelCatalogEntry, ModelCatalogLike } from './modelCatalog';

@@ -1,5 +1,5 @@
-import type { AgentInvocationRequest } from '../../ports';
-import type { AiMessage, RuntimeEvent } from '../../contracts';
+import type { AgentInvocationRequest, LlmRequestMessage } from '../../ports';
+import type { RuntimeEvent } from '../../contracts';
 
 export interface GraphExecutorSummarizationCallbacks {
   onSummarizationStart?: () => void;
@@ -21,7 +21,7 @@ export interface GraphExecutorContextBuildInput {
 
 export interface GraphExecutorContextBuildOutput {
   mode: 'agent' | 'chat';
-  llmMessages: AiMessage[];
+  llmMessages: LlmRequestMessage[];
   summaryEvents: PendingContextRuntimeEvent[];
 }
 

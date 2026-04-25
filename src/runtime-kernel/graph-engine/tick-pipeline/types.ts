@@ -1,4 +1,4 @@
-import type { AgentInvocationRequest } from '../../../ports';
+import type { AgentInvocationRequest, LlmRequestMessage } from '../../../ports';
 import type {
   AnyAgentEvent,
   FinalAnswerEvent,
@@ -10,7 +10,7 @@ import type { LlmCallOptions } from '../../llm/caller';
 import type { TelemetryPort } from '../../telemetry/telemetryPort';
 import type { ExecutorLocalState, StandardToolCall } from '../types';
 import type { GraphExecutorSummarizationCallbacks } from '../executorContextBuilder';
-import type { AiMessage, RuntimeEvent } from '../../../contracts';
+import type { RuntimeEvent } from '../../../contracts';
 
 export type TickEvent = AnyAgentEvent | RuntimeEvent;
 
@@ -71,7 +71,7 @@ export interface TickPipelineContext {
   modelId: string;
   toolSchemas: OpenAIToolSchema[];
   llmOptions: LlmCallOptions;
-  llmMessages: AiMessage[];
+  llmMessages: LlmRequestMessage[];
   mode: 'agent' | 'chat';
   conversationId: string;
   turnId: string;

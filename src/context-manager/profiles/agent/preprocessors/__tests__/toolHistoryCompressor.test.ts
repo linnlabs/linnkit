@@ -13,7 +13,9 @@ function createToolCallsMessage(opts: {
     toolCallId: string;
     toolName: string;
     args: Record<string, unknown>;
+    extraContent?: Record<string, unknown>;
   }>;
+  reasoningDetails?: unknown[];
 }): AiMessage {
   const toolCalls = opts.toolCalls ?? [
     {
@@ -30,6 +32,7 @@ function createToolCallsMessage(opts: {
     content: '',
     timestamp: opts.timestamp,
     metadata: {
+      ...(opts.reasoningDetails ? { reasoning_details: opts.reasoningDetails } : {}),
       tool_calls: toolCalls.map((toolCall) => ({
         id: toolCall.toolCallId,
         type: 'function',
@@ -37,6 +40,7 @@ function createToolCallsMessage(opts: {
           name: toolCall.toolName,
           arguments: JSON.stringify(toolCall.args),
         },
+        ...(toolCall.extraContent ? { extra_content: toolCall.extraContent } : {}),
       })),
     },
   };
@@ -322,5 +326,72 @@ describe('ToolHistoryCompressorPreprocessor', () => {
     expect(compressed?.content).toContain('resource_list');
     expect(compressed?.content).toContain('resource_read');
     expect(compressed?.content).toContain('返回了520字符的文本');
+  });
+
+  it('keeps provider sidecar on retained tool groups and drops structured sidecar from compressed groups', async () => {
+    const preprocessor = new ToolHistoryCompressorPreprocessor({ keepLatestToolPairs: 1 });
+    const oldReasoning = [
+      { provider: 'deepseek', type: 'reasoning_content', reasoning_content: 'Old reason.' },
+    ];
+    const keptReasoning = [
+      { provider: 'deepseek', type: 'reasoning_content', reasoning_content: 'Kept reason.' },
+    ];
+
+    const messages: AiMessage[] = [
+      createUserInput('u_old', 1000, '旧问题'),
+      createToolCallsMessage({
+        id: 'a_tc_old',
+        timestamp: 1100,
+        toolCallId: 'tc_old',
+        toolName: 'workspace_read',
+        args: { path: 'old.md' },
+        reasoningDetails: oldReasoning,
+      }),
+      createToolOutputMessage({
+        id: 't_out_old',
+        timestamp: 1200,
+        toolCallId: 'tc_old',
+        toolName: 'workspace_read',
+        content: 'old output',
+      }),
+      createToolCallsMessage({
+        id: 'a_tc_kept',
+        timestamp: 1300,
+        toolCalls: [
+          {
+            toolCallId: 'tc_kept',
+            toolName: 'workspace_read',
+            args: { path: 'kept.md' },
+            extraContent: {
+              google: { thought_signature: '<sig>' },
+              deepseek: { replay_marker: 'opaque' },
+            },
+          },
+        ],
+        reasoningDetails: keptReasoning,
+      }),
+      createToolOutputMessage({
+        id: 't_out_kept',
+        timestamp: 1400,
+        toolCallId: 'tc_kept',
+        toolName: 'workspace_read',
+        content: 'kept output',
+      }),
+      createUserInput('u_current', 9999, '新问题（本轮开始）'),
+    ];
+
+    const result = await preprocessor.process(messages, { debugMode: false });
+    const kept = result.messages.find((message) => message.id === 'a_tc_kept');
+    const compressed = result.messages.find(
+      (message) => message.metadata?.isCompressedToolHistory === true,
+    );
+
+    expect(kept?.metadata?.reasoning_details).toEqual(keptReasoning);
+    expect(kept?.metadata?.tool_calls?.[0]?.extra_content).toEqual({
+      google: { thought_signature: '<sig>' },
+      deepseek: { replay_marker: 'opaque' },
+    });
+    expect(compressed?.metadata?.reasoning_details).toBeUndefined();
+    expect(compressed?.metadata?.tool_calls).toBeUndefined();
   });
 });

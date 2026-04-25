@@ -18,15 +18,14 @@ import { generateMessageId } from '../../shared/ids';
 import { ErrorClassifier, ErrorCategory } from '../../shared/errorClassifier';
 import type { AgentAiEngine } from '../../ports';
 import { defaultPolicyEngine } from './policies/defaultPolicyEngine';
-import type { LlmCallOptions, LlmResponseContent, LlmRetryConfig, ToolCall } from './caller.types';
+import type { LlmCallOptions, LlmRequestMessage, LlmResponseContent, LlmRetryConfig, ToolCall } from './caller.types';
 import { createEmptyModelCatalog, type ModelCatalogLike } from './modelCatalog';
 import { ModelResolver, type ModelResolverLike } from './modelResolver';
 import { ToolCallStreamAccumulator } from './streaming/toolCallStreamAccumulator';
 import { ThoughtStreamSegmenter } from './streaming/thoughtStreamSegmenter';
 import { tryParseJsonRecord } from './toolCallUtils';
-import type { AiMessage } from '../../contracts';
 
-export type { LlmCallOptions, LlmResponseContent, LlmRetryConfig, ToolCall } from './caller.types';
+export type { LlmCallOptions, LlmRequestMessage, LlmResponseContent, LlmRetryConfig, ToolCall } from './caller.types';
 
 export interface LlmCallerOptions {
   maxRetries?: number;
@@ -191,7 +190,7 @@ export class LlmCaller {
    */
   async call(
     modelId: string,
-    messages: AiMessage[],
+    messages: LlmRequestMessage[],
     options: LlmCallOptions = {},
     signal?: AbortSignal
   ): Promise<string | { content: string; tool_calls?: ToolCall[]; reasoning_details?: unknown[]; usage?: unknown }> {
@@ -249,7 +248,7 @@ export class LlmCaller {
    */
   async callStream(
     modelId: string,
-    messages: AiMessage[],
+    messages: LlmRequestMessage[],
     options: LlmCallOptions = {},
     eventHandler: (event: AnyAgentEvent) => void,
     signal?: AbortSignal
@@ -492,7 +491,7 @@ export class LlmCaller {
    */
   async callWithRetries(
     modelId: string,
-    messages: AiMessage[],
+    messages: LlmRequestMessage[],
     options: LlmCallOptions = {},
     eventHandler?: (event: AnyAgentEvent) => void,
     signal?: AbortSignal,

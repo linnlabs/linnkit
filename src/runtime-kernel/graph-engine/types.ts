@@ -1,4 +1,5 @@
 import type { ToolExecutionContext } from '../tools/toolExecutionContext';
+import type { ToolCallExtraContent } from '../llm';
 import type { RuntimeEvent } from '../../contracts';
 
 export interface ExecutorLocalState {
@@ -66,9 +67,5 @@ export interface StandardToolCall {
     name: string;
     arguments: string;
   };
-  extra_content?: {
-    google?: {
-      thought_signature?: string;
-    };
-  };
+  extra_content?: ToolCallExtraContent;
 }

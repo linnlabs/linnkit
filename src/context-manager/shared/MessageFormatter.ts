@@ -8,6 +8,7 @@ export interface MessageFormatOptions {
 
 export type NativeToolCallingMessage =
   | { role: 'system' | 'user'; content: string }
+  | { role: 'assistant'; content: string }
   | { role: 'assistant'; content: string | null; tool_calls: unknown[]; reasoning_details?: unknown[] }
   | { role: 'tool'; tool_call_id: string; content: string };
 
@@ -75,7 +76,7 @@ class MessageFormatter {
       if (role === 'assistant' && type === 'tool_calls' && metadata?.tool_calls) {
         const toolCallsRaw = metadata.tool_calls;
         const toolCalls = Array.isArray(toolCallsRaw) ? toolCallsRaw : [];
-        const reasoningDetailsRaw = (metadata as any)?.reasoning_details;
+        const reasoningDetailsRaw = metadata.reasoning_details;
         const reasoningDetails = Array.isArray(reasoningDetailsRaw) ? reasoningDetailsRaw : undefined;
         return {
           role: 'assistant',
@@ -163,4 +164,7 @@ class MessageFormatter {
 }
 
 export const messageFormatter = new MessageFormatter();
+export function formatAgentLlmMessages(messages: AiMessage[]): NativeToolCallingMessage[] {
+  return messageFormatter.format(messages, { nativeTools: true, mode: 'agent' });
+}
 export type LlmMessage = ChatMessage | NativeToolCallingMessage;

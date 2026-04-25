@@ -22,9 +22,19 @@
  *   等供应商（由各 adapter 做映射）。
  */
 
+import type { AiMessage } from '../contracts';
+
 /**
  * 工具调用的结构类型（OpenAI tool_calls 兼容）
  */
+export type ProviderReasoningDetails = unknown[];
+
+export type ToolCallExtraContent = {
+  google?: {
+    thought_signature?: string;
+  } & Record<string, unknown>;
+} & Record<string, unknown>;
+
 export interface ToolCall {
   id: string;
   type: 'function';
@@ -33,14 +43,14 @@ export interface ToolCall {
     arguments: string;
   };
   /**
-   * Gemini / Google OpenAI-compat 扩展字段：用于传递 thought_signature。
-   * 说明：Gemini 思考模型在函数调用轮次中会返回该字段，下一轮必须原样回传。
+   * Provider 工具调用扩展载荷。
+   *
+   * 说明：
+   * - linnkit 不解析 provider 私有内容，只负责在工具调用轮次中原样回放；
+   * - Gemini / Google OpenAI-compat 会在 google.thought_signature 中放置签名；
+   * - 其他 provider 可使用自己的命名空间承载不透明 replay 数据。
    */
-  extra_content?: {
-    google?: {
-      thought_signature?: string;
-    };
-  };
+  extra_content?: ToolCallExtraContent;
 }
 
 /**
@@ -54,14 +64,17 @@ export interface ToolCallChunk {
     arguments?: string;
   };
   /**
-   * Gemini / Google OpenAI-compat 增量字段（可能只在首个 tool_call 上出现一次）
+   * Provider 工具调用扩展增量（可能只在首个 tool_call 上出现一次）。
    */
-  extra_content?: {
-    google?: {
-      thought_signature?: string;
-    };
-  };
+  extra_content?: ToolCallExtraContent;
 }
+
+export type LlmRequestMessage =
+  | AiMessage
+  | { role: 'system' | 'user'; content: string }
+  | { role: 'assistant'; content: string }
+  | { role: 'assistant'; content: string | null; tool_calls: unknown[]; reasoning_details?: ProviderReasoningDetails }
+  | { role: 'tool'; tool_call_id: string; content: string };
 
 /**
  * LLM 流式/非流式的统一响应载荷（caller 内部使用）
@@ -70,9 +83,13 @@ export interface LlmResponseContent {
   content?: string;
   tool_calls?: ToolCall[] | ToolCallChunk[];
   /**
-   * OpenRouter / reasoning models 扩展：必须原样回传的 reasoning blocks
+   * Provider reasoning replay blocks。
+   *
+   * 这些 blocks 是不透明的 provider sidecar：linnkit 只负责保存、绑定到工具调用决策并在
+   * 下一轮回放，具体结构由 adapter/policy 解释。部分 reasoning models 在工具调用后
+   * 要求这些 blocks 原样传回，否则后续请求会被拒绝。
    */
-  reasoning_details?: unknown[];
+  reasoning_details?: ProviderReasoningDetails;
   /**
    * 供应商返回的 token 用量（若支持）
    *

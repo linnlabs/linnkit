@@ -10,12 +10,33 @@
 
 import { generateMessageId } from '../../../shared/ids';
 import { splitConcatenatedJsonObjects, tryParseJsonRecord } from '../toolCallUtils';
-import type { ToolCall, ToolCallChunk } from '../caller.types';
+import type { ToolCall, ToolCallChunk, ToolCallExtraContent } from '../caller.types';
 
 const isToolCallChunk = (v: unknown): v is ToolCallChunk => {
   if (!v || typeof v !== 'object') return false;
   return 'index' in v;
 };
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function mergeToolCallExtraContent(
+  existing: ToolCallExtraContent | undefined,
+  incoming: ToolCallExtraContent | undefined,
+): ToolCallExtraContent | undefined {
+  if (!incoming) return existing;
+  const merged: Record<string, unknown> = { ...(existing ?? {}) };
+
+  for (const [namespace, incomingValue] of Object.entries(incoming)) {
+    const existingValue = merged[namespace];
+    merged[namespace] = isRecord(existingValue) && isRecord(incomingValue)
+      ? { ...existingValue, ...incomingValue }
+      : incomingValue;
+  }
+
+  return merged as ToolCallExtraContent;
+}
 
 export class ToolCallStreamAccumulator {
   private toolCalls: ToolCall[] = [];
@@ -116,19 +137,12 @@ export class ToolCallStreamAccumulator {
         }
       }
 
-      // Gemini：thought_signature 可能只在首个 tool_call 片段里出现一次，需要在本地累积并回传
-      const signature =
-        typeof toolCallChunk.extra_content?.google?.thought_signature === 'string'
-          ? toolCallChunk.extra_content.google.thought_signature
-          : undefined;
-      if (signature && !this.toolCalls[index].extra_content?.google?.thought_signature) {
-        this.toolCalls[index].extra_content = {
-          ...(this.toolCalls[index].extra_content || {}),
-          google: {
-            ...((this.toolCalls[index].extra_content || {}).google || {}),
-            thought_signature: signature
-          }
-        };
+      // Provider replay sidecar：extra_content 是按 provider namespace 组织的不透明载荷。
+      if (toolCallChunk.extra_content) {
+        this.toolCalls[index].extra_content = mergeToolCallExtraContent(
+          this.toolCalls[index].extra_content,
+          toolCallChunk.extra_content,
+        );
       }
 
       if (toolCallChunk.function?.name) {

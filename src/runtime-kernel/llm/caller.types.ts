@@ -19,8 +19,11 @@
 
 export type {
   LlmCallOptions,
+  LlmRequestMessage,
   LlmResponseContent,
   LlmRetryConfig,
+  ProviderReasoningDetails,
   ToolCall,
   ToolCallChunk,
+  ToolCallExtraContent,
 } from '../../ports';

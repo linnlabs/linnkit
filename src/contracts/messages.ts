@@ -1,5 +1,28 @@
 import { z } from 'zod';
 
+export const ProviderReasoningDetails = z.array(z.unknown());
+export type ProviderReasoningDetails = z.infer<typeof ProviderReasoningDetails>;
+
+export const ToolCallExtraContent = z.object({
+  google: z.object({
+    thought_signature: z.string().optional(),
+  }).passthrough().optional(),
+}).passthrough();
+
+export type ToolCallExtraContent = z.infer<typeof ToolCallExtraContent>;
+
+export const ToolCallWire = z.object({
+  id: z.string(),
+  type: z.literal('function'),
+  function: z.object({
+    name: z.string(),
+    arguments: z.string(),
+  }),
+  extra_content: ToolCallExtraContent.optional(),
+}).passthrough();
+
+export type ToolCallWire = z.infer<typeof ToolCallWire>;
+
 export const HistorySummaryMeta = z.object({
   messageType: z.literal('summary'),
   originalMessageCount: z.number().int().positive(),
@@ -12,19 +35,8 @@ export const HistorySummaryMeta = z.object({
 export type HistorySummaryMeta = z.infer<typeof HistorySummaryMeta>;
 
 export const ToolCallsMeta = z.object({
-  tool_calls: z.array(z.object({
-    id: z.string(),
-    type: z.literal('function'),
-    function: z.object({
-      name: z.string(),
-      arguments: z.string(),
-    }),
-    extra_content: z.object({
-      google: z.object({
-        thought_signature: z.string().optional(),
-      }).optional(),
-    }).optional(),
-  })),
+  tool_calls: z.array(ToolCallWire),
+  reasoning_details: ProviderReasoningDetails.optional(),
 });
 
 export type ToolCallsMeta = z.infer<typeof ToolCallsMeta>;
@@ -69,22 +81,12 @@ export const PersistentMetadata = z.object({
   includedOldSummary: z.boolean().optional(),
   replacedMessageIds: z.array(z.string()).optional(),
   summarySeq: z.number().int().nonnegative().optional(),
-  tool_calls: z.array(z.object({
-    id: z.string(),
-    type: z.literal('function'),
-    function: z.object({
-      name: z.string(),
-      arguments: z.string(),
-    }),
-    extra_content: z.object({
-      google: z.object({
-        thought_signature: z.string().optional(),
-      }).optional(),
-    }).optional(),
-  })).optional(),
+  tool_calls: z.array(ToolCallWire).optional(),
+  reasoning_details: ProviderReasoningDetails.optional(),
   tool_name: z.string().optional(),
   args: z.record(z.unknown()).optional(),
   tool_call_id: z.string().optional(),
+  raw_output: z.string().optional(),
   image_info: ImageInfoMeta.optional(),
   taskType: z.string().optional(),
   taskId: z.string().optional(),

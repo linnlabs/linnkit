@@ -156,6 +156,21 @@ linnkit 不强制规定 host-bound testkit 的实现细节，但要求第二层 
 2. 用 `LlmCaller` 包一层，让 graph 侧只依赖统一调用口。
 3. 在 runtime factory 里把 model catalog、model resolver、provider adapter 装进同一个依赖袋。
 
+**Reasoning / provider replay sidecar**
+
+部分 reasoning model 在工具调用轮次中会返回必须原样回传的 provider sidecar。linnkit 的通用槽位是：
+
+- `AgentAiEngineStreamContent.reasoning_details`：流式 chunk 或非流式响应中的不透明 reasoning blocks。
+- `RuntimeEvent(tool_call_decision).payload.reasoning_details`：运行时事实事件中的标准持久化位置。
+- `AiMessage.metadata.reasoning_details`：回放到 context-manager 后的标准位置。
+- `tool_calls[*].extra_content`：工具调用自身的 provider 扩展载体，例如需要随工具调用原样回放的签名。
+
+接入方的 adapter 只需要把供应商私有字段归一到这些通用槽位；不要把供应商私有字段直接扩散到 graph-engine 或 context-manager。linnkit 会在 `LlmCaller -> buildDecisionStage -> RuntimeEvent -> eventConverter -> formatAgentLlmMessages` 这条链路上保留这些不透明载荷。
+
+出关到 LLM 时，Agent 模式推荐统一使用 `formatAgentLlmMessages(messages)`。它固定使用 native tool 回放形态，避免把 `AiMessage[]` 误当作最终 LLM request messages。
+
+注意：被工具历史压缩、历史摘要替换或 chat formatter 处理过的旧工具组，不再保证结构化 sidecar 可回放；这是 token 预算与 chat 兼容层的设计取舍。若某个 provider 要求工具调用后的 reasoning blocks 必须回传，应确保对应工具组仍以原始 `tool_call_decision + tool_output` 结构进入下一轮上下文。
+
 **你不要做的**
 
 - 不要让 graph 代码直接知道你家的 HTTP SDK

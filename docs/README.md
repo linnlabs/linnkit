@@ -227,7 +227,31 @@ Layer: `framework`
 - 只放 runtime 必须依赖、但不能自己拥有实现的合同
 - 不放某个产品的默认实现
 
-### 3.4 `shared/*`
+### 3.4 Provider replay sidecar
+
+位置：
+
+- 类型入口：`linnkit/ports`、`linnkit/contracts`
+- 运行时链路：`runtime-kernel/llm/*`、`runtime-kernel/graph-engine/tick-pipeline/*`
+- 回放链路：`context-manager/profiles/agent/utils/eventConverter.ts`、`context-manager/shared/MessageFormatter.ts`
+
+部分 LLM provider 会返回必须随下一轮工具调用原样回放的不透明载荷，例如 reasoning blocks、工具调用签名或其它 provider 扩展。linnkit 的原则是：
+
+- 核心只定义 vendor-neutral 槽位，不解析 provider 私有 JSON。
+- LLM 响应侧统一进入 `reasoning_details` 或 `tool_calls[*].extra_content`。
+- RuntimeEvent 层标准位置是 `tool_call_decision.payload.reasoning_details`。
+- AiMessage 层标准位置是 `metadata.reasoning_details` 与 `metadata.tool_calls[*].extra_content`。
+- Agent 出关给 LLM 时应使用 `formatAgentLlmMessages(...)`，它固定走 native tools 回放形态。
+
+这让接入方 adapter 只负责字段互译：把 DeepSeek、Gemini、Claude、OpenRouter 等供应商私有字段归一化到通用 sidecar；不要让 graph-engine、context-manager 或 host 业务代码知道供应商私有协议。
+
+边界也要明确：
+
+- `subrun_trace` 是 UI / 子过程侧车，不进入主 Agent 上下文。
+- `raw_output` 是 metadata / 审计 / 截断输入，不会作为独立 API 字段自动发给 LLM。
+- 被工具历史压缩或摘要替换的旧工具组会失去结构化 sidecar，只保留摘要文本，这是上下文预算策略，不是 provider replay 通道。
+
+### 3.5 `shared/*`
 
 位置：
 
@@ -248,7 +272,7 @@ Layer: `framework`
 - 把 Agent 框架真正内部需要的共用能力收回 package 内
 - 避免 `packages/linnkit/src/*` 继续回头依赖外部 `src/shared/*`
 
-### 3.5 `testkit/*`
+### 3.6 `testkit/*`
 
 位置：
 

@@ -20,6 +20,23 @@ export const AgentTodoItem = z.object({
   status: AgentTodoStatus,
 });
 
+export const ProviderReasoningDetailsPayload = z.array(z.unknown());
+export type ProviderReasoningDetailsPayload = z.infer<typeof ProviderReasoningDetailsPayload>;
+
+export const ToolCallDecisionPayload = z.object({
+  args: z.record(z.any()).optional(),
+  tool_calls: z.array(z.unknown()).optional(),
+  /**
+   * 不透明 provider reasoning replay blocks。
+   *
+   * RuntimeEvent 层的标准位置是 tool_call_decision.payload.reasoning_details；
+   * context-manager 会把它回放到 AiMessage.metadata.reasoning_details。
+   */
+  reasoning_details: ProviderReasoningDetailsPayload.optional(),
+}).passthrough();
+
+export type ToolCallDecisionPayload = z.infer<typeof ToolCallDecisionPayload>;
+
 export const RuntimeEvent = z.discriminatedUnion('type', [
   BaseEvent.extend({
     type: z.literal('user_input'),
@@ -41,7 +58,7 @@ export const RuntimeEvent = z.discriminatedUnion('type', [
     phase: ToolCallPhase,
     status: Status,
     args: z.record(z.any()).optional(),
-    payload: z.record(z.any()).optional(),
+    payload: ToolCallDecisionPayload.optional(),
     parent_tool_call_id: z.string().optional(),
     meta: z.record(z.any()).optional(),
   }),

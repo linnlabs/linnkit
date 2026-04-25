@@ -13,8 +13,11 @@ export type { AgentAiEngine, AgentAiEngineStreamContent } from './ai-engine';
  */
 export type {
   LlmCallOptions,
+  LlmRequestMessage,
   LlmResponseContent,
   LlmRetryConfig,
+  ProviderReasoningDetails,
   ToolCall,
   ToolCallChunk,
+  ToolCallExtraContent,
 } from './ai-engine.types';

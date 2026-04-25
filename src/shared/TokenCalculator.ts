@@ -1,5 +1,5 @@
 import { get_encoding, Tiktoken } from 'tiktoken';
-import { AiMessage } from '../contracts';
+import type { LlmRequestMessage } from '../ports';
 
 export class TokenCalculator {
   private static readonly BYTES_PER_TOKEN_LATIN = 4;
@@ -55,30 +55,57 @@ export class TokenCalculator {
     return encoder.encode(text).length;
   }
 
-  public static estimateMessageTokensPrecise(message: AiMessage, modelIdentifier: string): number {
+  public static estimateMessageTokensPrecise(message: LlmRequestMessage, modelIdentifier: string): number {
     let totalTokens = this.OVERHEAD_PER_MESSAGE;
 
     if (message.content) {
-      totalTokens += this.estimateTokensPrecise(message.content, modelIdentifier);
+      totalTokens += this.estimateTokensPrecise(String(message.content), modelIdentifier);
     }
 
-    if (message.metadata?.tool_calls && message.metadata.tool_calls.length > 0) {
-      for (const toolCall of message.metadata.tool_calls) {
-        totalTokens += this.OVERHEAD_PER_TOOL_CALL;
-        totalTokens += this.estimateTokensPrecise(toolCall.function.name, modelIdentifier);
-        totalTokens += this.estimateTokensPrecise(toolCall.function.arguments, modelIdentifier);
+    const toolCalls = this.extractToolCallsForTokenEstimate(message);
+    for (const toolCall of toolCalls) {
+      totalTokens += this.OVERHEAD_PER_TOOL_CALL;
+      const fn = toolCall['function'];
+      if (fn && typeof fn === 'object' && !Array.isArray(fn)) {
+        const fnRecord = fn as Record<string, unknown>;
+        totalTokens += this.estimateTokensPrecise(String(fnRecord['name'] ?? ''), modelIdentifier);
+        totalTokens += this.estimateTokensPrecise(String(fnRecord['arguments'] ?? ''), modelIdentifier);
       }
     }
 
-    if (message.metadata?.tool_call_id) {
-      totalTokens += this.estimateTokensPrecise(message.metadata.tool_call_id, modelIdentifier);
+    const toolCallId = this.extractToolCallIdForTokenEstimate(message);
+    if (toolCallId) {
+      totalTokens += this.estimateTokensPrecise(toolCallId, modelIdentifier);
     }
 
     return totalTokens;
   }
 
-  public static estimateMessagesTokensPrecise(messages: AiMessage[], modelIdentifier: string): number {
+  public static estimateMessagesTokensPrecise(messages: LlmRequestMessage[], modelIdentifier: string): number {
     return messages.reduce((total, msg) => total + this.estimateMessageTokensPrecise(msg, modelIdentifier), 0);
+  }
+
+  private static extractToolCallsForTokenEstimate(message: LlmRequestMessage): unknown[] {
+    const direct = 'tool_calls' in message ? message.tool_calls : undefined;
+    if (Array.isArray(direct)) return direct;
+
+    const metadata = 'metadata' in message ? message.metadata : undefined;
+    if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return [];
+    const metadataRecord = metadata as Record<string, unknown>;
+    const metadataToolCalls = metadataRecord['tool_calls'];
+    return Array.isArray(metadataToolCalls) ? metadataToolCalls : [];
+  }
+
+  private static extractToolCallIdForTokenEstimate(message: LlmRequestMessage): string | undefined {
+    if ('tool_call_id' in message && typeof message.tool_call_id === 'string') {
+      return message.tool_call_id;
+    }
+
+    const metadata = 'metadata' in message ? message.metadata : undefined;
+    if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return undefined;
+    const metadataRecord = metadata as Record<string, unknown>;
+    const toolCallId = metadataRecord['tool_call_id'];
+    return typeof toolCallId === 'string' ? toolCallId : undefined;
   }
 
   public static truncateTextByTokens(

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { convertEventsToAiMessages } from '../eventConverter';
 import type { RuntimeEvent } from '../../../../../contracts';
+import { formatAgentLlmMessages } from '../../../../shared';
 
 describe('agent/utils/eventConverter.convertEventsToAiMessages', () => {
   it('会过滤 tool_process，只保留 tool_call_decision 作为 tool_calls 锚点', () => {
@@ -154,5 +155,57 @@ describe('agent/utils/eventConverter.convertEventsToAiMessages', () => {
       ['o_interaction', 'tool', 'tool_output'],
     ]);
     expect(messages[1]?.content).toBe('{"action":"approve"}');
+  });
+
+  it('工具调用回放出关时应保留 provider replay sidecar', () => {
+    const reasoningDetails = [
+      { provider: 'deepseek', type: 'reasoning_content', reasoning_content: 'Need the tool.' },
+    ];
+    const events: RuntimeEvent[] = [
+      {
+        type: 'tool_call_decision',
+        id: 'd_sidecar',
+        conversation_id: 'c1',
+        turn_id: 't1',
+        timestamp: 1,
+        version: 1,
+        tool_name: 'workspace_read',
+        tool_call_id: 'call_sidecar_1',
+        phase: 'start',
+        status: 'loading',
+        payload: {
+          reasoning_details: reasoningDetails,
+          tool_calls: [
+            {
+              id: 'call_sidecar_1',
+              type: 'function',
+              function: { name: 'workspace_read', arguments: '{"path":"README.md"}' },
+              extra_content: {
+                google: { thought_signature: '<sig>' },
+                deepseek: { replay_marker: 'opaque' },
+              },
+            },
+          ],
+        },
+      } as RuntimeEvent,
+    ];
+
+    const aiMessages = convertEventsToAiMessages(events);
+    const llmMessages = formatAgentLlmMessages(aiMessages);
+    const assistant = llmMessages.find((message) => message.role === 'assistant');
+
+    expect(assistant).toBeDefined();
+    if (!assistant || assistant.role !== 'assistant') {
+      throw new Error('expected assistant tool_calls message');
+    }
+    expect(assistant.reasoning_details).toEqual(reasoningDetails);
+    expect(assistant.tool_calls[0]).toEqual(
+      expect.objectContaining({
+        extra_content: expect.objectContaining({
+          google: { thought_signature: '<sig>' },
+          deepseek: { replay_marker: 'opaque' },
+        }),
+      }),
+    );
   });
 });

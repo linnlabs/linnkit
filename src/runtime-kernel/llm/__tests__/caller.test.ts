@@ -311,6 +311,35 @@ describe('LlmCaller', () => {
       }
     });
 
+    it('应该累积流式 reasoning_details 并作为不透明 replay blocks 返回', async () => {
+      const reasoningDetails = [
+        { provider: 'deepseek', type: 'reasoning_content', reasoning_content: 'Need context.' },
+      ];
+      mockChatCompletionStream.mockImplementation(
+        async (
+          _modelId: unknown,
+          _messages: unknown,
+          _options: unknown,
+          onContent: (content: string | { reasoning_details?: unknown[]; content?: string }) => void,
+        ) => {
+          onContent({ reasoning_details: reasoningDetails });
+        },
+      );
+
+      const result = await llmCaller.callStream(
+        testModelId,
+        testMessages,
+        {},
+        vi.fn(),
+      );
+
+      expect(result).toEqual({
+        content: '',
+        tool_calls: [],
+        reasoning_details: reasoningDetails,
+      });
+    });
+
     it('流式 tool_call arguments 若最终不是合法 JSON，不应返回半截 tool_calls', async () => {
       mockChatCompletionStream.mockImplementation(
         async (_modelId: unknown, _messages: unknown, _options: unknown, onContent: (content: unknown) => void) => {
@@ -492,6 +521,70 @@ describe('LlmCaller', () => {
       }
       const googleObj = google as Record<string, unknown>;
       expect(googleObj['thought_signature']).toBe('<Signature_A>');
+    });
+
+    it('应该在流式工具调用中保留非 Google provider 的 extra_content 命名空间', async () => {
+      mockChatCompletionStream.mockImplementation(
+        async (
+          _modelId: unknown,
+          _messages: unknown,
+          _options: unknown,
+          onContent: (c: unknown) => void
+        ) => {
+          onContent({
+            tool_calls: [
+              {
+                index: 0,
+                id: 'call_vendor_1',
+                function: { name: 'workspace_read' },
+                extra_content: {
+                  deepseek: { replay_marker: 'opaque' },
+                  google: { thought_signature: '<Signature_A>', other_opaque: 'kept' },
+                },
+              },
+            ],
+          });
+
+          onContent({
+            tool_calls: [
+              {
+                index: 0,
+                function: { arguments: '{"path":"README.md"}' },
+                extra_content: {
+                  anthropic: { tool_use_signature: '<anthropic-sig>' },
+                },
+              },
+            ],
+          });
+        }
+      );
+
+      const result = await llmCaller.callStream(
+        testModelId,
+        testMessages,
+        {},
+        vi.fn()
+      );
+
+      expect(typeof result).toBe('object');
+      if (typeof result !== 'object' || !result || !('tool_calls' in result)) {
+        throw new Error('预期返回对象包含 tool_calls');
+      }
+
+      const rawToolCalls = (result as { tool_calls: unknown }).tool_calls;
+      expect(Array.isArray(rawToolCalls)).toBe(true);
+      const toolCalls = rawToolCalls as unknown[];
+      const first = toolCalls[0] as unknown;
+      if (!first || typeof first !== 'object') {
+        throw new Error('tool_calls[0] 不是对象');
+      }
+
+      const firstObj = first as Record<string, unknown>;
+      expect(firstObj['extra_content']).toEqual({
+        deepseek: { replay_marker: 'opaque' },
+        google: { thought_signature: '<Signature_A>', other_opaque: 'kept' },
+        anthropic: { tool_use_signature: '<anthropic-sig>' },
+      });
     });
 
     it('应该处理流式调用中的错误', async () => {
