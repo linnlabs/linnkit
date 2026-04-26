@@ -14,12 +14,23 @@ import {
   type PreprocessorPipeline,
   type PreprocessorPipelineResult,
   createDefaultAgentPreprocessorPipeline,
+  type ToolReplayProtocolPolicy,
 } from '../preprocessors';
 import { ToolManager } from '../tools/ToolManager';
 import type { AgentTaskResolver } from '../tasks/base';
 import { convertEventsToAiMessages } from '../utils/eventConverter';
 import type { GenerateRequest, GenerateResponse } from '../../chat/contracts';
 import type { AiMessage, RuntimeEvent } from '../../../../contracts';
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function readOptionalStringProperty(value: unknown, key: string): string | undefined {
+  if (!isRecord(value)) return undefined;
+  const candidate = value[key];
+  return typeof candidate === 'string' && candidate.trim().length > 0 ? candidate : undefined;
+}
 
 export interface AgentOrchestratorOptions {
   tokenBudget: {
@@ -31,6 +42,10 @@ export interface AgentOrchestratorOptions {
     preserveMetadata?: boolean;
   };
   model?: string;
+  resolveToolReplayProtocolPolicy?: (params: {
+    request: AgentProfileRequest;
+    modelId: string;
+  }) => ToolReplayProtocolPolicy | undefined;
   taskResolver: AgentTaskResolver;
   providerRegistry: ContextProviderRegistry;
 }
@@ -74,11 +89,18 @@ export class AgentMessageOrchestrator {
     if (!this.preprocessorPipeline && toolManager) {
       this.preprocessorPipeline = createDefaultAgentPreprocessorPipeline({
         debugMode: this.options.processing.debugMode,
-        model: 'default',
+        model: this.options.model ?? 'default',
         toolSummaryProvider: toolManager.getSummaryProvider(),
       });
       this.toolManager = toolManager;
     }
+  }
+
+  private resolvePreprocessorModel(request: AgentProfileRequest): string {
+    return readOptionalStringProperty(request, 'model_id')
+      ?? readOptionalStringProperty(request, 'modelId')
+      ?? this.options.model
+      ?? 'default';
   }
 
   async processAgentConversation(
@@ -139,6 +161,14 @@ export class AgentMessageOrchestrator {
       });
 
       this.ensurePreprocessorPipeline(toolManager);
+      const modelId = this.resolvePreprocessorModel(request);
+      this.preprocessorPipeline.updateContext({
+        model: modelId,
+        toolReplayProtocolPolicy: this.options.resolveToolReplayProtocolPolicy?.({
+          request,
+          modelId,
+        }),
+      });
 
       const preprocessResult = await this.runPreprocessorPipeline(allMessages);
       this.debug('Preprocessor pipeline completed', {

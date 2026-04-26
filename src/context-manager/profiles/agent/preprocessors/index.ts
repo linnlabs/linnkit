@@ -8,12 +8,14 @@ import {
   UserQuoteLifetimePreprocessor,
 } from '../../../shared/preprocessors';
 import { ToolHistoryCompressorPreprocessor } from './toolHistoryCompressor';
+import { ToolReplayProtocolGuardPreprocessor } from './toolReplayProtocolGuard';
 import type { AiMessage } from '../../../../contracts';
 
 // 重新导出公共接口
 export * from './base';
 export { HistoryPurificationPreprocessor } from '../../../shared/preprocessors';
 export * from './toolHistoryCompressor';
+export * from './toolReplayProtocolGuard';
 
 /**
  * 预处理器注册表 - 管理所有预处理器及其执行顺序
@@ -227,7 +229,8 @@ export interface PreprocessorPipelineResult {
  * 
  * 🔥 这里定义了Agent预处理管道的默认配置：
  * 1. ToolHistoryCompressorPreprocessor (priority: 0) - 工具历史压缩，最先执行
- * 2. HistoryPurificationPreprocessor (priority: 1) - Agent历史净化，在压缩后执行
+ * 2. ToolReplayProtocolGuardPreprocessor (priority: 0.5) - 工具回放协议守卫，仅治理历史轮次
+ * 3. HistoryPurificationPreprocessor (priority: 1) - Agent历史净化，在压缩后执行
  * 
  * 💡 未来可扩展:
  * 3. AgentToolCallValidationPreprocessor (priority: 2) - 工具调用验证
@@ -238,6 +241,9 @@ export function createDefaultAgentPreprocessorRegistry(): PreprocessorRegistry {
   
   // 注册工具历史压缩预处理器 - 优先级0，最先执行
   registry.register(new ToolHistoryCompressorPreprocessor());
+
+  // 注册工具回放协议守卫 - 压缩后、净化前执行，避免旧工具组伪装为结构化 replay
+  registry.register(new ToolReplayProtocolGuardPreprocessor());
   
   // 注册Agent历史净化预处理器 - 优先级1，在压缩后执行
   // 🔥 使用共享实现，配置 Agent 模式的日志前缀

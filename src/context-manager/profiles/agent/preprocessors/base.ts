@@ -1,12 +1,21 @@
 import type { ToolSummaryProvider } from '../../../shared/preprocessors/base';
 import type { AiMessage } from '../../../../contracts';
 
+export type MissingSidecarBehavior = 'allow' | 'degrade_to_text' | 'provider_empty_replay_field';
+
+export interface ToolReplayProtocolPolicy {
+  provider?: string;
+  requiresReasoningDetailsForToolReplay?: boolean;
+  missingSidecarBehavior?: MissingSidecarBehavior;
+}
+
 /**
  * Preprocessor context object
  */
 export interface PreprocessorContext {
   debugMode?: boolean;
   model?: string;
+  toolReplayProtocolPolicy?: ToolReplayProtocolPolicy;
   toolSummaryProvider?: ToolSummaryProvider;
 }
 

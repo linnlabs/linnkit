@@ -29,8 +29,8 @@ export const ToolCallDecisionPayload = z.object({
   /**
    * 不透明 provider reasoning replay blocks。
    *
-   * RuntimeEvent 层的标准位置是 tool_call_decision.payload.reasoning_details；
-   * context-manager 会把它回放到 AiMessage.metadata.reasoning_details。
+      * RuntimeEvent 层的标准位置是 assistant 产出事件携带 reasoning_details；
+      * context-manager 会把它回放到 AiMessage.metadata.reasoning_details。
    */
   reasoning_details: ProviderReasoningDetailsPayload.optional(),
 }).passthrough();
@@ -125,6 +125,7 @@ export const RuntimeEvent = z.discriminatedUnion('type', [
     answer_id: z.string(),
     content: z.string(),
     is_complete: z.boolean().default(true),
+    reasoning_details: ProviderReasoningDetailsPayload.optional(),
     meta: z.record(z.any()).optional(),
   }),
   BaseEvent.extend({

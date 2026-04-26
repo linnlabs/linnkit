@@ -2,16 +2,12 @@
  * @file src/agent/runtime-kernel/llm/policies/defaultPolicyEngine.ts
  *
  * @description
- * 默认 PolicyEngine（集中注册当前项目支持的 provider/model 策略）。
+ * linnkit 的默认 PolicyEngine 不注册任何 provider/model 策略。
+ *
+ * provider 适配属于宿主集成层职责。宿主可以复用 `LLMPolicyEngine`
+ * 并显式注入自己的 policies。
  */
 
 import { LLMPolicyEngine } from './policyEngine';
-import { openrouterGeminiPolicy } from './openrouterGeminiPolicy';
-import { openrouterLocationPolicy } from './openrouterLocationPolicy';
-import { moonshotKimiPolicy } from './moonshotKimiPolicy';
 
-export const defaultPolicyEngine = new LLMPolicyEngine([
-  openrouterLocationPolicy,
-  openrouterGeminiPolicy,
-  moonshotKimiPolicy
-]);
+export const defaultPolicyEngine = new LLMPolicyEngine([]);

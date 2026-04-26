@@ -67,6 +67,7 @@ export interface FinalAnswerEvent extends AgentEvent {
   answer: string;
   answer_id?: string;
   answerId?: string;
+  reasoning_details?: unknown[];
   meta?: Record<string, unknown>;
 }
 
@@ -85,6 +86,11 @@ export interface StreamChunkEvent extends AgentEvent {
   isLast?: boolean;
 }
 
+export interface ProviderSidecarEvent extends AgentEvent {
+  type: 'provider_sidecar';
+  reasoning_details?: unknown[];
+}
+
 export type AnyAgentEvent =
   | ThoughtEvent
   | ToolCallDecisionEvent
@@ -92,7 +98,8 @@ export type AnyAgentEvent =
   | ObservationEvent
   | FinalAnswerEvent
   | ErrorEvent
-  | StreamChunkEvent;
+  | StreamChunkEvent
+  | ProviderSidecarEvent;
 
 export function isMarkedAsSseDispatched(event: unknown): boolean {
   return isRecord(event) && event['__dispatched_via_sse__'] === true;

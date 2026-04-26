@@ -326,11 +326,12 @@ describe('LlmCaller', () => {
         },
       );
 
+      const events: unknown[] = [];
       const result = await llmCaller.callStream(
         testModelId,
         testMessages,
         {},
-        vi.fn(),
+        (event) => events.push(event),
       );
 
       expect(result).toEqual({
@@ -338,6 +339,12 @@ describe('LlmCaller', () => {
         tool_calls: [],
         reasoning_details: reasoningDetails,
       });
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: 'provider_sidecar',
+          reasoning_details: reasoningDetails,
+        }),
+      );
     });
 
     it('流式 tool_call arguments 若最终不是合法 JSON，不应返回半截 tool_calls', async () => {

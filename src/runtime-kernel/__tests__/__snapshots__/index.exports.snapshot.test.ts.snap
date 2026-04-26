@@ -10,6 +10,7 @@ exports[`src/agent/runtime-kernel public exports snapshot > exposes the document
   "EventBusSubRunTracePublisher",
   "GraphAgentExecutor",
   "GraphExecutor",
+  "LLMPolicyEngine",
   "LlmCaller",
   "LlmNode",
   "MemoryCheckpointer",
@@ -103,6 +104,7 @@ exports[`src/agent/runtime-kernel public exports snapshot > snapshots the graph 
 
 exports[`src/agent/runtime-kernel public exports snapshot > snapshots the llm namespace 1`] = `
 [
+  "LLMPolicyEngine",
   "LlmCaller",
   "ModelResolver",
   "defaultPolicyEngine",

@@ -165,6 +165,9 @@ export function convertEventToAiMessage(event: RuntimeEvent): AiMessage {
         type: 'final_answer',
         content: event.content || '',
         timestamp: event.timestamp,
+        metadata: {
+          reasoning_details: Array.isArray(event.reasoning_details) ? event.reasoning_details : undefined,
+        },
       };
 
     default:
@@ -230,6 +233,9 @@ export function convertAiMessageToEvent(
         content: message.content,
         answer_id: (overrides as Partial<FinalAnswerEvent> | undefined)?.answer_id,
         is_complete: true,
+        reasoning_details: Array.isArray(message.metadata?.reasoning_details)
+          ? message.metadata.reasoning_details
+          : undefined,
       } as RuntimeEvent;
     default:
       return {

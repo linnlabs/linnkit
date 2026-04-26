@@ -69,11 +69,15 @@ export function createBuildDecisionStage(
 
       if (!ctx.input.stream) {
         const answerId = generateMessageId();
+        const finalAnswerSidecar = Array.isArray(reasoningDetailsRaw) && reasoningDetailsRaw.length > 0
+          ? { reasoning_details: reasoningDetailsRaw }
+          : {};
         const finalEvent: FinalAnswerEvent = {
           type: 'final_answer',
           timestamp: Date.now(),
           answer: respText,
           id: generateMessageId(),
+          ...finalAnswerSidecar,
         };
         ctx.eventHandler?.(finalEvent);
         ctx.newEvents.push({
@@ -86,6 +90,7 @@ export function createBuildDecisionStage(
           answer_id: answerId,
           content: respText,
           is_complete: true,
+          ...finalAnswerSidecar,
         });
         ctx.decision = { kind: 'final_answer', answer: respText };
         return;

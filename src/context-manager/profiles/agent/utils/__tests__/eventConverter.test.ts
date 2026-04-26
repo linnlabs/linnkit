@@ -208,4 +208,37 @@ describe('agent/utils/eventConverter.convertEventsToAiMessages', () => {
       }),
     );
   });
+
+  it('最终回答回放出关时应保留 provider replay sidecar', () => {
+    const reasoningDetails = [
+      { provider: 'deepseek', type: 'reasoning_content', reasoning_content: 'Answer after tool.' },
+    ];
+    const events: RuntimeEvent[] = [
+      {
+        type: 'final_answer',
+        id: 'fa_sidecar',
+        conversation_id: 'c1',
+        turn_id: 't1',
+        timestamp: 1,
+        version: 1,
+        answer_id: 'ans_sidecar',
+        content: '最终回答。',
+        is_complete: true,
+        reasoning_details: reasoningDetails,
+      } as RuntimeEvent,
+    ];
+
+    const aiMessages = convertEventsToAiMessages(events);
+    expect(aiMessages[0].metadata?.reasoning_details).toEqual(reasoningDetails);
+
+    const llmMessages = formatAgentLlmMessages(aiMessages);
+    const assistant = llmMessages.find((message) => message.role === 'assistant');
+
+    expect(assistant).toBeDefined();
+    if (!assistant || assistant.role !== 'assistant') {
+      throw new Error('expected assistant final answer message');
+    }
+    expect(assistant.content).toBe('最终回答。');
+    expect(assistant.reasoning_details).toEqual(reasoningDetails);
+  });
 });

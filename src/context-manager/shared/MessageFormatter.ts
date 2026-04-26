@@ -8,8 +8,8 @@ export interface MessageFormatOptions {
 
 export type NativeToolCallingMessage =
   | { role: 'system' | 'user'; content: string }
-  | { role: 'assistant'; content: string }
-  | { role: 'assistant'; content: string | null; tool_calls: unknown[]; reasoning_details?: unknown[] }
+  | { role: 'assistant'; content: string; reasoning_details?: unknown[]; provider_empty_replay_field?: true }
+  | { role: 'assistant'; content: string | null; tool_calls: unknown[]; reasoning_details?: unknown[]; provider_empty_replay_field?: true }
   | { role: 'tool'; tool_call_id: string; content: string };
 
 class MessageFormatter {
@@ -78,11 +78,25 @@ class MessageFormatter {
         const toolCalls = Array.isArray(toolCallsRaw) ? toolCallsRaw : [];
         const reasoningDetailsRaw = metadata.reasoning_details;
         const reasoningDetails = Array.isArray(reasoningDetailsRaw) ? reasoningDetailsRaw : undefined;
+        const shouldUseProviderEmptyReplayField = metadata.provider_empty_replay_field === true;
         return {
           role: 'assistant',
           content: content || null,
           tool_calls: toolCalls,
           ...(reasoningDetails && reasoningDetails.length > 0 ? { reasoning_details: reasoningDetails } : {}),
+          ...(shouldUseProviderEmptyReplayField ? { provider_empty_replay_field: true as const } : {}),
+        };
+      }
+
+      if (role === 'assistant' && type === 'final_answer') {
+        const reasoningDetailsRaw = metadata?.reasoning_details;
+        const reasoningDetails = Array.isArray(reasoningDetailsRaw) ? reasoningDetailsRaw : undefined;
+        const shouldUseProviderEmptyReplayField = metadata?.provider_empty_replay_field === true;
+        return {
+          role: 'assistant',
+          content,
+          ...(reasoningDetails && reasoningDetails.length > 0 ? { reasoning_details: reasoningDetails } : {}),
+          ...(shouldUseProviderEmptyReplayField ? { provider_empty_replay_field: true as const } : {}),
         };
       }
 

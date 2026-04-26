@@ -33,6 +33,8 @@ export interface AgentProfileRecentRejection {
 export interface AgentProfileRequest {
   query: string;
   promptKey: string;
+  model_id?: string;
+  modelId?: string;
   context_before?: string;
   context_after?: string;
   document_fragment?: string;

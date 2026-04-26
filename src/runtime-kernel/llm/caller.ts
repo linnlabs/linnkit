@@ -18,6 +18,7 @@ import { generateMessageId } from '../../shared/ids';
 import { ErrorClassifier, ErrorCategory } from '../../shared/errorClassifier';
 import type { AgentAiEngine } from '../../ports';
 import { defaultPolicyEngine } from './policies/defaultPolicyEngine';
+import type { LLMPolicyMatchContext, LLMPolicyErrorDecision } from './policies/types';
 import type { LlmCallOptions, LlmRequestMessage, LlmResponseContent, LlmRetryConfig, ToolCall } from './caller.types';
 import { createEmptyModelCatalog, type ModelCatalogLike } from './modelCatalog';
 import { ModelResolver, type ModelResolverLike } from './modelResolver';
@@ -34,6 +35,9 @@ export interface LlmCallerOptions {
   fallbackModelPreferredOrder?: readonly string[];
   modelResolver?: ModelResolverLike;
   modelCatalog?: ModelCatalogLike;
+  policyEngine?: {
+    decideOnError(error: Error, ctx: LLMPolicyMatchContext): LLMPolicyErrorDecision;
+  };
   aiEngine: AgentAiEngine;
 }
 
@@ -119,6 +123,7 @@ export class LlmCaller {
   private readonly retryConfig: LlmRetryConfig;
   private readonly modelResolver: ModelResolverLike;
   private readonly modelCatalog: ModelCatalogLike;
+  private readonly policyEngine: NonNullable<LlmCallerOptions['policyEngine']>;
   private readonly aiEngine: AgentAiEngine;
 
   constructor(options?: Partial<LlmRetryConfig> | LlmCallerOptions) {
@@ -135,6 +140,7 @@ export class LlmCaller {
         modelCatalog: normalizedOptions.modelCatalog,
       });
     this.modelCatalog = normalizedOptions.modelCatalog ?? createEmptyModelCatalog();
+    this.policyEngine = normalizedOptions.policyEngine ?? defaultPolicyEngine;
     this.aiEngine = normalizedOptions.aiEngine;
   }
 
@@ -343,11 +349,14 @@ export class LlmCaller {
         // OpenRouter: 累积 reasoning_details（必须原样回传）
         const rd = isRecord(chunk) ? chunk['reasoning_details'] : undefined;
         if (rd !== undefined) {
-          if (Array.isArray(rd)) {
-            reasoningDetails.push(...rd);
-          } else {
-            reasoningDetails.push(rd);
-          }
+          const newReasoningDetails = Array.isArray(rd) ? rd : [rd];
+          reasoningDetails.push(...newReasoningDetails);
+          eventHandler({
+            type: 'provider_sidecar',
+            id: generateMessageId(),
+            timestamp: Date.now(),
+            reasoning_details: newReasoningDetails,
+          });
         }
         if (chunk.tool_calls) {
           // 工具调用边界：封口 thought 段落
@@ -725,7 +734,7 @@ export class LlmCaller {
     error: Error;
   }): string | null {
     const activeModelConfig = this.modelCatalog.getModelById(activeModelId);
-    const policyDecision = defaultPolicyEngine.decideOnError(error, {
+    const policyDecision = this.policyEngine.decideOnError(error, {
       modelId: activeModelId,
       apiBase: activeModelConfig?.api_base,
       requestModelName: activeModelConfig?.model_name,

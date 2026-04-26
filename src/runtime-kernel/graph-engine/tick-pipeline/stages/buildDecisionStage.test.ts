@@ -50,4 +50,36 @@ describe('buildDecisionStage provider replay sidecar', () => {
       ],
     });
   });
+
+  it('最终回答事件应保留 LLM 响应中的 reasoning_details', async () => {
+    const reasoningDetails = [
+      { provider: 'deepseek', type: 'reasoning_content', reasoning_content: 'Need a careful answer.' },
+    ];
+    const emittedEvents: TickEvent[] = [];
+    const ctx = createTestTickPipelineContext({
+      context: {
+        input: { stream: false } as never,
+        llmResp: {
+          content: '最终回答。',
+          reasoning_details: reasoningDetails,
+        },
+        eventHandler: (event) => emittedEvents.push(event),
+      },
+    });
+
+    await createBuildDecisionStage({
+      toolPresentation: {
+        getDisplayOptions: () => ({ viewType: 'card' }),
+      },
+    }).run(ctx);
+
+    const finalAnswer = emittedEvents.find((event) => event.type === 'final_answer');
+    expect(finalAnswer).toBeDefined();
+    if (!finalAnswer || finalAnswer.type !== 'final_answer') {
+      throw new Error('expected final_answer event');
+    }
+    expect(finalAnswer.reasoning_details).toEqual(reasoningDetails);
+    const persisted = ctx.newEvents.find((event) => event.type === 'final_answer');
+    expect(persisted?.reasoning_details).toEqual(reasoningDetails);
+  });
 });

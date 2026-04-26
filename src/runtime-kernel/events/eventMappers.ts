@@ -42,13 +42,21 @@ import {
 
 import { generateMessageId } from '../../shared/ids';
 import type { ToolPresentationPort } from '../tools/ports';
-import type { RuntimeEvent, ThoughtEvent as RuntimeThoughtEvent, ToolCallDecisionEvent as RuntimeToolCallDecisionEvent, ToolOutputEvent as RuntimeToolOutputEvent, FinalAnswerEvent as RuntimeFinalAnswerEvent, ErrorEvent as RuntimeErrorEvent, UserInputEvent as RuntimeUserInputEvent, AiMessage } from '../../contracts';
+import type { RuntimeEvent, ThoughtEvent as RuntimeThoughtEvent, ToolCallDecisionEvent as RuntimeToolCallDecisionEvent, ToolOutputEvent as RuntimeToolOutputEvent, FinalAnswerEvent as RuntimeFinalAnswerEvent, ErrorEvent as RuntimeErrorEvent, UserInputEvent as RuntimeUserInputEvent, AiMessage, ToolCallWire } from '../../contracts';
 import { createThoughtEvent, createToolCallDecisionEvent, createToolProcessEvent, createToolOutputEvent, createFinalAnswerEvent, createFinalAnswerChunkEvent, createErrorEvent } from '../../contracts';
 
 /**
  * 轻量类型守卫：避免在转换层引入 any 断言。
  */
 const isRecord = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
+
+const isToolCallWire = (value: unknown): value is ToolCallWire => {
+  if (!isRecord(value)) return false;
+  if (typeof value.id !== 'string') return false;
+  if (value.type !== 'function') return false;
+  const fn = value.function;
+  return isRecord(fn) && typeof fn.name === 'string' && typeof fn.arguments === 'string';
+};
 
 // ================================================================
 // 🎯 上下文类型定义
@@ -484,6 +492,9 @@ export function agentEventToRuntime(
       
       return createFinalAnswerEvent(id, conversationId, turnId, answerId, answer, {
         timestamp,
+        reasoning_details: Array.isArray(finalAnswerEvent.reasoning_details)
+          ? finalAnswerEvent.reasoning_details
+          : undefined,
         meta
       });
     }
@@ -556,12 +567,14 @@ export function applyRuntimeEventToMemory(event: RuntimeEvent, memory: Conversat
     case 'tool_call_decision': {
       const action = event as RuntimeToolCallDecisionEvent;
       const payload = action.payload || {};
-      const toolCalls = payload.tool_calls;
+      const toolCalls = Array.isArray(payload.tool_calls)
+        ? payload.tool_calls.filter(isToolCallWire)
+        : [];
       const toolArgs = action.args || payload.args || {};
       const toolCallId = action.tool_call_id || 
-        (Array.isArray(toolCalls) && toolCalls.length > 0 ? toolCalls[0]?.id : `call_${event.id || Date.now()}`);
+        (toolCalls.length > 0 ? toolCalls[0].id : `call_${event.id || Date.now()}`);
 
-      const normalizedToolCalls = Array.isArray(toolCalls) && toolCalls.length > 0
+      const normalizedToolCalls: ToolCallWire[] = toolCalls.length > 0
         ? toolCalls
         : [
             {
@@ -570,8 +583,19 @@ export function applyRuntimeEventToMemory(event: RuntimeEvent, memory: Conversat
               function: { name: action.tool_name, arguments: JSON.stringify(toolArgs || {}) }
             }
           ];
+      const reasoningDetails = Array.isArray(payload.reasoning_details)
+        ? payload.reasoning_details
+        : undefined;
 
-      memory.addAssistantMessage(null, 'tool_calls', { tool_calls: normalizedToolCalls }, event.id);
+      memory.addAssistantMessage(
+        null,
+        'tool_calls',
+        {
+          tool_calls: normalizedToolCalls,
+          ...(reasoningDetails ? { reasoning_details: reasoningDetails } : {}),
+        },
+        event.id,
+      );
       break;
     }
 
@@ -601,7 +625,10 @@ export function applyRuntimeEventToMemory(event: RuntimeEvent, memory: Conversat
       
       // 新架构：数据现在是干净的，无需解析<think>标签
       if (answerContent.trim()) {
-        memory.addAssistantMessage(answerContent, 'final_answer', undefined, answerEvent.id);
+        const metadata = Array.isArray(answerEvent.reasoning_details)
+          ? { reasoning_details: answerEvent.reasoning_details }
+          : undefined;
+        memory.addAssistantMessage(answerContent, 'final_answer', metadata, answerEvent.id);
       }
       break;
     }
