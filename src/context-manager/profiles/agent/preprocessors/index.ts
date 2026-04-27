@@ -4,18 +4,24 @@ import {
   PreprocessorResult 
 } from './base';
 import {
+  FenceLifetimePreprocessor,
   HistoryPurificationPreprocessor,
   UserQuoteLifetimePreprocessor,
 } from '../../../shared/preprocessors';
+import type { FenceRegistry } from '../../../shared/fences';
 import { ToolHistoryCompressorPreprocessor } from './toolHistoryCompressor';
 import { ToolReplayProtocolGuardPreprocessor } from './toolReplayProtocolGuard';
 import type { AiMessage } from '../../../../contracts';
 
 // 重新导出公共接口
 export * from './base';
-export { HistoryPurificationPreprocessor } from '../../../shared/preprocessors';
+export { FenceLifetimePreprocessor, HistoryPurificationPreprocessor } from '../../../shared/preprocessors';
 export * from './toolHistoryCompressor';
 export * from './toolReplayProtocolGuard';
+
+export interface DefaultAgentPreprocessorRegistryOptions {
+  fenceRegistry?: FenceRegistry;
+}
 
 /**
  * 预处理器注册表 - 管理所有预处理器及其执行顺序
@@ -236,7 +242,9 @@ export interface PreprocessorPipelineResult {
  * 3. AgentToolCallValidationPreprocessor (priority: 2) - 工具调用验证
  * 4. AgentContextOptimizationPreprocessor (priority: 3) - 上下文优化
  */
-export function createDefaultAgentPreprocessorRegistry(): PreprocessorRegistry {
+export function createDefaultAgentPreprocessorRegistry(
+  options: DefaultAgentPreprocessorRegistryOptions = {},
+): PreprocessorRegistry {
   const registry = new PreprocessorRegistry();
   
   // 注册工具历史压缩预处理器 - 优先级0，最先执行
@@ -248,6 +256,10 @@ export function createDefaultAgentPreprocessorRegistry(): PreprocessorRegistry {
   // 注册Agent历史净化预处理器 - 优先级1，在压缩后执行
   // 🔥 使用共享实现，配置 Agent 模式的日志前缀
   registry.register(new HistoryPurificationPreprocessor({ logPrefix: 'Agent-HistoryPurification' }));
+
+  if (options.fenceRegistry) {
+    registry.register(new FenceLifetimePreprocessor({ fenceRegistry: options.fenceRegistry }));
+  }
   
   // 注册引用寿命预处理器 - 优先级2，限制旧轮引用
   registry.register(
@@ -272,8 +284,9 @@ export function createDefaultAgentPreprocessorRegistry(): PreprocessorRegistry {
  * @returns 配置好的Agent预处理管道实例
  */
 export function createDefaultAgentPreprocessorPipeline(
-  context: PreprocessorContext = {}
+  context: PreprocessorContext = {},
+  options: DefaultAgentPreprocessorRegistryOptions = {},
 ): PreprocessorPipeline {
-  const registry = createDefaultAgentPreprocessorRegistry();
+  const registry = createDefaultAgentPreprocessorRegistry(options);
   return new PreprocessorPipeline(registry, context);
 }

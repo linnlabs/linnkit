@@ -13,6 +13,15 @@
 
 import { BaseContextProvider, MessageProcessingState, ProviderContext, ProviderResult } from './base';
 import type { AiMessage } from '../../../../../contracts';
+import {
+  DEFAULT_MUST_KEEP_POLICY,
+  findMatchingTruncationRule,
+  type MustKeepPolicy,
+} from '../../../../shared/policies';
+
+export interface AgentCoreContextProviderOptions {
+  mustKeepPolicy?: MustKeepPolicy;
+}
 
 /**
  * Agent专用核心上下文保留层Provider
@@ -24,6 +33,13 @@ export class AgentCoreContextProvider extends BaseContextProvider {
   readonly name = 'AgentCoreContextProvider';
   readonly description = 'Agent核心上下文保留层 - 识别并保留系统提示词、最新用户输入和注入的上下文';
   readonly priority = 1; // 最高优先级
+
+  private readonly mustKeepPolicy: MustKeepPolicy;
+
+  constructor(options: AgentCoreContextProviderOptions = {}) {
+    super();
+    this.mustKeepPolicy = options.mustKeepPolicy ?? DEFAULT_MUST_KEEP_POLICY;
+  }
 
   async provide(
     states: MessageProcessingState[], 
@@ -53,17 +69,17 @@ export class AgentCoreContextProvider extends BaseContextProvider {
       if (this.isCoreMessage(msg, i, allMessages)) {
         let processedContent = msg.content;
         let contentType: MessageProcessingState['contentType'] = 'full';
+        const truncationRule = findMatchingTruncationRule(msg, this.mustKeepPolicy);
         
-        // 文档片段截断逻辑 - 极端情况处理
-        if (msg.type === 'document_fragment') {
+        if (truncationRule) {
           const originalTokens = context.estimateTokens(msg);
-          const maxAllowedTokens = Math.floor(context.totalBudget * context.config.DOCUMENT_FRAGMENT_MAX_PERCENTAGE);
+          const maxAllowedTokens = Math.floor(context.totalBudget * truncationRule.maxBudgetFraction);
           
           if (originalTokens > maxAllowedTokens) {
             processedContent = this.truncateContent(msg.content, maxAllowedTokens, context.config.AVG_CHARS_PER_TOKEN);
-            strategiesApplied.push('document_truncation');
+            strategiesApplied.push(truncationRule.strategyName);
             
-            this.debug(`📄 文档片段被截断`, {
+            this.debug('📄 核心注入消息被截断', {
               id: msg.id,
               originalTokens,
               maxAllowedTokens,
@@ -128,7 +144,7 @@ export class AgentCoreContextProvider extends BaseContextProvider {
    */
   private isCoreMessage(msg: AiMessage, index: number, allMessages: AiMessage[]): boolean {
     // 规则1: 系统提示词始终无条件保留
-    if (msg.type === 'system_prompt') {
+    if (this.mustKeepPolicy.alwaysKeepTypes.includes(msg.type) && msg.type !== 'user_input') {
       return true;
     }
     
@@ -138,13 +154,8 @@ export class AgentCoreContextProvider extends BaseContextProvider {
       return index === lastUserIndex;
     }
     
-    // 保留所有注入的文档上下文
-    if (msg.role === 'user' && msg.metadata?.fragmentType === 'document') {
-      return true;
-    }
-    
-    // 特殊情况：document_fragment 类型也算注入的上下文
-    if (msg.type === 'document_fragment') {
+    const fenceKind = msg.metadata?.fenceKind;
+    if (fenceKind && this.mustKeepPolicy.alwaysKeepFenceKinds.includes(fenceKind)) {
       return true;
     }
     

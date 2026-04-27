@@ -98,6 +98,9 @@ export const PersistentMetadata = z.object({
     retryCount: z.number().int().nonnegative().optional(),
     lastError: z.string().optional(),
   }).optional(),
+  fenceKind: z.string().optional(),
+  fenceAttrs: z.record(z.unknown()).optional(),
+  fencePlacement: z.string().optional(),
 }).passthrough();
 
 export type PersistentMetadata = z.infer<typeof PersistentMetadata>;
@@ -111,7 +114,7 @@ const BaseMessage = z.object({
 
 export const SystemMessage = BaseMessage.extend({
   role: z.literal('system'),
-  type: z.enum(['system_prompt', 'history_summary']),
+  type: z.enum(['system_prompt', 'history_summary', 'context_injection']),
 });
 
 export type SystemMessage = z.infer<typeof SystemMessage>;
@@ -120,6 +123,7 @@ export const UserMessage = BaseMessage.extend({
   role: z.literal('user'),
   type: z.enum([
     'user_input',
+    'context_injection',
     'context_before',
     'context_after',
     'document_fragment',

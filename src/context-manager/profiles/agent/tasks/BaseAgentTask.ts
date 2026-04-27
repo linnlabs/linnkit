@@ -9,7 +9,17 @@
 import type { AgentProfileRequest } from '../contracts';
 import { IAgentTask } from './base';
 import { generateMessageId } from '../../../../shared/ids';
-import type { AiMessage } from '../../../../contracts';
+import type { AiMessage, PersistentMetadata } from '../../../../contracts';
+import type {
+  FenceDescriptor,
+  FenceInjection,
+  FencePlacement,
+  FenceRegistry,
+} from '../../../shared/fences';
+
+export interface BaseAgentTaskOptions {
+  fenceRegistry?: FenceRegistry;
+}
 
 /**
  * Agent任务的抽象基类
@@ -18,12 +28,18 @@ import type { AiMessage } from '../../../../contracts';
  * @description
  * 现在只负责构建 Agent 任务的核心消息骨架：
  * - system prompt
- * - contextual user messages
+ * - host-provided context injection messages
  * - 当前 user query
  * - 按时序附加 history
  */
 export abstract class BaseAgentTask implements IAgentTask {
   abstract readonly name: string;
+
+  private readonly fenceRegistry?: FenceRegistry;
+
+  constructor(options: BaseAgentTaskOptions = {}) {
+    this.fenceRegistry = options.fenceRegistry;
+  }
 
   protected abstract getSystemPrompt(request: AgentProfileRequest): string;
 
@@ -33,6 +49,7 @@ export abstract class BaseAgentTask implements IAgentTask {
 
   buildMessages(request: AgentProfileRequest, history: AiMessage[]): AiMessage[] {
     const messages: AiMessage[] = [];
+    const fenceMessages = this.createFenceMessages(request.fences ?? []);
 
     const systemPrompt = this.getSystemPrompt(request);
     if (systemPrompt && systemPrompt.trim()) {
@@ -45,113 +62,84 @@ export abstract class BaseAgentTask implements IAgentTask {
       });
     }
 
-    this.addContextualUserMessages(request, messages);
+    messages.push(...fenceMessages['after-system']);
+
+    messages.push(...fenceMessages['before-current-user']);
 
     const hasUserMessageInHistory = history.some((m) => m.role === 'user');
 
     if (!hasUserMessageInHistory && request.query && request.query.trim()) {
-      let userContent = request.query.trim();
-
-      if (request.user_quote?.text) {
-        const quote = request.user_quote;
-        const attrs: string[] = [];
-        const source = quote.source;
-        const docId = source && typeof source['doc_id'] === 'string' ? source['doc_id'] : undefined;
-        const blockId = source && typeof source['block_id'] === 'string' ? source['block_id'] : undefined;
-        const start = source && typeof source['start'] === 'number' ? source['start'] : undefined;
-        const end = source && typeof source['end'] === 'number' ? source['end'] : undefined;
-
-        if (docId) attrs.push(`source_doc="${docId}"`);
-        if (blockId) attrs.push(`block_id="${blockId}"`);
-        if (start !== undefined) attrs.push(`start="${start}"`);
-        if (end !== undefined) attrs.push(`end="${end}"`);
-
-        const openTag = attrs.length > 0 ? `<user_quote ${attrs.join(' ')}>` : '<user_quote>';
-        const quoteBlock = `${openTag}\n${quote.text.trim()}\n</user_quote>`;
-        const queryBlock = `<user_query>\n${userContent}\n</user_query>`;
-        userContent = `${quoteBlock}\n${queryBlock}`;
-      }
-
       messages.push({
         id: generateMessageId(),
         role: 'user',
         type: 'user_input',
-        content: userContent,
+        content: request.query.trim(),
         timestamp: Date.now(),
       });
     }
 
+    messages.push(...fenceMessages['after-current-user']);
     messages.push(...history);
+    this.insertAfterLastToolResult(messages, fenceMessages['after-last-tool-result']);
 
     return messages;
   }
 
-  private addContextualUserMessages(request: AgentProfileRequest, messages: AiMessage[]): void {
-    if (request.context_before?.trim()) {
-      messages.push({
-        id: generateMessageId(),
-        role: 'user',
-        type: 'context_before',
-        content: `[前置上下文]\n${request.context_before.trim()}`,
-        timestamp: Date.now(),
-        metadata: {
-          contextType: 'context_before',
-          fragmentType: 'document',
-        },
-      });
+  private createFenceMessages(fences: FenceInjection[]): Record<FencePlacement, AiMessage[]> {
+    const grouped: Record<FencePlacement, AiMessage[]> = {
+      'after-system': [],
+      'before-current-user': [],
+      'after-current-user': [],
+      'after-last-tool-result': [],
+    };
+
+    if (fences.length === 0) {
+      return grouped;
     }
 
-    const supplementalSections: string[] = [];
-    const projectName = request.project_metadata?.name?.trim();
-    const projectDescription = request.project_metadata?.description?.trim();
-    const documentTitle = request.document_title?.trim();
-    const documentFragment = request.document_fragment?.trim();
-    const injectedContext = request.injected_context?.trim();
-
-    if (projectName || projectDescription) {
-      const projectLines: string[] = [];
-      if (projectName) projectLines.push(`project name: ${projectName}`);
-      if (projectDescription) projectLines.push(`project description: ${projectDescription}`);
-      supplementalSections.push(`<project_context>\n${projectLines.join('\n')}\n</project_context>`);
+    if (!this.fenceRegistry) {
+      throw new Error('Fence injections require a FenceRegistry.');
     }
 
-    if (documentTitle || documentFragment) {
-      const documentLines: string[] = [];
-      if (documentTitle) documentLines.push(`document title: ${documentTitle}`);
-      if (documentFragment) {
-        documentLines.push('document fragment:');
-        documentLines.push(documentFragment);
+    for (const fence of fences) {
+      const descriptor = this.fenceRegistry.get(fence.kind);
+      if (!descriptor) {
+        throw new Error(`Fence kind "${fence.kind}" is not registered.`);
       }
-      supplementalSections.push(`<document_context>\n${documentLines.join('\n')}\n</document_context>`);
+      grouped[descriptor.placement].push(this.createFenceMessage(fence, descriptor));
     }
 
-    if (injectedContext) {
-      supplementalSections.push(injectedContext);
-    }
+    return grouped;
+  }
 
-    if (supplementalSections.length > 0) {
-      messages.push({
-        id: generateMessageId(),
-        role: 'user',
-        type: 'document_fragment',
-        content: supplementalSections.join('\n\n'),
-        timestamp: Date.now(),
-      });
-    }
+  private createFenceMessage(fence: FenceInjection, descriptor: FenceDescriptor): AiMessage {
+    const metadata: PersistentMetadata = {
+      ...fence.metadata,
+      fenceKind: fence.kind,
+      fenceAttrs: fence.attrs ?? {},
+      fencePlacement: descriptor.placement,
+    };
 
-    if (request.context_after?.trim()) {
-      messages.push({
-        id: generateMessageId(),
-        role: 'user',
-        type: 'context_after',
-        content: `[后置上下文]\n${request.context_after.trim()}`,
-        timestamp: Date.now(),
-        metadata: {
-          contextType: 'context_after',
-          fragmentType: 'document',
-        },
-      });
+    return {
+      id: generateMessageId(),
+      role: descriptor.llmRole,
+      type: 'context_injection',
+      content: fence.content,
+      timestamp: Date.now(),
+      metadata,
+    };
+  }
+
+  private insertAfterLastToolResult(messages: AiMessage[], fenceMessages: AiMessage[]): void {
+    if (fenceMessages.length === 0) {
+      return;
     }
+    const lastToolIndex = findLastIndex(messages, message => message.role === 'tool' && message.type === 'tool_output');
+    if (lastToolIndex === -1) {
+      messages.push(...fenceMessages);
+      return;
+    }
+    messages.splice(lastToolIndex + 1, 0, ...fenceMessages);
   }
 
   processResponse(rawResponse: string): string {
@@ -161,4 +149,13 @@ export abstract class BaseAgentTask implements IAgentTask {
   processStreamChunk(chunk: string): string {
     return chunk;
   }
+}
+
+function findLastIndex<T>(items: T[], predicate: (item: T) => boolean): number {
+  for (let index = items.length - 1; index >= 0; index--) {
+    if (predicate(items[index])) {
+      return index;
+    }
+  }
+  return -1;
 }

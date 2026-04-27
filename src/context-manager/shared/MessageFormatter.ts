@@ -1,9 +1,15 @@
 import type { ChatMessage } from '../profiles/chat/contracts';
 import type { AiMessage } from '../../contracts';
+import type { FenceRegistry } from './fences';
 
 export interface MessageFormatOptions {
   nativeTools?: boolean;
   mode?: 'agent' | 'chat';
+  fenceRegistry?: FenceRegistry;
+}
+
+export interface MessageFormatterOptions {
+  fenceRegistry?: FenceRegistry;
 }
 
 export type NativeToolCallingMessage =
@@ -13,6 +19,12 @@ export type NativeToolCallingMessage =
   | { role: 'tool'; tool_call_id: string; content: string };
 
 class MessageFormatter {
+  private readonly fenceRegistry?: FenceRegistry;
+
+  constructor(options: MessageFormatterOptions = {}) {
+    this.fenceRegistry = options.fenceRegistry;
+  }
+
   public format(
     messages: AiMessage[],
     options: { nativeTools: true; mode?: 'agent' | 'chat' },
@@ -71,6 +83,7 @@ class MessageFormatter {
     options: MessageFormatOptions,
   ): ChatMessage | NativeToolCallingMessage | null {
     const { role, type, content, metadata } = message;
+    const fenceRegistry = options.fenceRegistry ?? this.fenceRegistry;
 
     if (options.nativeTools) {
       if (role === 'assistant' && type === 'tool_calls' && metadata?.tool_calls) {
@@ -121,6 +134,22 @@ class MessageFormatter {
       case 'user_input':
       case 'final_answer':
         return { role, content };
+      case 'context_injection': {
+        const fenceKind = metadata?.fenceKind;
+        if (!fenceKind) {
+          console.warn('[MessageFormatter] context_injection missing metadata.fenceKind, skipping.');
+          return null;
+        }
+        const descriptor = fenceRegistry?.get(fenceKind);
+        if (!descriptor) {
+          console.warn(`[MessageFormatter] Fence kind "${fenceKind}" is not registered, skipping.`);
+          return null;
+        }
+        return {
+          role: descriptor.llmRole,
+          content: descriptor.formatter(content, metadata?.fenceAttrs ?? {}),
+        };
+      }
       case 'document_fragment': {
         const trimmedContent = (content || '').trim();
         const wrapped = trimmedContent ? `<additional_context>\n${trimmedContent}\n</additional_context>` : '<additional_context />';
@@ -154,7 +183,7 @@ class MessageFormatter {
         return null;
       }
       case 'task_request':
-        return { role, content: `[${this.getTaskTypeText(metadata?.taskType)}请求] ${content}` };
+        return { role, content };
       case 'task_completion':
         return { role, content: `[任务完成] ${content}` };
       default:
@@ -163,22 +192,16 @@ class MessageFormatter {
     }
   }
 
-  private getTaskTypeText(taskType?: string): string {
-    if (!taskType) {
-      return '任务';
-    }
-    const typeMap: Record<string, string> = {
-      editor: '编辑器写作',
-      annotation: '批注回复',
-      table: '表格填充',
-      transcription: '音频转录',
-    };
-    return typeMap[taskType] || '任务';
-  }
 }
 
 export const messageFormatter = new MessageFormatter();
-export function formatAgentLlmMessages(messages: AiMessage[]): NativeToolCallingMessage[] {
-  return messageFormatter.format(messages, { nativeTools: true, mode: 'agent' });
+export function createMessageFormatter(options: MessageFormatterOptions = {}): MessageFormatter {
+  return new MessageFormatter(options);
+}
+export function formatAgentLlmMessages(
+  messages: AiMessage[],
+  options: Pick<MessageFormatOptions, 'fenceRegistry'> = {},
+): NativeToolCallingMessage[] {
+  return messageFormatter.format(messages, { nativeTools: true, mode: 'agent', ...options });
 }
 export type LlmMessage = ChatMessage | NativeToolCallingMessage;

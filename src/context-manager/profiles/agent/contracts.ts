@@ -3,6 +3,7 @@
  */
 
 import type { AiMessage } from '../../../contracts';
+import type { FenceInjection } from '../../shared/fences';
 
 export interface AgentProfileProjectMetadata {
   id?: string;
@@ -43,9 +44,15 @@ export interface AgentProfileRequest {
   injected_context?: string;
   availableTools?: string[];
   conversationHistory?: AiMessage[];
+  fences?: FenceInjection[];
+  /** @deprecated Host-specific Linnya field. Convert to fences in host adapters. */
   project_metadata?: AgentProfileProjectMetadata;
+  /** @deprecated Host-specific Linnya field. Convert to fences in host adapters. */
   document_metadata?: AgentProfileDocumentMetadata;
+  /** @deprecated Host-specific Linnya field. Convert to fences in host adapters. */
   user_quote?: AgentProfileUserQuote;
+  /** @deprecated Host-specific Linnya field. Convert to fences in host adapters. */
   completionLengthHint?: string;
+  /** @deprecated Host-specific Linnya field. Convert to fences in host adapters. */
   recentRejections?: AgentProfileRecentRejection[];
 }

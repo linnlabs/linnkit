@@ -21,6 +21,7 @@ import type { AgentTaskResolver } from '../tasks/base';
 import { convertEventsToAiMessages } from '../utils/eventConverter';
 import type { GenerateRequest, GenerateResponse } from '../../chat/contracts';
 import type { AiMessage, RuntimeEvent } from '../../../../contracts';
+import type { FenceRegistry } from '../../../shared/fences';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
@@ -48,6 +49,7 @@ export interface AgentOrchestratorOptions {
   }) => ToolReplayProtocolPolicy | undefined;
   taskResolver: AgentTaskResolver;
   providerRegistry: ContextProviderRegistry;
+  fenceRegistry?: FenceRegistry;
 }
 
 export interface AgentProcessingResult {
@@ -91,6 +93,8 @@ export class AgentMessageOrchestrator {
         debugMode: this.options.processing.debugMode,
         model: this.options.model ?? 'default',
         toolSummaryProvider: toolManager.getSummaryProvider(),
+      }, {
+        fenceRegistry: this.options.fenceRegistry,
       });
       this.toolManager = toolManager;
     }
