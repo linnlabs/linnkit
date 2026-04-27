@@ -5,6 +5,19 @@ import type {
 } from '../../tools/ports';
 import { isRecord, readString } from './toolNode.helpers';
 
+export const TOOL_OBSERVATION_PREVIEW_LIMITS = {
+  /**
+   * 执行期 observation 预览阈值。
+   *
+   * 中文说明：
+   * - 这里控制“工具刚执行完后，原始 observation 多长就落盘到 ToolOutputStore”；
+   * - 这是执行期的网络/持久化/实时回放保护，不替代 context-manager 的 `MAX_TOOL_PAIR_TOKENS`；
+   * - `MAX_TOOL_PAIR_TOKENS` 仍负责下一轮构建 LLM 上下文时，对整组 tool_calls + tool_output 做 token 预算兜底。
+   */
+  maxChars: 20_000,
+  maxLines: 1_200,
+} as const;
+
 function buildToolOutputUiMeta(params: {
   toolName: string;
   parsed: Record<string, unknown>;
@@ -67,8 +80,8 @@ export async function applyObservationGovernance(params: {
     context: params.toolContext,
     toolName: params.toolName,
     text: params.structuredObservation,
-    maxChars: 10_000,
-    maxLines: 800,
+    maxChars: TOOL_OBSERVATION_PREVIEW_LIMITS.maxChars,
+    maxLines: TOOL_OBSERVATION_PREVIEW_LIMITS.maxLines,
     meta: buildToolOutputUiMeta({
       toolName: params.toolName,
       parsed: params.parsed,

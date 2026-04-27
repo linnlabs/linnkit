@@ -51,6 +51,30 @@ describe('toolNode.observationGovernance', () => {
     expect(parsed.data).toEqual({ tool_output_store: { blob_id: 'blob_1' } });
   });
 
+  it('应使用执行期 observation 预览阈值', async () => {
+    truncateObservationMock.mockResolvedValue({
+      truncated: false,
+      preview: 'unchanged',
+    });
+
+    await applyObservationGovernance({
+      parsed: { observation: 'content' },
+      toolName: 'search',
+      toolContext: {},
+      structuredObservation: 'content',
+      observationPreview: {
+        truncateObservation: truncateObservationMock,
+      },
+    });
+
+    expect(truncateObservationMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        maxChars: 20_000,
+        maxLines: 1_200,
+      }),
+    );
+  });
+
   it('应按工具名组装 uiMeta', async () => {
     truncateObservationMock.mockResolvedValue({
       truncated: false,

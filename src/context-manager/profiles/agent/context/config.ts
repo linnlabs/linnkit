@@ -98,7 +98,11 @@ export const AGENT_CONTEXT_BUILDER_CONFIG = {
   
   /**
    * 单个工具交互对的最大Token数
-   * - 防止超大工具结果占用过多预算
+   *
+   * 中文说明：
+   * - 这里是上下文构建期的 token 预算兜底，作用对象是整组 `tool_calls + tool_output`；
+   * - 它不负责工具执行后的原始 observation 落盘预览；
+   * - 执行期落盘阈值在 ToolNode observation governance 中维护，二者不要混成一个配置。
    */
   MAX_TOOL_PAIR_TOKENS: 6000,
 
