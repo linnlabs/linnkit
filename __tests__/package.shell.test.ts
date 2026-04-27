@@ -20,11 +20,11 @@ async function readJson(relativePath: string): Promise<Record<string, unknown>> 
 }
 
 /**
- * Smoke test for `@linnlabs/linnkit` 0.2.0 publishable shape.
+ * Smoke test for `@linnlabs/linnkit` 0.2.2 publishable shape.
  *
  * 这个 test 是 docs/release/RELEASE.md §3 工程层不变量的硬性闸门，覆盖：
  *   1. 包元数据（name / version / 不再 private / repository / publishConfig）
- *   2. 6 个公开子入口的 conditional exports（types/import/require 三件套，全部指 dist）
+ *   2. 7 条可 import 子路径的 conditional exports（types/import/require 三件套，全部指 dist）
  *   3. files 字段只发 dist + 包根 README.md + docs/ 选定子集，不会把 src/ 整棵子树打进 tarball
  *   4. tsconfig.paths 同时为 `linnkit*`（兼容 linnya monorepo）和 `@linnlabs/linnkit*`（真包名）解析
  *   5. linnkit 元数据 notes 仍然守住 browser-safe seam 与前端 deep-import 红线
@@ -35,11 +35,11 @@ async function readJson(relativePath: string): Promise<Record<string, unknown>> 
  * 任何破坏以上不变量的改动 = break，必须先在 docs/release/RELEASE.md 留一行变更说明。
  */
 describe('packages/linnkit shell manifest', () => {
-  it('declares the publishable @linnlabs/linnkit 0.2.0 shape with dist-only exports', async () => {
+  it('declares the publishable @linnlabs/linnkit 0.2.2 shape with dist-only exports', async () => {
     const manifest = await readJson('package.json');
 
     expect(manifest.name).toBe('@linnlabs/linnkit');
-    expect(manifest.version).toBe('0.2.0');
+    expect(manifest.version).toBe('0.2.2');
     expect(manifest.private).toBeUndefined();
     expect(manifest.type).toBe('module');
     expect(manifest.main).toBe('./dist/index.cjs');

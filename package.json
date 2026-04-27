@@ -1,6 +1,6 @@
 {
   "name": "@linnlabs/linnkit",
-  "version": "0.2.0",
+  "version": "0.2.2",
   "type": "module",
   "description": "linnkit · vendor-neutral Agent framework. runtime-kernel + context-manager + ports + testkit + browser-safe events seam.",
   "license": "UNLICENSED",
@@ -93,9 +93,11 @@
     "tsup": "^8.0.0"
   },
   "linnkit": {
-    "phase": "shippable (0.2.0 — provider sidecar replay upgrade: final_answer reasoning_details, provider_sidecar stream relay, host-configurable tool replay guard)",
+    "phase": "shippable (0.2.2 — docs: README 7-path + RELEASE §5 trim + HISTORY; dist unchanged vs 0.2.0)",
     "sourceOfTruth": "packages/linnkit/docs/release/RELEASE.md",
     "notes": [
+      "0.2.2 是 docs patch：`docs/README.md` 公开 API 表与 7 条子路径对齐；`docs/release/RELEASE.md` 收束 S0 长清单、现行发版 = §5.1 + §2.1；`RELEASE-HISTORY` 与 linnsy 验证措辞同步。`dist` / exports / 类型与 0.2.1 一致。详见 RELEASE.md §0 v9 / RELEASE-HISTORY.md §A.10+§C.8",
+      "0.2.1 是 docs patch：`docs/INTEGRATION_GUIDE.md` 彻底重写为面向 `npm install @linnlabs/linnkit` 的外部接入说明（真包名、7 子入口、GitHub Packages 鉴权、context engineering fence 一等接入骨架）；`dist` 与 0.2.0 字节级一致、exports/类型签名 0 变化。详见 docs/release/RELEASE.md §0 v8 / RELEASE-HISTORY.md §A.9+§C.7",
       "0.2.0 是 provider sidecar replay 升级：reasoning_details 从工具决策扩展到所有 assistant 产出（含 final_answer）；流式 reasoning_details 通过 provider_sidecar 进入 host finalization；ToolReplayProtocolPolicy 支持 provider_empty_replay_field；linnkit 保持 provider-agnostic，DeepSeek reasoning_content wire format 留在 Linnya integration。详见 docs/release/RELEASE.md §0 v7 / RELEASE-HISTORY.md §A.8+§C.6",
       "0.1.3 是打包闭合 patch：tiktoken 从 dist inline 改为 external + 在 package.json#dependencies 声明（^1.0.22，与主仓 root 对齐）；vitest 改为 peerDependencies (optional)；runtime-kernel / context-manager / index 三个入口现在能在外部消费者环境干净 import；新增 package.runtime-import.test.ts 与 package.events-browser-safe.test.ts 永久守护；package.shell.test.ts 新增 src 第三方 import 反向稽核守卫，防止同款灾难重演。详见 docs/release/RELEASE.md §0 v6 / RELEASE-HISTORY.md §A.7+§C.5",
       "0.1.2 是文档/打包结构 patch：所有 .md 从 src/ 收口到包根 docs/（docs/{README,INTEGRATION_GUIDE,DEVELOPMENT_GUIDE,framework,release}/），package.json#files + .npmignore 同步刷新，新增包根 README.md 作为 npmjs/GitHub 标准入口；运行时 dist 字节级一致。详见 docs/release/RELEASE.md §0 v5 修订",
