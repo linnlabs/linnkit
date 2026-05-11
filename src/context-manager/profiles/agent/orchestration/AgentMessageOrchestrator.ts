@@ -1,6 +1,7 @@
 import type { AgentProfileRequest } from '../contracts';
 import {
   AgentContextManager,
+  type AgentBuildPhase,
   type ContextBuildResult,
   ConversationSession,
 } from '../context';
@@ -71,7 +72,7 @@ export interface AgentProcessingResult {
 
 export class AgentMessageOrchestrator {
   private agentContextManager: AgentContextManager;
-  private preprocessorPipeline: PreprocessorPipeline;
+  private preprocessorPipeline: PreprocessorPipeline | null = null;
   private options: AgentOrchestratorOptions;
   private toolManager: ToolManager | null = null;
   private readonly taskResolver: AgentTaskResolver;
@@ -79,7 +80,6 @@ export class AgentMessageOrchestrator {
   constructor(options: AgentOrchestratorOptions) {
     this.options = options;
     this.taskResolver = options.taskResolver;
-    this.preprocessorPipeline = null as any;
     this.agentContextManager = new AgentContextManager({
       debugMode: options.processing.debugMode,
       customConfig: AGENT_CONTEXT_BUILDER_CONFIG,
@@ -87,7 +87,7 @@ export class AgentMessageOrchestrator {
     });
   }
 
-  private ensurePreprocessorPipeline(toolManager: ToolManager): void {
+  private ensurePreprocessorPipeline(toolManager: ToolManager): PreprocessorPipeline {
     if (!this.preprocessorPipeline && toolManager) {
       this.preprocessorPipeline = createDefaultAgentPreprocessorPipeline({
         debugMode: this.options.processing.debugMode,
@@ -98,6 +98,10 @@ export class AgentMessageOrchestrator {
       });
       this.toolManager = toolManager;
     }
+    if (!this.preprocessorPipeline) {
+      throw new Error('Preprocessor pipeline not initialized.');
+    }
+    return this.preprocessorPipeline;
   }
 
   private resolvePreprocessorModel(request: AgentProfileRequest): string {
@@ -164,9 +168,9 @@ export class AgentMessageOrchestrator {
         });
       });
 
-      this.ensurePreprocessorPipeline(toolManager);
+      const preprocessorPipeline = this.ensurePreprocessorPipeline(toolManager);
       const modelId = this.resolvePreprocessorModel(request);
-      this.preprocessorPipeline.updateContext({
+      preprocessorPipeline.updateContext({
         model: modelId,
         toolReplayProtocolPolicy: this.options.resolveToolReplayProtocolPolicy?.({
           request,
@@ -278,7 +282,7 @@ export class AgentMessageOrchestrator {
     conversationSession: ConversationSession,
     messages: AiMessage[],
     callbacks?: SummarizationCallbacks,
-    phaseOverride?: any,
+    phaseOverride?: AgentBuildPhase,
     generate?: (request: GenerateRequest) => Promise<GenerateResponse>
   ): Promise<ContextBuildResult> {
     const totalBudget =

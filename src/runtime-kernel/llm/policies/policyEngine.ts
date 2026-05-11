@@ -34,7 +34,7 @@ export class LLMPolicyEngine {
     });
   }
 
-  applyBeforeRequest(ctx: LLMPolicyRequestContext): { requestData: any; headers?: Record<string, string> } {
+  applyBeforeRequest(ctx: LLMPolicyRequestContext): { requestData: unknown; headers?: Record<string, string> } {
     const matched = this.matched(ctx);
     let requestData = ctx.requestData;
     let headers = ctx.headers;
@@ -53,7 +53,7 @@ export class LLMPolicyEngine {
     return { requestData, headers };
   }
 
-  applyAfterResponse(ctx: LLMPolicyResponseContext): { responseData: any } {
+  applyAfterResponse(ctx: LLMPolicyResponseContext): { responseData: unknown } {
     const matched = this.matched(ctx);
     let responseData = ctx.responseData;
     for (const p of matched) {
@@ -82,4 +82,3 @@ export class LLMPolicyEngine {
     return { action: 'none' };
   }
 }
-

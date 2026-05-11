@@ -4,6 +4,7 @@ import type { ToolSchemaContext } from './toolSchemaContext';
 import type { ConversationArtifactContext } from './conversationArtifactContext';
 import type {
   OpenAIToolSchema,
+  ToolArgs,
   ToolParameterSchema,
 } from './toolContracts';
 import type { ToolIdempotencyPolicy } from './idempotency/toolIdempotency';
@@ -48,7 +49,7 @@ export interface ToolPresentationPort {
 export interface ToolExecutionPort {
   executeTool(
     toolName: string,
-    args: Record<string, any>,
+    args: ToolArgs,
     context: ToolExecutionContext,
   ): Promise<ToolExecutionResult>;
 }

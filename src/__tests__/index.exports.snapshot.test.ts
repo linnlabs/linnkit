@@ -6,7 +6,7 @@ describe('src/agent public exports snapshot', () => {
     expect(Object.keys(moduleUnderTest).sort()).toMatchSnapshot();
   });
 
-  it('keeps compat exports isolated and internal helpers private', async () => {
+  it('keeps internal helpers private', async () => {
     const moduleUnderTest = await import('../index');
     const symbols = Object.keys(moduleUnderTest);
 
@@ -16,15 +16,10 @@ describe('src/agent public exports snapshot', () => {
     expect(symbols).not.toContain('contextManager');
     expect(symbols).not.toContain('llmTelemetryContext');
     expect(symbols).not.toContain('llmAuditRecorder');
+    const removedCompatNamespace = ['linnkit', 'Compat'].join('');
+    expect(symbols).not.toContain(removedCompatNamespace);
 
     expect(symbols).toContain('contracts');
-    expect(moduleUnderTest.linnkitCompat).toBeDefined();
-    expect(Object.keys(moduleUnderTest.linnkitCompat).sort()).toMatchInlineSnapshot(`
-      [
-        "contextManager",
-        "llmAuditRecorder",
-        "llmTelemetryContext",
-      ]
-    `);
+    expect(symbols).toContain('setLlmAuditRecorder');
   });
 });

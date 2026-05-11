@@ -120,7 +120,7 @@ export class AgentContextManager extends ContextManagerBase<
     preprocessedMessages: AiMessage[],
     totalBudget: number,
     callbacks?: SummarizationCallbacks,
-    phaseOverride?: any,  // 保留参数兼容性，但不再使用
+    phaseOverride?: AgentBuildPhase,  // 保留参数兼容性，但不再使用
     generate?: (request: GenerateRequest) => Promise<GenerateResponse>
   ): Promise<ContextBuildResult> {
     // 计算摘要触发相关信息

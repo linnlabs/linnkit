@@ -1,11 +1,12 @@
 import type { AgentProfileRequest } from '../contracts';
 import type { ToolSummaryProvider } from '../../../shared/preprocessors/base';
+import type { ToolArgs } from 'linnkit/runtime-kernel';
 
 export interface ToolManagerRegistry extends ToolSummaryProvider {
   getAvailableToolNames(toolNames?: string[]): string[];
   validateToolCall(
     toolName: string,
-    args: Record<string, any>,
+    args: ToolArgs,
   ): { success: boolean; error?: string };
 }
 
@@ -26,7 +27,7 @@ export class ToolManager {
 
   validateToolCall(
     toolName: string,
-    args: Record<string, any>,
+    args: ToolArgs,
     context: DynamicToolContext
   ): { success: boolean; error?: string } {
     void context;

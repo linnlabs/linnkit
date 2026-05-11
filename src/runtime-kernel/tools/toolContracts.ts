@@ -2,6 +2,9 @@ import type { ToolDisplayOptions } from './ui-types';
 import type { ToolIdempotencyPolicy } from './idempotency/toolIdempotency';
 import type { ToolExecutionContext } from './toolExecutionContext';
 
+export type ToolArgs = Record<string, unknown>;
+export type JsonObjectSchema = Record<string, unknown>;
+
 export interface ToolParameterProperty {
   type: string;
   description: string;
@@ -30,7 +33,10 @@ export type UnifiedToolResult =
   | { kind: 'need_user'; spec: unknown }
   | { kind: 'async'; run_id: string };
 
-export abstract class BaseTool {
+export abstract class BaseTool<
+  TArgs extends ToolArgs = ToolArgs,
+  TResult extends string = string,
+> {
   abstract readonly name: string;
   abstract readonly description: string;
   abstract readonly parameters: ToolParameterSchema;
@@ -49,9 +55,9 @@ export abstract class BaseTool {
     return `Tool returned ${output.length} characters of output.`;
   }
 
-  abstract run(args: Record<string, any>, context: ToolExecutionContext): Promise<string>;
+  abstract run(args: TArgs, context: ToolExecutionContext): Promise<TResult>;
 
-  protected validateArguments(args: Record<string, any>): { success: boolean; error?: string } {
+  protected validateArguments(args: TArgs): { success: boolean; error?: string } {
     try {
       const required = this.parameters.required || [];
       for (const field of required) {
@@ -94,7 +100,7 @@ export abstract class BaseTool {
 
 export interface ToolRegistryEntry {
   name: string;
-  toolClass: new () => BaseTool;
+  toolClass: new () => BaseTool<ToolArgs, string>;
   metadata: ReturnType<BaseTool['getMetadata']>;
 }
 
@@ -123,11 +129,14 @@ export const CommonParameterTypes = {
   },
 } as const;
 
-export interface AgentTool {
+export interface AgentTool<
+  TArgs extends ToolArgs = ToolArgs,
+  TResult = unknown,
+> {
   name: string;
   description: string;
-  parameters: Record<string, any>;
-  execute(args: Record<string, any>): Promise<any>;
+  parameters: JsonObjectSchema;
+  execute(args: TArgs): Promise<TResult>;
 }
 
 export interface OpenAIToolSchema {
@@ -135,14 +144,14 @@ export interface OpenAIToolSchema {
   function: {
     name: string;
     description: string;
-    parameters: Record<string, any>;
+    parameters: JsonObjectSchema;
   };
 }
 
-export interface ToolCallResult {
+export interface ToolCallResult<TResult = unknown> {
   toolName: string;
-  args: Record<string, any>;
-  result: any;
+  args: ToolArgs;
+  result: TResult;
   success: boolean;
   error?: string;
   durationMs: number;

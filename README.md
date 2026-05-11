@@ -14,7 +14,7 @@
 ## 状态
 
 - npm scope：`@linnlabs/linnkit`
-- 当前版本：`0.1.1`（GitHub Packages 私有发布）
+- 当前版本：以 [`package.json#version`](./package.json) 与 [`docs/release/RELEASE.md`](./docs/release/RELEASE.md) 为准（GitHub Packages 私有发布）
 - 阶段：**0.x experimental** — 7 个稳定子入口已收口；Phase F 协议演进仍在路上（详见 [`docs/framework/`](./docs/framework/)）
 - 公开开源 + npmjs.com 路线见 [`docs/release/RELEASE.md §7`](./docs/release/RELEASE.md)
 

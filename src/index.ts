@@ -15,13 +15,10 @@ export * as contracts from './contracts';
 export { generateMessageId, generateRunId } from './shared/ids';
 export { withLLMTelemetryContext } from './shared/llmTelemetryContext';
 export type { LlmCallTelemetry } from './shared/llmTelemetryContext';
-
-import * as contextManager from './context-manager';
-import * as llmTelemetryContext from './shared/llmTelemetryContext';
-import * as llmAuditRecorder from './shared/llmAuditRecorder';
-
-export const linnkitCompat = {
-  contextManager,
-  llmTelemetryContext,
-  llmAuditRecorder,
-} as const;
+export { setLlmAuditRecorder } from './shared/llmAuditRecorder';
+export type {
+  ContextManagerAuditRecordInput,
+  LlmAuditRecorder,
+  RunTranscriptAuditInput,
+  ToolProtocolErrorAuditInput,
+} from './shared/llmAuditRecorder';

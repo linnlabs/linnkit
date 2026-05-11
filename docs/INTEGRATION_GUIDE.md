@@ -109,7 +109,7 @@ console.log(typeof runtimeKernel.graph);
 
 | 子入口 | 适用环境 | 你能从这里 import 到什么 |
 |---|---|---|
-| `@linnlabs/linnkit` | **Node-only** | `runtimeKernel` / `ports` / `contracts` 三个 namespace；`generateMessageId` / `generateRunId` / `withLLMTelemetryContext` / `linnkitCompat` |
+| `@linnlabs/linnkit` | **Node-only** | `runtimeKernel` / `ports` / `contracts` 三个 namespace；`generateMessageId` / `generateRunId` / `withLLMTelemetryContext` / `setLlmAuditRecorder` |
 | `@linnlabs/linnkit/ports` | **Node-only** | `AgentInvocationRequest` / `AgentAiEngine` / `AgentAiEngineStreamContent` / `LlmCallOptions` / `LlmRequestMessage` / `ToolCall` 等 host 必须实现的合同 |
 | `@linnlabs/linnkit/contracts` | **Node-only** | 长期稳定的合同：`AiMessage` / `SystemMessage` / `UserMessage` / `AssistantMessage` / `ToolMessage` / `RuntimeEvent` / `EventEnvelope` / `SSEEvent` / 默认执行常量 |
 | `@linnlabs/linnkit/runtime-kernel` | **Node-only**（含 `node:async_hooks` / `crypto`） | 全套 runtime：`graph` / `tools` / `execution` / `events` / `runContext` / `llm` / `childRuns` / `runSupervisor` / `telemetry` 等 namespace + 扁平 `BaseTool` / `ToolExecutionContext` / `ENGINE_ERROR_CODES` 等符号 + `createGraphLoopHarness` / `createDefaultGraphExecutor`（仅测试用） |

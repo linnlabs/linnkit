@@ -5,6 +5,7 @@
 
 import {
   BaseContextProvider,
+  ContextProviderError,
   ProviderResult,
   MessageProcessingState,
 } from './base';
@@ -156,7 +157,13 @@ export class SummarizationProvider extends BaseContextProvider<SummarizationConf
       }
 
       const errorMessage = error instanceof Error ? error.message : String(error);
-      throw new Error(`历史对话摘要失败，无法继续: ${errorMessage}`);
+      throw new ContextProviderError({
+        code: 'summarization_failed',
+        fatal: true,
+        providerName: this.name,
+        message: `历史对话摘要失败，无法继续: ${errorMessage}`,
+        cause: error,
+      });
     }
   }
 

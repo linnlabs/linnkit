@@ -17,13 +17,13 @@ export type LLMPolicyMatchContext = {
 
 export type LLMPolicyRequestContext = LLMPolicyMatchContext & {
   endpoint: string;
-  requestData: any;
+  requestData: unknown;
   headers?: Record<string, string>;
 };
 
 export type LLMPolicyResponseContext = LLMPolicyMatchContext & {
   endpoint: string;
-  responseData: any;
+  responseData: unknown;
 };
 
 export type LLMPolicyErrorDecision =
@@ -39,12 +39,11 @@ export interface LLMPolicy {
   match(ctx: LLMPolicyMatchContext): boolean;
 
   /** 发送前：可修改 requestData / headers（必须保持幂等） */
-  beforeRequest?(ctx: LLMPolicyRequestContext): { requestData?: any; headers?: Record<string, string> };
+  beforeRequest?(ctx: LLMPolicyRequestContext): { requestData?: unknown; headers?: Record<string, string> };
 
   /** 收到后（非流式）：可修改 responseData（必须保持幂等） */
-  afterResponse?(ctx: LLMPolicyResponseContext): { responseData?: any };
+  afterResponse?(ctx: LLMPolicyResponseContext): { responseData?: unknown };
 
   /** 错误处理：给主链路一个“是否需要切模型/重试”的建议 */
   onError?(error: Error, ctx: LLMPolicyMatchContext): LLMPolicyErrorDecision;
 }
-

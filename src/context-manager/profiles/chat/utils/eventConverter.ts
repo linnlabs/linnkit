@@ -25,8 +25,8 @@ export function convertEventToChatMessage(event: RuntimeEvent): ChatMessage | nu
   console.debug('[Chat-eventConverter] 🛈 Incoming event', {
     id: event.id,
     type: event.type,
-    hasMetadata: !!(event as any).metadata,
-    metadataKeys: (event as any).metadata ? Object.keys((event as any).metadata) : [],
+    hasMetadata: !!event.metadata,
+    metadataKeys: event.metadata ? Object.keys(event.metadata) : [],
   });
   // 处理 history_summary (使用类型守卫)
   if (isHistorySummaryEvent(event)) {
@@ -51,7 +51,7 @@ export function convertEventToChatMessage(event: RuntimeEvent): ChatMessage | nu
   switch (event.type) {
     case 'user_input': {
       if (!event.content) return null;
-      const metadata = (event as any).metadata ? { ...(event as any).metadata } : undefined;
+      const metadata = event.metadata ? { ...event.metadata } : undefined;
       return {
         role: 'user',
         content: String(event.content),
@@ -64,7 +64,7 @@ export function convertEventToChatMessage(event: RuntimeEvent): ChatMessage | nu
     
     case 'thought': {
       if (!event.content) return null;
-      const metadata = (event as any).metadata ? { ...(event as any).metadata } : undefined;
+      const metadata = event.metadata ? { ...event.metadata } : undefined;
       return {
         role: 'assistant',
         content: String(event.content),
@@ -77,7 +77,7 @@ export function convertEventToChatMessage(event: RuntimeEvent): ChatMessage | nu
     
     case 'final_answer': {
       if (!event.content) return null;
-      const metadata = (event as any).metadata ? { ...(event as any).metadata } : undefined;
+      const metadata = event.metadata ? { ...event.metadata } : undefined;
       return {
         role: 'assistant',
         content: String(event.content),

@@ -47,6 +47,45 @@ export interface ProviderResult {
   events?: RuntimeEvent[];
 }
 
+export type ContextProviderErrorCode =
+  | 'context_provider_failed'
+  | 'summarization_failed';
+
+export interface ContextProviderErrorOptions {
+  code: ContextProviderErrorCode;
+  fatal?: boolean;
+  providerName: string;
+  message: string;
+  cause?: unknown;
+}
+
+/**
+ * Provider 内部向 pipeline 传递的结构化错误。
+ *
+ * 中文备注：
+ * - pipeline 只能依赖 code/fatal 这类稳定字段做控制流判断；
+ * - message 只用于日志和用户可见错误，不再承担协议语义。
+ */
+export class ContextProviderError extends Error {
+  readonly code: ContextProviderErrorCode;
+  readonly fatal: boolean;
+  readonly providerName: string;
+  readonly cause?: unknown;
+
+  constructor(options: ContextProviderErrorOptions) {
+    super(options.message);
+    this.name = 'ContextProviderError';
+    this.code = options.code;
+    this.fatal = options.fatal ?? false;
+    this.providerName = options.providerName;
+    this.cause = options.cause;
+  }
+}
+
+export function isContextProviderError(error: unknown): error is ContextProviderError {
+  return error instanceof ContextProviderError;
+}
+
 export interface IContextProvider<TConfig = unknown> {
   readonly name: string;
   readonly description: string;

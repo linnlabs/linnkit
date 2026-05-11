@@ -5,9 +5,9 @@ exports[`src/agent public exports snapshot > exposes the documented root public 
   "contracts",
   "generateMessageId",
   "generateRunId",
-  "linnkitCompat",
   "ports",
   "runtimeKernel",
+  "setLlmAuditRecorder",
   "withLLMTelemetryContext",
 ]
 `;

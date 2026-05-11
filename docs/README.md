@@ -199,7 +199,7 @@ Layer: `framework`
 - `profiles/chat/*`
   - chat 兼容层的对应实现
   - **只承接历史兼容；长期目标是 `chat = tools-disabled agent`**
-  - chat 兼容层冻结计划详见 [`docs/framework/07-roi-ranked-priorities.md` Phase F](./framework/07-roi-ranked-priorities.md)（chat 兼容收敛 + 删 `linnkitCompat`）
+  - chat 兼容层冻结计划详见 [`docs/framework/07-roi-ranked-priorities.md` Phase F](./framework/07-roi-ranked-priorities.md)（chat 兼容收敛 + 删除迁移期 compat namespace）
 
 它不拥有的东西：
 

@@ -1,5 +1,7 @@
 import type { ToolSummaryProvider } from '../../../shared/preprocessors/base';
 
+type UnknownRecord = Record<string, unknown>;
+
 export interface SummarizerConfig {
   fullContentThreshold: number;
   textPreviewLength: number;
@@ -25,7 +27,7 @@ export class ToolOutputSummarizer {
     toolName: string,
     output: string,
     toolSummaryProvider?: ToolSummaryProvider,
-    toolArgs?: Record<string, any>,
+    toolArgs?: UnknownRecord,
   ): string {
     if (!output) {
       return '无输出';
@@ -42,7 +44,7 @@ export class ToolOutputSummarizer {
     return this.createGenericSummary(output);
   }
 
-  formatToolArgs(args: Record<string, any>): string {
+  formatToolArgs(args: UnknownRecord): string {
     if (!args || Object.keys(args).length === 0) {
       return '';
     }
@@ -57,10 +59,10 @@ export class ToolOutputSummarizer {
     toolName: string,
     output: string,
     toolSummaryProvider: ToolSummaryProvider,
-    toolArgs?: Record<string, any>,
+    toolArgs?: UnknownRecord,
   ): string | null {
     if (toolName === 'text_to_image' && toolArgs) {
-      const n = toolArgs.n || 1;
+      const n = typeof toolArgs.n === 'number' ? toolArgs.n : 1;
       return `生成了 ${n} 张图片。`;
     }
 
@@ -83,7 +85,7 @@ export class ToolOutputSummarizer {
         return this.summarizeArray(parsed);
       }
       if (typeof parsed === 'object' && parsed !== null) {
-        return this.summarizeObject(parsed as Record<string, any>);
+        return this.summarizeObject(parsed as UnknownRecord);
       }
     } catch {
       // fall through to text summary
@@ -92,7 +94,7 @@ export class ToolOutputSummarizer {
     return this.summarizeText(output);
   }
 
-  private summarizeArray(parsed: any[]): string {
+  private summarizeArray(parsed: unknown[]): string {
     if (parsed.length === 0) {
       return '返回了空数组';
     }
@@ -108,7 +110,7 @@ export class ToolOutputSummarizer {
     return `返回了${parsed.length}个结果, 前几个是: [${preview}${parsed.length > this.config.arrayPreviewCount ? '...' : ''}]`;
   }
 
-  private summarizeObject(parsed: Record<string, any>): string {
+  private summarizeObject(parsed: UnknownRecord): string {
     const keys = Object.keys(parsed);
     if (keys.length === 0) {
       return '返回了空对象';
@@ -135,7 +137,7 @@ export const summarizeToolOutput = (
   toolName: string,
   output: string,
   toolSummaryProvider?: ToolSummaryProvider,
-  toolArgs?: Record<string, any>,
+  toolArgs?: UnknownRecord,
   config?: Partial<SummarizerConfig>,
 ): string => {
   const summarizer = createDefaultToolOutputSummarizer(config);

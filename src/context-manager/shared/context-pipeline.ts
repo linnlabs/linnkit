@@ -2,6 +2,7 @@ import type {
   MessageProcessingState,
   ProviderContext,
 } from './providers/base';
+import { isContextProviderError } from './providers/base';
 import type { ContextProviderRegistry } from './providers/registry';
 import type { AiMessage, RuntimeEvent } from '../../contracts';
 
@@ -186,6 +187,5 @@ export function generateFinalMessages(states: MessageProcessingState[]): AiMessa
 }
 
 function isFatalProviderError(error: unknown): boolean {
-  const errorMessage = error instanceof Error ? error.message : String(error);
-  return errorMessage.includes('历史对话摘要失败');
+  return isContextProviderError(error) && error.fatal;
 }

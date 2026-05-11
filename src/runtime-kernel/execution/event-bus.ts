@@ -7,10 +7,9 @@
  * - 解耦事件的产生方（如 Runners）和消费方（如持久化、SSE推送）。
  * - 保证事件处理的逻辑集中化。
  *
- * 这是一个简单的、基于 EventEmitter 的实现，为每个执行流程（execution）创建一个实例。
+ * 这是一个简单的内存实现，为每个执行流程（execution）创建一个实例。
  */
 
-import { EventEmitter } from 'events';
 import { Logger } from '../../shared/logger';
 import type { EventEnvelope, RuntimeEvent } from '../../contracts';
 
@@ -23,46 +22,74 @@ type EventBusEvents = {
   'close': () => void;
 };
 
-// 使用类型安全的 EventEmitter
-// 使用组合模式，避免继承带来的类型冲突
-class TypedEventEmitter<TEvents extends Record<string, any>> {
-  private emitter: EventEmitter;
+// 使用轻量内存 emitter，避免 Node EventEmitter 的 any listener 边界污染公开类型。
+type EventListener = (...args: never[]) => void;
 
-  constructor() {
-    this.emitter = new EventEmitter();
-  }
+class TypedEventEmitter<TEvents extends Record<string, EventListener>> {
+  private readonly listeners = new Map<keyof TEvents, Set<TEvents[keyof TEvents]>>();
+  private maxListeners = 10;
 
   on<TEvent extends keyof TEvents>(event: TEvent, listener: TEvents[TEvent]): this {
-    this.emitter.on(event as string, listener as any);
+    const listeners = this.getListeners(event);
+    listeners.add(listener);
+    if (listeners.size > this.maxListeners) {
+      logger.warn('EventBus listener count exceeds configured max', {
+        event: String(event),
+        count: listeners.size,
+        maxListeners: this.maxListeners,
+      });
+    }
     return this;
   }
 
   off<TEvent extends keyof TEvents>(event: TEvent, listener: TEvents[TEvent]): this {
-    this.emitter.off(event as string, listener as any);
+    this.listeners.get(event)?.delete(listener);
     return this;
   }
 
   once<TEvent extends keyof TEvents>(event: TEvent, listener: TEvents[TEvent]): this {
-    this.emitter.once(event as string, listener as any);
+    const onceListener = ((...args: Parameters<TEvents[TEvent]>) => {
+      this.off(event, onceListener);
+      listener(...args);
+    }) as TEvents[TEvent];
+    this.on(event, onceListener);
     return this;
   }
 
   emit<TEvent extends keyof TEvents>(event: TEvent, ...args: Parameters<TEvents[TEvent]>): boolean {
-    return this.emitter.emit(event as string, ...args);
+    const listeners = this.listeners.get(event);
+    if (!listeners || listeners.size === 0) {
+      return false;
+    }
+    for (const listener of [...listeners]) {
+      const typedListener = listener as TEvents[TEvent];
+      typedListener(...args);
+    }
+    return true;
   }
 
   removeAllListeners<TEvent extends keyof TEvents>(event?: TEvent): this {
     if (event) {
-      this.emitter.removeAllListeners(event as string);
+      this.listeners.delete(event);
     } else {
-      this.emitter.removeAllListeners();
+      this.listeners.clear();
     }
     return this;
   }
 
   setMaxListeners(n: number): this {
-    this.emitter.setMaxListeners(n);
+    this.maxListeners = n;
     return this;
+  }
+
+  private getListeners<TEvent extends keyof TEvents>(event: TEvent): Set<TEvents[keyof TEvents]> {
+    const existing = this.listeners.get(event);
+    if (existing) {
+      return existing;
+    }
+    const created = new Set<TEvents[keyof TEvents]>();
+    this.listeners.set(event, created);
+    return created;
   }
 }
 

@@ -5,9 +5,33 @@ import {
 } from './base';
 import type { AiMessage } from '../../../contracts';
 
+interface UserQuoteMetadata {
+  text: string;
+  source?: Record<string, unknown>;
+}
+
 export interface UserQuoteLifetimeConfig {
   keepLatestUserInputs?: number;
   priority?: number;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function readUserQuoteMetadata(metadata: AiMessage['metadata']): UserQuoteMetadata | undefined {
+  const quote = metadata?.user_quote;
+  if (!isRecord(quote)) {
+    return undefined;
+  }
+  if (typeof quote.text !== 'string') {
+    return undefined;
+  }
+
+  return {
+    text: quote.text,
+    source: isRecord(quote.source) ? quote.source : undefined,
+  };
 }
 
 export class UserQuoteLifetimePreprocessor extends BasePreprocessor {
@@ -155,19 +179,16 @@ export class UserQuoteLifetimePreprocessor extends BasePreprocessor {
   private ensureUserQuoteOnMessage(
     message: AiMessage,
   ): { message: AiMessage; modified: boolean } {
-    const quote = message.metadata && (message.metadata as any).user_quote;
+    const rawQuote = message.metadata?.user_quote;
+    const quote = readUserQuoteMetadata(message.metadata);
     if (!quote) {
-      return { message, modified: false };
-    }
-
-    if (typeof quote.text !== 'string') {
-      this.debug('⚠️ 引用元数据格式错误: text不是字符串', {
-        id: message.id,
-        quoteType: typeof quote,
-        textType: typeof quote?.text,
-        quoteKeys: Object.keys(quote || {}),
-        quoteValue: JSON.stringify(quote),
-      });
+      if (rawQuote !== undefined) {
+        this.debug('⚠️ 引用元数据格式错误: 缺少字符串 text', {
+          id: message.id,
+          quoteType: typeof rawQuote,
+          quoteKeys: isRecord(rawQuote) ? Object.keys(rawQuote) : [],
+        });
+      }
       return { message, modified: false };
     }
 
@@ -187,7 +208,7 @@ export class UserQuoteLifetimePreprocessor extends BasePreprocessor {
       return { message, modified: false };
     }
 
-    const source = (quote.source || {}) as Record<string, unknown>;
+    const source = quote.source ?? {};
     const attrs: string[] = [];
 
     if (typeof source.doc_id === 'string') {

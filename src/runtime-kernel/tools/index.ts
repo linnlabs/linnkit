@@ -19,7 +19,9 @@ export {
 
 export type {
   AgentTool,
+  JsonObjectSchema,
   OpenAIToolSchema,
+  ToolArgs,
   ToolCallResult,
   ToolParameterProperty,
   ToolParameterSchema,
