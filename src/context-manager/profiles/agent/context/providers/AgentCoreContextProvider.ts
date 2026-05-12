@@ -4,7 +4,7 @@
  * 
  * 🎯 职责: 识别并保留必须保留的核心消息（Agent专用逻辑）
  * 📖 规则: 系统提示词、工具描述、最新用户输入、注入的上下文始终无条件保留
- * ✨ Agent特性: 支持文档片段智能截断，确保工具调用上下文的完整性
+ * ✨ Agent特性: 支持宿主通过 MustKeepPolicy 声明必保留 fence，确保工具调用上下文的完整性
  * 🔧 工具优先: 优先保留工具调用相关的核心消息
  * 
  * 🏗️ 架构优化: 工具描述现在由 AgentContextManager 统一管理，而不是在 MessageFormatter 中特殊处理
@@ -27,7 +27,7 @@ export interface AgentCoreContextProviderOptions {
  * Agent专用核心上下文保留层Provider
  * 
  * 实现Agent README中描述的第一阶段：核心上下文保留层 (Must-Keep)
- * 内容包括：系统提示词、用户当前请求、注入的上下文信息（document类型消息）
+ * 内容包括：系统提示词、用户当前请求、宿主显式声明的必保留 fence。
  */
 export class AgentCoreContextProvider extends BaseContextProvider {
   readonly name = 'AgentCoreContextProvider';
@@ -49,9 +49,6 @@ export class AgentCoreContextProvider extends BaseContextProvider {
     this.debug('🚀 开始核心上下文保留层处理', {
       totalMessages: states.length,
       availableBudget,
-      config: {
-        documentFragmentMaxPercentage: context.config.DOCUMENT_FRAGMENT_MAX_PERCENTAGE
-      }
     }, context);
 
     let coreTokens = 0;
@@ -139,8 +136,8 @@ export class AgentCoreContextProvider extends BaseContextProvider {
    * 🎯 Agent核心上下文保留规则：
    * 1. 保留 system_prompt（系统级消息）
    * 2. 保留最新的 user 消息 (current_user_request)
-   * 3. 保留所有 role: 'user', metadata: { source: 'document' } 的消息 (injected_context)
-   * 4. 实现对文档片段的 Token 截断逻辑
+   * 3. 保留 MustKeepPolicy 指定的 fence
+   * 4. 对命中的 MustKeepPolicy.truncationRules 做 Token 截断
    */
   private isCoreMessage(msg: AiMessage, index: number, allMessages: AiMessage[]): boolean {
     // 规则1: 系统提示词始终无条件保留

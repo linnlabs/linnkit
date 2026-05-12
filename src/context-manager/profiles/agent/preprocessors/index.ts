@@ -6,12 +6,15 @@ import {
 import {
   FenceLifetimePreprocessor,
   HistoryPurificationPreprocessor,
-  UserQuoteLifetimePreprocessor,
 } from '../../../shared/preprocessors';
 import type { FenceRegistry } from '../../../shared/fences';
-import { ToolHistoryCompressorPreprocessor } from './toolHistoryCompressor';
+import {
+  ToolHistoryCompressorPreprocessor,
+  type ToolHistoryCompressorOptions,
+} from './toolHistoryCompressor';
 import { ToolReplayProtocolGuardPreprocessor } from './toolReplayProtocolGuard';
 import type { AiMessage } from '../../../../contracts';
+import { isContextProviderError } from '../../../shared/providers/base';
 
 // 重新导出公共接口
 export * from './base';
@@ -21,6 +24,7 @@ export * from './toolReplayProtocolGuard';
 
 export interface DefaultAgentPreprocessorRegistryOptions {
   fenceRegistry?: FenceRegistry;
+  toolHistory?: ToolHistoryCompressorOptions;
 }
 
 /**
@@ -150,6 +154,9 @@ export class PreprocessorPipeline {
 
       } catch (error) {
         this.debug(`❌ 预处理器失败: ${preprocessor.name}`, { error });
+        if (isContextProviderError(error) && error.fatal) {
+          throw error;
+        }
         // 预处理器失败不应该中断整个管道，继续执行后续预处理器
         console.warn(`Agent Preprocessor ${preprocessor.name} failed:`, error);
       }
@@ -248,7 +255,7 @@ export function createDefaultAgentPreprocessorRegistry(
   const registry = new PreprocessorRegistry();
   
   // 注册工具历史压缩预处理器 - 优先级0，最先执行
-  registry.register(new ToolHistoryCompressorPreprocessor());
+  registry.register(new ToolHistoryCompressorPreprocessor(options.toolHistory));
 
   // 注册工具回放协议守卫 - 压缩后、净化前执行，避免旧工具组伪装为结构化 replay
   registry.register(new ToolReplayProtocolGuardPreprocessor());
@@ -260,14 +267,6 @@ export function createDefaultAgentPreprocessorRegistry(
   if (options.fenceRegistry) {
     registry.register(new FenceLifetimePreprocessor({ fenceRegistry: options.fenceRegistry }));
   }
-  
-  // 注册引用寿命预处理器 - 优先级2，限制旧轮引用
-  registry.register(
-    new UserQuoteLifetimePreprocessor({
-      keepLatestUserInputs: 2,
-      priority: 2,
-    })
-  );
   
   // 未来可以在这里注册更多Agent专用预处理器:
   // registry.register(new AgentToolCallValidationPreprocessor());

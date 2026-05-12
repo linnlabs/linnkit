@@ -5,8 +5,8 @@ import {
 } from './base';
 import {
   HistoryPurificationPreprocessor,
-  UserQuoteLifetimePreprocessor,
 } from '../../../shared/preprocessors';
+import { UserQuoteLifetimePreprocessor } from './userQuoteLifetime';
 import { ToolHistoryFilterPreprocessor } from './toolHistoryFilter';
 import type { AiMessage } from '../../../../contracts';
 
@@ -14,6 +14,7 @@ import type { AiMessage } from '../../../../contracts';
 export * from './base';
 export { HistoryPurificationPreprocessor } from '../../../shared/preprocessors';
 export * from './toolHistoryFilter';
+export * from './userQuoteLifetime';
 
 /**
  * 预处理器注册表 - 管理所有预处理器及其执行顺序

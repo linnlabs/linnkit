@@ -108,7 +108,7 @@ export const CONTEXT_BUILDER_CONFIG = {
    * - 这里只用于 `TokenCalculator.estimateTokensPrecise(...)` 的 encoding 选择，不用于真实 LLM 调用；
    * - 为避免把某个具体业务模型写死在这里，统一使用 tiktoken 的默认 encoding：cl100k_base。
    */
-  DEFAULT_MODEL_ID: 'cl100k_base',
+  TOKEN_ENCODING_NAME: 'cl100k_base',
   
   // === 性能与调试配置 ===
   
@@ -159,7 +159,7 @@ export type ContextBuilderConfig = {
   readonly AVG_CHARS_PER_TOKEN: number;
   
   // 模型配置
-  readonly DEFAULT_MODEL_ID: string;
+  readonly TOKEN_ENCODING_NAME: string;
   
   // 性能与调试配置
   readonly ENABLE_BUILD_STATS: boolean;

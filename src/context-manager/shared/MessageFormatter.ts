@@ -1,6 +1,6 @@
-import type { ChatMessage } from '../profiles/chat/contracts';
 import type { AiMessage } from '../../contracts';
 import type { FenceRegistry } from './fences';
+import type { ChatMessage } from './contracts/chatLineMessage';
 
 export interface MessageFormatOptions {
   nativeTools?: boolean;
@@ -150,11 +150,6 @@ class MessageFormatter {
           content: descriptor.formatter(content, metadata?.fenceAttrs ?? {}),
         };
       }
-      case 'document_fragment': {
-        const trimmedContent = (content || '').trim();
-        const wrapped = trimmedContent ? `<additional_context>\n${trimmedContent}\n</additional_context>` : '<additional_context />';
-        return { role: 'system', content: wrapped };
-      }
       case 'history_summary':
         return { role: 'system', content };
       case 'thought':
@@ -183,9 +178,8 @@ class MessageFormatter {
         return null;
       }
       case 'task_request':
-        return { role, content };
       case 'task_completion':
-        return { role, content: `[任务完成] ${content}` };
+        return { role, content };
       default:
         console.warn(`[MessageFormatter] Unhandled message type for chat history: "${type}", skipping.`);
         return null;

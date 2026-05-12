@@ -114,7 +114,7 @@ console.log(typeof runtimeKernel.graph);
 | `@linnlabs/linnkit/contracts` | **Node-only** | 长期稳定的合同：`AiMessage` / `SystemMessage` / `UserMessage` / `AssistantMessage` / `ToolMessage` / `RuntimeEvent` / `EventEnvelope` / `SSEEvent` / 默认执行常量 |
 | `@linnlabs/linnkit/runtime-kernel` | **Node-only**（含 `node:async_hooks` / `crypto`） | 全套 runtime：`graph` / `tools` / `execution` / `events` / `runContext` / `llm` / `childRuns` / `runSupervisor` / `telemetry` 等 namespace + 扁平 `BaseTool` / `ToolExecutionContext` / `ENGINE_ERROR_CODES` 等符号 + `createGraphLoopHarness` / `createDefaultGraphExecutor`（仅测试用） |
 | `@linnlabs/linnkit/runtime-kernel/events` | **浏览器安全** | events governance 纯函数：`shouldPersistRuntimeEvent` / `shouldEnterAgentContext` / `shouldEmitRuntimeEventToSse` / `shouldReplayRuntimeEventToUi` / `getRuntimeEventUiProjectionKind` / `eventMapper`，外加 `AnyAgentEvent` / `RuntimeEventLifecycleDecision` 类型 |
-| `@linnlabs/linnkit/context-manager` | **Node-only** | context core：`createMessageFormatter` / `formatAgentLlmMessages` / `messageFormatter` / `createFenceRegistry` / `FenceDescriptor` / `FenceInjection` / `FenceRegistry` / `FenceLifetimePreprocessor` / `MustKeepPolicy` / `DEFAULT_MUST_KEEP_POLICY` / `BaseContextProvider` / `AGENT_CONSTANTS` / 各 profile namespace（`agentContext` / `agentTasks` / `agentOrchestration` / `chatContext` 等） |
+| `@linnlabs/linnkit/context-manager` | **Node-only** | context core：`createMessageFormatter` / `formatAgentLlmMessages` / `messageFormatter` / `createFenceRegistry` / `FenceDescriptor` / `FenceInjection` / `FenceRegistry` / `FenceLifetimePreprocessor` / `MustKeepPolicy` / `DEFAULT_MUST_KEEP_POLICY` / `BaseContextProvider` / `AGENT_CONSTANTS` / agent profile namespace（`agentContext` / `agentTasks` / `agentOrchestration` 等）+ chat 兼容层的少量扁平导出（`ChatMessageOrchestrator` / `BaseConversationalTask` / `chatMessageToAiMessage` 等）。`chatContext` / `chatTasks` / `chatOrchestration` 等 chat namespace 已从主入口冻结移除。 |
 | `@linnlabs/linnkit/testkit` | **测试专用** | scripted AI engine harness、graph loop harness、tool context fixture、replay harness、断言。`AGENT-GUARD-10-no-testkit-in-production` 强制守门——生产代码不能 import |
 
 ### 3.1 浏览器使用规则（硬约束）
@@ -522,7 +522,7 @@ const llmMessages = formatAgentLlmMessages(processingResult.messages, {
 
 #### 5.4.5 配 MustKeepPolicy（控制 working memory 裁剪）
 
-`AgentCoreContextProvider`（来自 `@linnlabs/linnkit/context-manager` 的 `agentContext` namespace）现在通过 `MustKeepPolicy` 决定哪些消息一律不被裁。它有两类输入：
+`AgentCoreContextProvider`（来自 `@linnlabs/linnkit/context-manager` 的 `agentContext` namespace）现在通过 `MustKeepPolicy` 决定哪些消息一律不被裁。chat 兼容层不再通过 `chatContext` namespace 暴露；新接入方应把通用上下文注入都放到 agent profile + fence 机制里。它有两类输入：
 
 1. `alwaysKeepTypes`：按 `AiMessage.type` 列表（`'system_prompt' | 'user_input' | ...`）。默认值 `DEFAULT_MUST_KEEP_POLICY`。
 2. `alwaysKeepFenceKinds`：按 fence kind 列表（host 注入的 `metadata.fenceKind`）。
@@ -569,18 +569,40 @@ AgentAiEngine.chatCompletionStream(llmMessages, ...)
 
 #### 5.4.7 兼容期注意
 
-linnkit 0.2.x 仍保留以下 legacy 字段（供存量 host 渐进迁移；新接入方**不要**用）：
+linnkit 0.4.x 起，agent profile 的公开请求合同已经收窄：host 产品字段不再挂在 `AgentProfileRequest` 上，`MessageFormatter` 也不再替 `document_fragment` / `additional_context` 这类产品语义做包装。新接入方应当：
 
-- `AgentProfileRequest` 上的 `context_before` / `context_after` / `document_fragment` / `document_title` / `injected_context` / `project_metadata` / `document_metadata` / `user_quote` / `recentRejections` / `completionLengthHint`
-- `AiMessage.type` 的 `document_fragment` / `context_before` / `context_after`
-- `MessageFormatter` 的 `document_fragment` 兼容分支
-- `chat` profile namespace（`chatContext` / `chatTasks` / `chatOrchestration` 等）
-- `userQuoteLifetime` preprocessor
+- 把 host 产品字段全部走 `fences[]` 通道。
+- 不引用 `chatContext` / `chatTasks` 等 namespace；需要兼容旧 chat 形态时，先使用主入口的扁平导出，后续迁到 tools-disabled `AgentSpec`。
+- 不 deep import `profiles/chat/*`；这仍是迁移期兼容层，不是新功能扩展点。
 
-它们会在后续 minor 版按计划清掉（详见 09 文档 Phase C）。新接入方应当：
+#### 5.4.8 工具历史压缩策略
 
-- 把 host 产品字段全部走 `fences[]` 通道；
-- 不引用 `chatContext` / `chatTasks` 等 namespace（除非你确实要兼容旧 chat 形态）。
+linnkit 0.4.x 的 agent preprocessor 已支持三种工具历史策略。未传配置时默认走 `per-run + keepLatestRuns=1`；host 仍应在各自的 `AgentDefinition.config.contextPolicy.toolHistory` 中显式声明策略，避免依赖全局默认。
+
+| 策略 | 适用场景 | 行为 | 风险 |
+|------|----------|------|------|
+| `per-pair` | 4K/8K 小上下文模型；需要强力控 token | 全局保留最近 N 组完整工具交互，其余压成自然语言摘要 | 可能跨 run 腰斩同一轮工具链，prompt cache prefix 不稳定 |
+| `per-run` | 默认推荐；多步 agent、review、workspace 操作 | 按 `user_input` 划 run，完整保留最近 K 个历史 run 的工具序列 | token 使用量可能高于 per-pair |
+| `none` | 200K+ 长上下文模型；调试回放；审计敏感链路 | 不做常规压缩，只保留安全阀 | 长历史会明显涨 token |
+
+安全阀：
+
+- `maxInteractionGroups`：所有策略共用的硬上限，默认 12。
+- `overflowStrategy: 'keep-latest'`：超过上限时保留最近工具组，压缩更旧组。
+- `overflowStrategy: 'fail-fast'`：超过上限时抛 `ContextProviderError`，`code = 'TOOL_HISTORY_OVERFLOW'`，适合 CI 或生产 invariant。
+
+AgentSpec schema 已落到 `linnkit/contracts`，host 装配时可用 `contextPolicy.toolHistory` 控制策略。低层测试或自定义 registry 也可以直接从默认 preprocessor registry 注入：
+
+```ts
+createDefaultAgentPreprocessorRegistry({
+  toolHistory: {
+    strategy: 'per-run',
+    keepLatestRuns: 1,
+    maxInteractionGroups: 12,
+    overflowStrategy: 'keep-latest',
+  },
+});
+```
 
 ### 5.5 接持久化（3 个 port）
 

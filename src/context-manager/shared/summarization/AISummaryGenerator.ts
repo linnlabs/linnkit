@@ -7,7 +7,7 @@ import type { MessageProcessingState } from '../providers/base';
 import type {
   GenerateRequest,
   GenerateResponse,
-} from '../../profiles/chat/contracts';
+} from '../contracts/chatLineMessage';
 import type { AiMessage } from '../../../contracts';
 import type { SummarizationProviderContext } from './config';
 

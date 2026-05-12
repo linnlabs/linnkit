@@ -1,6 +1,6 @@
 {
   "name": "@linnlabs/linnkit",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "type": "module",
   "description": "linnkit · vendor-neutral Agent framework. runtime-kernel + context-manager + ports + testkit + browser-safe events seam.",
   "license": "UNLICENSED",
@@ -93,9 +93,10 @@
     "tsup": "^8.0.0"
   },
   "linnkit": {
-    "phase": "shippable (0.3.0 — stage 0 cleanup: tool generics, compat removal, typed provider errors, LLM/events responsibility split)",
+    "phase": "shippable (0.4.0 — Phase E boundary cleanup: framework legacy context fields removed, fence-first context injection, no-host-leakage guard)",
     "sourceOfTruth": "packages/linnkit/docs/release/RELEASE.md",
     "notes": [
+      "0.4.0 是 Phase E 边界整治 minor：AgentProfileRequest 从 framework legacy host 字段收窄到 query/prompt/model/tools/history/fences；MessageFormatter 删除 document_fragment/additional_context 与 [任务完成] 包装；shared userQuoteLifetime 下线，chat 兼容层自持旧 quote 预处理；新增 no-host-leakage 守卫与 shared 禁止 import profiles 规则。chat profile 不在本阶段物理删除，后续随 tools-disabled AgentSpec 收敛。详见 docs/release/RELEASE.md §0 v11",
       "0.3.0 是阶段 0 清旧账 minor：BaseTool / AgentTool / ToolCallResult / OpenAIToolSchema 收口到 Record<string, unknown> + 泛型工具参数；删除 linnkitCompat；ContextProviderError 取代字符串 fatal 判断；LLM caller 与 eventMappers 按职责拆分为小文件。因为公开类型边界收窄，按 0.x 策略 bump minor。详见 docs/release/RELEASE.md §0 v10",
       "0.2.2 是 docs patch：`docs/README.md` 公开 API 表与 7 条子路径对齐；`docs/release/RELEASE.md` 收束 S0 长清单、现行发版 = §5.1 + §2.1；`RELEASE-HISTORY` 与 linnsy 验证措辞同步。`dist` / exports / 类型与 0.2.1 一致。详见 RELEASE.md §0 v9 / RELEASE-HISTORY.md §A.10+§C.8",
       "0.2.1 是 docs patch：`docs/INTEGRATION_GUIDE.md` 彻底重写为面向 `npm install @linnlabs/linnkit` 的外部接入说明（真包名、7 子入口、GitHub Packages 鉴权、context engineering fence 一等接入骨架）；`dist` 与 0.2.0 字节级一致、exports/类型签名 0 变化。详见 docs/release/RELEASE.md §0 v8 / RELEASE-HISTORY.md §A.9+§C.7",

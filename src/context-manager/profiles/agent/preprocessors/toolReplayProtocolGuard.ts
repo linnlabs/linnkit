@@ -8,7 +8,7 @@ import {
 } from './base';
 import {
   buildToolInteractionGroupsFromMessages,
-  findCurrentRoundStartIndex,
+  findCurrentRunStartIndex,
   type ToolInteractionGroup,
 } from '../utils/toolInteractionGroup';
 
@@ -135,7 +135,7 @@ export class ToolReplayProtocolGuardPreprocessor extends BasePreprocessor {
       return this.createResult(messages, messages, [], 0);
     }
 
-    const currentRoundStartIndex = findCurrentRoundStartIndex(messages);
+    const currentRoundStartIndex = findCurrentRunStartIndex(messages);
     const groups = buildToolInteractionGroupsFromMessages(messages);
     const groupsToDegrade = groups.filter((group) => {
       return group.isComplete

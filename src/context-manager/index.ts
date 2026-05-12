@@ -11,14 +11,6 @@ export * as agentTasks from './profiles/agent/tasks';
 export * as agentTools from './profiles/agent/tools';
 export * as agentUtils from './profiles/agent/utils';
 
-export * as chatContracts from './profiles/chat/contracts';
-export * as chatContext from './profiles/chat/context';
-export * as chatOrchestration from './profiles/chat/orchestration';
-export * as chatPreprocessors from './profiles/chat/preprocessors';
-export * as chatTasks from './profiles/chat/tasks';
-export * as chatUtils from './profiles/chat/utils';
-export * as chatRequestAdapters from './profiles/chat/request-adapters';
-
 // === 扁平 re-export（被消费方实际使用的公开符号） ===
 // 显式列出而非 `export *`，避免 agent/chat profile 之间潜在同名冲突。
 // 命名上保持源符号名 1:1。
@@ -34,7 +26,40 @@ export type {
 
 export type {
   ChatMessage,
+  ChatProjectMetadata,
+  ChatDocumentMetadata,
+  ChatUserQuote,
   GenerateRequest,
+  GenerateResponse,
+  MessageRole,
+  MessageType,
+  RecentRejection,
 } from './profiles/chat/contracts';
 export { getDefaultTokenConfig } from './profiles/chat/context/config';
-export { chatMessageToAiMessage } from './profiles/chat/utils/messageAdapters';
+export {
+  ContextProviderRegistry as ChatContextProviderRegistry,
+  CoreContextProvider as ChatCoreContextProvider,
+  WorkingMemoryProvider as ChatWorkingMemoryProvider,
+} from './profiles/chat/context/providers';
+export {
+  MessageOrchestrator as ChatMessageOrchestrator,
+} from './profiles/chat/orchestration';
+export type {
+  OrchestratorOptions as ChatOrchestratorOptions,
+} from './profiles/chat/orchestration';
+export {
+  BaseConversationalTask,
+} from './profiles/chat/tasks';
+export type {
+  ChatTaskResolver,
+  IChatTask,
+} from './profiles/chat/tasks';
+export {
+  aiMessageToChatMessage,
+  chatMessageToAiMessage,
+  convertEventToChatMessage,
+  convertEventsToChatMessages,
+} from './profiles/chat/utils';
+export {
+  buildGenerateRequestFromAgentRequest,
+} from './profiles/chat/request-adapters';

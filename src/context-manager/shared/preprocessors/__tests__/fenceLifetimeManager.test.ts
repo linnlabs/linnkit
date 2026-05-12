@@ -60,6 +60,45 @@ describe('FenceLifetimePreprocessor', () => {
     expect(result.appliedStrategies).toContain('fence_lifetime');
   });
 
+  it('removes historical user-quote context injections when the host registers them as turn-only', async () => {
+    const registry = createFenceRegistry([
+      {
+        kind: 'user-quote',
+        llmRole: 'user',
+        placement: 'before-current-user',
+        lifetime: 'turn-only',
+        formatter: content => content,
+      },
+    ]);
+    const messages: AiMessage[] = [
+      {
+        id: 'old-user-quote',
+        role: 'user',
+        type: 'context_injection',
+        content: 'old quoted text',
+        timestamp: 1,
+        metadata: { fenceKind: 'user-quote' },
+      },
+      { id: 'current-user', role: 'user', type: 'user_input', content: 'current query', timestamp: 2 },
+      {
+        id: 'current-user-quote',
+        role: 'user',
+        type: 'context_injection',
+        content: 'current quoted text',
+        timestamp: 3,
+        metadata: { fenceKind: 'user-quote' },
+      },
+    ];
+
+    const result = await new FenceLifetimePreprocessor({ fenceRegistry: registry }).process(messages, {});
+
+    expect(result.messages.map(message => message.id)).toEqual([
+      'current-user',
+      'current-user-quote',
+    ]);
+    expect(result.appliedStrategies).toContain('fence_lifetime');
+  });
+
   it('keeps unregistered fence kinds and logs only in debug mode', async () => {
     const messages: AiMessage[] = [
       {

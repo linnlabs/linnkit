@@ -6,7 +6,7 @@
  * 也必须按顺序进入发送给 LLM 的 messages（而不是被替换成 system history_summary 顶置到最前）。
  *
  * 🎯 checkpoint 的职责是“清理 checkpoint 之前的旧历史”，而不是“把 checkpoint 本身变成摘要”：
- * - 保留：Must-Keep（system_prompt / document_fragment / 最新 user_input 等）、checkpoint 工具对、
+ * - 保留：Must-Keep（system_prompt / 最新 user_input / 必保留 fence 等）、checkpoint 工具对、
  *        以及 checkpoint 之前最近 N 对工具交互（默认 N=2）。
  * - 清理：checkpoint 之前更旧的工具对 / final_answer / thought / 旧 history_summary 等。
  *

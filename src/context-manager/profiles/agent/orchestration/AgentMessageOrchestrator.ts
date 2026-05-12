@@ -21,8 +21,12 @@ import { ToolManager } from '../tools/ToolManager';
 import type { AgentTaskResolver } from '../tasks/base';
 import { convertEventsToAiMessages } from '../utils/eventConverter';
 import type { GenerateRequest, GenerateResponse } from '../../chat/contracts';
-import type { AiMessage, RuntimeEvent } from '../../../../contracts';
+import type { AgentSpecContextPolicy, AiMessage, RuntimeEvent } from '../../../../contracts';
 import type { FenceRegistry } from '../../../shared/fences';
+import {
+  contextPolicyToContextBuilderConfig,
+  contextPolicyToPreprocessorOptions,
+} from '../../../shared/agentSpecAdapter';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
@@ -48,6 +52,7 @@ export interface AgentOrchestratorOptions {
     request: AgentProfileRequest;
     modelId: string;
   }) => ToolReplayProtocolPolicy | undefined;
+  resolveContextPolicy?: (request: AgentProfileRequest) => AgentSpecContextPolicy | undefined;
   taskResolver: AgentTaskResolver;
   providerRegistry: ContextProviderRegistry;
   fenceRegistry?: FenceRegistry;
@@ -72,36 +77,41 @@ export interface AgentProcessingResult {
 
 export class AgentMessageOrchestrator {
   private agentContextManager: AgentContextManager;
-  private preprocessorPipeline: PreprocessorPipeline | null = null;
   private options: AgentOrchestratorOptions;
-  private toolManager: ToolManager | null = null;
   private readonly taskResolver: AgentTaskResolver;
+  private baseContextConfig: Partial<AgentContextBuilderConfig>;
 
   constructor(options: AgentOrchestratorOptions) {
     this.options = options;
     this.taskResolver = options.taskResolver;
+    this.baseContextConfig = {
+      DEFAULT_MAX_TOKENS: options.tokenBudget.maxTokens,
+      RESERVED_FOR_RESPONSE: options.tokenBudget.reservedForResponse,
+      WORKING_MEMORY_BUDGET_PERCENTAGE: AGENT_CONTEXT_BUILDER_CONFIG.WORKING_MEMORY_BUDGET_PERCENTAGE,
+      SUMMARIZATION_TRIGGER_THRESHOLD: AGENT_CONTEXT_BUILDER_CONFIG.SUMMARIZATION_TRIGGER_THRESHOLD,
+      SUMMARY_BUDGET_PERCENTAGE: AGENT_CONTEXT_BUILDER_CONFIG.SUMMARY_BUDGET_PERCENTAGE,
+      SUMMARY_OLDEST_MESSAGES_PERCENTAGE: AGENT_CONTEXT_BUILDER_CONFIG.SUMMARY_OLDEST_MESSAGES_PERCENTAGE,
+    };
     this.agentContextManager = new AgentContextManager({
       debugMode: options.processing.debugMode,
-      customConfig: AGENT_CONTEXT_BUILDER_CONFIG,
+      customConfig: this.baseContextConfig,
       providerRegistry: options.providerRegistry,
     });
   }
 
-  private ensurePreprocessorPipeline(toolManager: ToolManager): PreprocessorPipeline {
-    if (!this.preprocessorPipeline && toolManager) {
-      this.preprocessorPipeline = createDefaultAgentPreprocessorPipeline({
-        debugMode: this.options.processing.debugMode,
-        model: this.options.model ?? 'default',
-        toolSummaryProvider: toolManager.getSummaryProvider(),
-      }, {
-        fenceRegistry: this.options.fenceRegistry,
-      });
-      this.toolManager = toolManager;
-    }
-    if (!this.preprocessorPipeline) {
-      throw new Error('Preprocessor pipeline not initialized.');
-    }
-    return this.preprocessorPipeline;
+  private buildPreprocessorPipelineForRequest(
+    toolManager: ToolManager,
+    request: AgentProfileRequest,
+    contextPolicy: AgentSpecContextPolicy | undefined,
+  ): PreprocessorPipeline {
+    return createDefaultAgentPreprocessorPipeline({
+      debugMode: this.options.processing.debugMode,
+      model: this.resolvePreprocessorModel(request),
+      toolSummaryProvider: toolManager.getSummaryProvider(),
+    }, {
+      fenceRegistry: this.options.fenceRegistry,
+      ...contextPolicyToPreprocessorOptions(contextPolicy),
+    });
   }
 
   private resolvePreprocessorModel(request: AgentProfileRequest): string {
@@ -109,6 +119,17 @@ export class AgentMessageOrchestrator {
       ?? readOptionalStringProperty(request, 'modelId')
       ?? this.options.model
       ?? 'default';
+  }
+
+  private resolveContextPolicy(request: AgentProfileRequest): AgentSpecContextPolicy | undefined {
+    return this.options.resolveContextPolicy?.(request);
+  }
+
+  private applyContextPolicy(contextPolicy: AgentSpecContextPolicy | undefined): void {
+    this.agentContextManager.updateConfig({
+      ...this.baseContextConfig,
+      ...(contextPolicy ? contextPolicyToContextBuilderConfig(contextPolicy) : {}),
+    });
   }
 
   async processAgentConversation(
@@ -168,7 +189,10 @@ export class AgentMessageOrchestrator {
         });
       });
 
-      const preprocessorPipeline = this.ensurePreprocessorPipeline(toolManager);
+      const contextPolicy = this.resolveContextPolicy(request);
+      this.applyContextPolicy(contextPolicy);
+
+      const preprocessorPipeline = this.buildPreprocessorPipelineForRequest(toolManager, request, contextPolicy);
       const modelId = this.resolvePreprocessorModel(request);
       preprocessorPipeline.updateContext({
         model: modelId,
@@ -178,7 +202,7 @@ export class AgentMessageOrchestrator {
         }),
       });
 
-      const preprocessResult = await this.runPreprocessorPipeline(allMessages);
+      const preprocessResult = await this.runPreprocessorPipeline(preprocessorPipeline, allMessages);
       this.debug('Preprocessor pipeline completed', {
         originalCount: allMessages.length,
         processedCount: preprocessResult.messages.length,
@@ -270,11 +294,11 @@ export class AgentMessageOrchestrator {
     return task.buildMessages(request, historyMessages);
   }
 
-  private async runPreprocessorPipeline(messages: AiMessage[]): Promise<PreprocessorPipelineResult> {
-    if (!this.preprocessorPipeline) {
-      throw new Error('Preprocessor pipeline not initialized. Call ensurePreprocessorPipeline first.');
-    }
-    return this.preprocessorPipeline.process(messages);
+  private async runPreprocessorPipeline(
+    preprocessorPipeline: PreprocessorPipeline,
+    messages: AiMessage[],
+  ): Promise<PreprocessorPipelineResult> {
+    return preprocessorPipeline.process(messages);
   }
 
   private async buildContextFromPreprocessedMessages(
@@ -326,6 +350,12 @@ export class AgentMessageOrchestrator {
       tokenBudget: { ...this.options.tokenBudget, ...newOptions.tokenBudget },
       processing: { ...this.options.processing, ...newOptions.processing },
     };
+    this.baseContextConfig = {
+      ...this.baseContextConfig,
+      DEFAULT_MAX_TOKENS: this.options.tokenBudget.maxTokens,
+      RESERVED_FOR_RESPONSE: this.options.tokenBudget.reservedForResponse,
+    };
+    this.agentContextManager.updateConfig(this.baseContextConfig);
   }
 
   getContextManager(): AgentContextManager {

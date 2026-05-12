@@ -134,19 +134,10 @@ export const AGENT_CONTEXT_BUILDER_CONFIG = {
    */
   MAX_TOOL_INTERACTION_GROUPS_TO_KEEP: 12,
   
-  // === 文档处理策略 ===
-  
-  /**
-   * 文档片段最大占比
-   * - **基准**: 可用上下文总预算
-   * - **说明**: 单个文档片段的Token数硬上限
-   */
-  DOCUMENT_FRAGMENT_MAX_PERCENTAGE: 0.25,
-  
   // === 消息类型优先级定义 ===
   
   /** 核心上下文保留层消息类型 - 第一阶段 */
-  CORE_MESSAGE_TYPES: ['system_prompt', 'user_input', 'document_fragment'] as const,
+  CORE_MESSAGE_TYPES: ['system_prompt', 'user_input'] as const,
   
   /** P1优先级内容类型 - Agent专用 */
   P1_CONTENT_TYPES: ['tool_calls', 'tool_output'] as const,
@@ -174,7 +165,7 @@ export const AGENT_CONTEXT_BUILDER_CONFIG = {
    * - 这里只用于 `TokenCalculator.estimateTokensPrecise(...)` 的 encoding 选择，不用于真实 LLM 调用；
    * - 为避免把某个具体业务模型写死在这里，统一使用 tiktoken 的默认 encoding：cl100k_base。
    */
-  DEFAULT_MODEL_ID: 'cl100k_base',
+  TOKEN_ENCODING_NAME: 'cl100k_base',
   
   // === 性能与调试配置 ===
   
@@ -223,9 +214,6 @@ export interface AgentContextBuilderConfig {
   MAX_RECENT_TOOL_INTERACTIONS_TO_KEEP: number;
   MAX_TOOL_INTERACTION_GROUPS_TO_KEEP: number;
   
-  // === 文档处理策略 ===
-  DOCUMENT_FRAGMENT_MAX_PERCENTAGE: number;
-  
   // === 消息类型优先级定义 ===
   CORE_MESSAGE_TYPES: readonly string[];
   P1_CONTENT_TYPES: readonly string[];
@@ -237,7 +225,7 @@ export interface AgentContextBuilderConfig {
   TOOL_CALL_OVERHEAD_TOKENS: number;
   
   // === 模型配置 ===
-  DEFAULT_MODEL_ID: string;
+  TOKEN_ENCODING_NAME: string;
   
   // === 性能与调试配置 ===
   ENABLE_BUILD_STATS: boolean;
@@ -400,11 +388,6 @@ export function validateAgentConfig(config: AgentContextBuilderConfig): boolean 
   
   if (config.SUMMARY_BUDGET_PERCENTAGE <= 0 || config.SUMMARY_BUDGET_PERCENTAGE > 0.5) {
     console.warn('SUMMARY_BUDGET_PERCENTAGE should be between 0 and 0.5');
-    return false;
-  }
-  
-  if (config.DOCUMENT_FRAGMENT_MAX_PERCENTAGE <= 0 || config.DOCUMENT_FRAGMENT_MAX_PERCENTAGE > 0.5) {
-    console.warn('DOCUMENT_FRAGMENT_MAX_PERCENTAGE should be between 0 and 0.5');
     return false;
   }
   

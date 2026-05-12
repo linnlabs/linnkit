@@ -30,6 +30,8 @@ export interface ToolInteractionGroupItem<T> {
 
 export interface ToolInteractionGroup<T> {
   anchorId: string;
+  /** 工具组所属的用户轮次序号：0 表示第一条 user_input 之前，之后每遇到一条 user_input 递增。 */
+  runOrdinal: number;
   assistantState: T;
   assistantMessage: AiMessage;
   assistantIndex: number;
@@ -101,6 +103,7 @@ function buildToolInteractionGroups<T>(entries: IndexedEntry<T>[]): ToolInteract
     assistantIndex: number;
     toolOutputs: Array<{ value: T; message: AiMessage; index: number }>;
     sourceMessageIds: Set<string>;
+    runOrdinal: number;
     startIndex: number;
     endIndex: number;
     isCheckpointGroup: boolean;
@@ -117,9 +120,14 @@ function buildToolInteractionGroups<T>(entries: IndexedEntry<T>[]): ToolInteract
 
   const groups: MutableGroup[] = [];
   const activeToolCallIdToGroupIndex = new Map<string, number>();
+  let currentRunOrdinal = 0;
 
   for (const entry of entries) {
     const { message } = entry;
+    if (message.role === 'user' && message.type === 'user_input') {
+      currentRunOrdinal += 1;
+    }
+
     if (message.role === 'assistant' && message.type === 'tool_calls') {
       const toolCalls = getToolCalls(message);
       if (toolCalls.length === 0) {
@@ -148,6 +156,7 @@ function buildToolInteractionGroups<T>(entries: IndexedEntry<T>[]): ToolInteract
         assistantIndex: entry.originalIndex,
         toolOutputs: [],
         sourceMessageIds: new Set<string>(message.id ? [message.id] : []),
+        runOrdinal: currentRunOrdinal,
         startIndex: entry.originalIndex,
         endIndex: entry.originalIndex,
         isCheckpointGroup: itemList.some((item) => item.toolName === CHECKPOINT_TOOL_NAME),
@@ -212,6 +221,7 @@ function buildToolInteractionGroups<T>(entries: IndexedEntry<T>[]): ToolInteract
 
     return {
       anchorId: group.anchorId,
+      runOrdinal: group.runOrdinal,
       assistantState: group.assistantState,
       assistantMessage: group.assistantMessage,
       assistantIndex: group.assistantIndex,
@@ -274,7 +284,7 @@ export function buildToolInteractionGroupsFromStates(
   return buildToolInteractionGroups(entries);
 }
 
-export function findCurrentRoundStartIndex(messages: AiMessage[]): number {
+export function findCurrentRunStartIndex(messages: AiMessage[]): number {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
     if (message.role === 'user' && message.type === 'user_input') {
@@ -283,6 +293,9 @@ export function findCurrentRoundStartIndex(messages: AiMessage[]): number {
   }
   return messages.length;
 }
+
+/** @deprecated 使用 findCurrentRunStartIndex。旧名保留一个 sprint，避免下游 deep import 立刻断裂。 */
+export const findCurrentRoundStartIndex = findCurrentRunStartIndex;
 
 export function findLastUserInputOriginalIndex(states: MessageProcessingState[]): number | null {
   const normalizedPositions = getNormalizedStatePositions(states);

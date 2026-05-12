@@ -2,7 +2,10 @@ import type {
   MessageProcessingState,
   ProviderContext,
 } from './providers/base';
-import { isContextProviderError } from './providers/base';
+import {
+  SUMMARIZATION_FAILED_ERROR_CODE,
+  isContextProviderError,
+} from './providers/base';
 import type { ContextProviderRegistry } from './providers/registry';
 import type { AiMessage, RuntimeEvent } from '../../contracts';
 
@@ -142,7 +145,6 @@ export async function runContextPipeline<
 
 export function generateFinalMessages(states: MessageProcessingState[]): AiMessage[] {
   const sysPromptMessages: MessageProcessingState[] = [];
-  let docFragmentState: MessageProcessingState | null = null;
   const summaryMessages: MessageProcessingState[] = [];
   const otherMessages: MessageProcessingState[] = [];
 
@@ -153,8 +155,6 @@ export function generateFinalMessages(states: MessageProcessingState[]): AiMessa
 
     if (state.message.type === 'system_prompt') {
       sysPromptMessages.push(state);
-    } else if (state.message.type === 'document_fragment' && state.message.role === 'user') {
-      docFragmentState = state;
     } else if (state.message.type === 'history_summary') {
       summaryMessages.push(state);
     } else {
@@ -168,7 +168,6 @@ export function generateFinalMessages(states: MessageProcessingState[]): AiMessa
 
   const finalStates: MessageProcessingState[] = [
     ...sysPromptMessages,
-    ...(docFragmentState ? [docFragmentState] : []),
     ...summaryMessages,
     ...otherMessages,
   ];
@@ -187,5 +186,9 @@ export function generateFinalMessages(states: MessageProcessingState[]): AiMessa
 }
 
 function isFatalProviderError(error: unknown): boolean {
-  return isContextProviderError(error) && error.fatal;
+  return (
+    isContextProviderError(error) &&
+    error.code === SUMMARIZATION_FAILED_ERROR_CODE &&
+    error.fatal === true
+  );
 }

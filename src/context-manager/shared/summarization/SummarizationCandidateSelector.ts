@@ -12,7 +12,7 @@ export class SummarizationCandidateSelector {
   } {
     const { fullStateList } = options;
     const isValuable = (state: MessageProcessingState) => {
-      if (state.message.type === 'system_prompt' || state.message.type === 'document_fragment') {
+      if (state.message.type === 'system_prompt' || state.message.type === 'context_injection') {
         return false;
       }
       return true;

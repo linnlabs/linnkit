@@ -9,7 +9,10 @@
  */
 
 import { BaseContextProvider, MessageProcessingState, ProviderContext, ProviderResult } from './base';
-import { AGENT_CONTEXT_BUILDER_CONFIG } from '../config';
+import {
+  createAgentContextBuilderConfig,
+  type AgentContextBuilderConfig,
+} from '../config';
 import { ToolPairMatcher, ToolPairTruncator, ReplacementSourceTagger } from './working-memory';
 import type { DebugFn } from './working-memory';
 import {
@@ -32,12 +35,13 @@ export class AgentWorkingMemoryProvider extends BaseContextProvider {
   private readonly matcher: ToolPairMatcher;
   private readonly truncator: ToolPairTruncator;
   private readonly tagger: ReplacementSourceTagger;
+  private readonly config: AgentContextBuilderConfig;
 
-  constructor() {
+  constructor(customConfig?: Partial<AgentContextBuilderConfig>) {
     super();
-    const config = AGENT_CONTEXT_BUILDER_CONFIG;
-    this.matcher = new ToolPairMatcher(config);
-    this.truncator = new ToolPairTruncator(config);
+    this.config = createAgentContextBuilderConfig(customConfig ?? {});
+    this.matcher = new ToolPairMatcher(this.config);
+    this.truncator = new ToolPairTruncator(this.config);
     this.tagger = new ReplacementSourceTagger();
   }
 
@@ -77,7 +81,7 @@ export class AgentWorkingMemoryProvider extends BaseContextProvider {
     context: ProviderContext
   ): Promise<ProviderResult> {
     // 使用统一配置
-    const config = AGENT_CONTEXT_BUILDER_CONFIG;
+    const config = this.config;
 
     this.debug('🧠 开始Agent工作记忆填充层处理', {
       totalMessages: states.length,
@@ -349,7 +353,7 @@ export class AgentWorkingMemoryProvider extends BaseContextProvider {
     let processedCount = 0;
     const strategiesApplied: string[] = [];
     let thoughtsKeptCount = 0;
-    const config = AGENT_CONTEXT_BUILDER_CONFIG;
+    const config = this.config;
 
     for (let i = skippedStates.length - 1; i >= 0; i--) {
       const state = skippedStates[i];

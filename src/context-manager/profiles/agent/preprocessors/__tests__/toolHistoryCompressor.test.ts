@@ -80,7 +80,7 @@ function createUserInput(id: string, timestamp: number, content: string): AiMess
 
 describe('ToolHistoryCompressorPreprocessor', () => {
   it('compresses only older tool groups and keeps the latest two raw groups', async () => {
-    const preprocessor = new ToolHistoryCompressorPreprocessor({ keepLatestToolPairs: 2 });
+    const preprocessor = new ToolHistoryCompressorPreprocessor({ strategy: 'per-pair', keepLatestToolPairs: 2 });
 
     const messages: AiMessage[] = [
       createUserInput('u_old', 1000, '旧问题'),
@@ -162,7 +162,7 @@ describe('ToolHistoryCompressorPreprocessor', () => {
   });
 
   it('keeps the latest checkpoint group while still compressing older non-checkpoint groups', async () => {
-    const preprocessor = new ToolHistoryCompressorPreprocessor({ keepLatestToolPairs: 2 });
+    const preprocessor = new ToolHistoryCompressorPreprocessor({ strategy: 'per-pair', keepLatestToolPairs: 2 });
 
     const checkpointRawOutput = JSON.stringify({
       data: { _type: 'context_checkpoint', summary: 'phase done' },
@@ -252,7 +252,7 @@ describe('ToolHistoryCompressorPreprocessor', () => {
   });
 
   it('compresses a multi-tool assistant group as one atomic replacement and summarizes long outputs', async () => {
-    const preprocessor = new ToolHistoryCompressorPreprocessor({ keepLatestToolPairs: 1 });
+    const preprocessor = new ToolHistoryCompressorPreprocessor({ strategy: 'per-pair', keepLatestToolPairs: 1 });
     const veryLongObservation = JSON.stringify({
       observation: 'A'.repeat(520),
     });
@@ -329,7 +329,7 @@ describe('ToolHistoryCompressorPreprocessor', () => {
   });
 
   it('keeps provider sidecar on retained tool groups and drops structured sidecar from compressed groups', async () => {
-    const preprocessor = new ToolHistoryCompressorPreprocessor({ keepLatestToolPairs: 1 });
+    const preprocessor = new ToolHistoryCompressorPreprocessor({ strategy: 'per-pair', keepLatestToolPairs: 1 });
     const oldReasoning = [
       { provider: 'deepseek', type: 'reasoning_content', reasoning_content: 'Old reason.' },
     ];

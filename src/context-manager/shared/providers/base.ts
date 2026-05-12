@@ -1,7 +1,7 @@
 import type {
   GenerateRequest,
   GenerateResponse,
-} from '../../profiles/chat/contracts';
+} from '../contracts/chatLineMessage';
 import type { AiMessage, RuntimeEvent } from '../../../contracts';
 
 export interface MessageProcessingState {
@@ -47,9 +47,13 @@ export interface ProviderResult {
   events?: RuntimeEvent[];
 }
 
+export const TOOL_HISTORY_OVERFLOW_ERROR_CODE = 'TOOL_HISTORY_OVERFLOW' as const;
+export const SUMMARIZATION_FAILED_ERROR_CODE = 'SUMMARIZATION_FAILED' as const;
+
 export type ContextProviderErrorCode =
   | 'context_provider_failed'
-  | 'summarization_failed';
+  | typeof SUMMARIZATION_FAILED_ERROR_CODE
+  | typeof TOOL_HISTORY_OVERFLOW_ERROR_CODE;
 
 export interface ContextProviderErrorOptions {
   code: ContextProviderErrorCode;

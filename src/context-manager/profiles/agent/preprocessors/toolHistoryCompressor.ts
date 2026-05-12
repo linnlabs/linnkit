@@ -7,25 +7,78 @@ import {
 import { createDefaultToolOutputSummarizer } from '../utils/toolOutputSummarizer';
 import {
   buildToolInteractionGroupsFromMessages,
-  findCurrentRoundStartIndex,
+  findCurrentRunStartIndex,
   type ToolInteractionGroup,
 } from '../utils/toolInteractionGroup';
 import type { AiMessage } from '../../../../contracts';
+import {
+  ContextProviderError,
+  TOOL_HISTORY_OVERFLOW_ERROR_CODE,
+} from '../../../shared/providers/base';
 
 const CHECKPOINT_TOOL_NAME = 'context_checkpoint';
+const DEFAULT_KEEP_LATEST_TOOL_PAIRS = 2;
+const DEFAULT_KEEP_LATEST_RUNS = 1;
+const DEFAULT_MAX_INTERACTION_GROUPS = 12;
 
+export type ToolHistoryCompressionStrategy = 'per-pair' | 'per-run' | 'none';
+export type ToolHistoryOverflowStrategy = 'keep-latest' | 'fail-fast';
+
+export interface ToolHistoryCompressorOptions {
+  strategy?: ToolHistoryCompressionStrategy;
+  keepLatestToolPairs?: number;
+  keepLatestRuns?: number;
+  maxInteractionGroups?: number;
+  overflowStrategy?: ToolHistoryOverflowStrategy;
+  maxPairTokens?: number;
+  maxOutputSummaryTokens?: number;
+}
+
+type NormalizedToolHistoryCompressorOptions = {
+  strategy: ToolHistoryCompressionStrategy;
+  keepLatestToolPairs: number;
+  keepLatestRuns: number;
+  maxInteractionGroups: number;
+  overflowStrategy: ToolHistoryOverflowStrategy;
+};
+
+/**
+ * 工具历史压缩预处理器。
+ *
+ * 三种策略边界：
+ * - per-pair：旧行为，按全局最近 N 组完整工具交互保留，其余压成自然语言记录。
+ * - per-run：按 user_input 划分 run，完整保留最近 K 个历史 run 内的工具组，避免腰斩同一轮工具链。
+ * - none：不做常规压缩，仅在 maxInteractionGroups 显式触发时执行安全阀。
+ *
+ * 注意：单个 tool_output 的 token 截断不在这里做，那是 WorkingMemory 阶段
+ * ToolPairTruncator 的职责；本处理器只决定“工具组是原样保留还是压缩为摘要消息”。
+ */
 export class ToolHistoryCompressorPreprocessor extends BasePreprocessor {
   readonly name = 'ToolHistoryCompressorPreprocessor';
   readonly description = '工具历史压缩处理器 - 将较早的历史工具调用对压缩为自然语言记录消息';
   readonly priority = 0;
 
   private summarizer = createDefaultToolOutputSummarizer();
-  private readonly keepLatestToolPairs: number;
+  private readonly options: NormalizedToolHistoryCompressorOptions;
 
-  constructor(options?: { keepLatestToolPairs?: number }) {
+  constructor(options: ToolHistoryCompressorOptions = {}) {
     super();
-    const keep = options?.keepLatestToolPairs ?? 2;
-    this.keepLatestToolPairs = Math.max(0, Math.floor(keep));
+    this.options = {
+      strategy: options.strategy ?? 'per-run',
+      keepLatestToolPairs: normalizeNonNegativeInteger(
+        options.keepLatestToolPairs,
+        DEFAULT_KEEP_LATEST_TOOL_PAIRS,
+      ),
+      keepLatestRuns: normalizeNonNegativeInteger(
+        options.keepLatestRuns,
+        DEFAULT_KEEP_LATEST_RUNS,
+      ),
+      maxInteractionGroups: normalizeNonNegativeInteger(
+        options.maxInteractionGroups,
+        DEFAULT_MAX_INTERACTION_GROUPS,
+      ),
+      overflowStrategy: options.overflowStrategy ?? 'keep-latest',
+    };
   }
 
   async process(
@@ -36,21 +89,20 @@ export class ToolHistoryCompressorPreprocessor extends BasePreprocessor {
       原始消息数: messages.length,
     }, context);
 
-    const currentRoundStartIndex = findCurrentRoundStartIndex(messages);
-    const historyMessages = messages.slice(0, currentRoundStartIndex);
-    const currentRoundMessages = messages.slice(currentRoundStartIndex);
+    const currentRunStartIndex = findCurrentRunStartIndex(messages);
+    const historyMessages = messages.slice(0, currentRunStartIndex);
+    const currentRunMessages = messages.slice(currentRunStartIndex);
 
     this.debug('📊 消息分段分析', {
       历史消息数: historyMessages.length,
-      当前轮次消息数: currentRoundMessages.length,
-      当前轮次起点索引: currentRoundStartIndex,
+      当前轮次消息数: currentRunMessages.length,
+      当前轮次起点索引: currentRunStartIndex,
+      工具压缩策略: this.options.strategy,
     }, context);
 
-    const compressedHistory = this.compressToolCallPairsInHistory(historyMessages, context, {
-      keepLatestPairs: this.keepLatestToolPairs,
-    });
+    const compressedHistory = this.compressToolCallPairsInHistory(historyMessages, context);
 
-    const finalMessages = [...compressedHistory, ...currentRoundMessages];
+    const finalMessages = [...compressedHistory, ...currentRunMessages];
     const originalCount = messages.length;
     const compressedCount = finalMessages.length;
     const removedCount = originalCount - compressedCount;
@@ -88,7 +140,6 @@ export class ToolHistoryCompressorPreprocessor extends BasePreprocessor {
   private compressToolCallPairsInHistory(
     historyMessages: AiMessage[],
     context: PreprocessorContext,
-    options: { keepLatestPairs: number },
   ): AiMessage[] {
     if (historyMessages.length < 2) {
       return historyMessages;
@@ -100,20 +151,12 @@ export class ToolHistoryCompressorPreprocessor extends BasePreprocessor {
       return historyMessages;
     }
 
-    const keepLatestPairs = Math.max(0, Math.floor(options.keepLatestPairs));
-    const keepAnchorIds = new Set<string>();
     const completeGroups = groups.filter((group) => group.isComplete);
-    const nonCheckpointGroups = completeGroups.filter((group) => !group.isCheckpointGroup);
-    const checkpointGroups = completeGroups.filter((group) => group.isCheckpointGroup);
-
-    if (keepLatestPairs > 0) {
-      for (const group of nonCheckpointGroups.slice(-keepLatestPairs)) {
-        keepAnchorIds.add(group.anchorId);
-      }
-    }
-    if (checkpointGroups.length > 0) {
-      keepAnchorIds.add(checkpointGroups[checkpointGroups.length - 1].anchorId);
-    }
+    const keepGroups = this.enforceMaxInteractionGroups(
+      this.selectGroupsToKeep(completeGroups),
+      context,
+    );
+    const keepAnchorIds = new Set(keepGroups.map((group) => group.anchorId));
 
     const messagesToRemove = new Set<number>();
     const replacementMap = new Map<number, AiMessage>();
@@ -150,6 +193,83 @@ export class ToolHistoryCompressorPreprocessor extends BasePreprocessor {
     return finalResult;
   }
 
+  private selectGroupsToKeep(
+    completeGroups: Array<ToolInteractionGroup<AiMessage>>,
+  ): Array<ToolInteractionGroup<AiMessage>> {
+    const keepAnchorIds = new Set<string>();
+    const latestCheckpointGroup = findLatestCheckpointGroup(completeGroups);
+
+    if (this.options.strategy === 'none') {
+      for (const group of completeGroups) {
+        keepAnchorIds.add(group.anchorId);
+      }
+    } else if (this.options.strategy === 'per-run') {
+      const maxRunOrdinal = completeGroups.reduce(
+        (maxOrdinal, group) => Math.max(maxOrdinal, group.runOrdinal),
+        0,
+      );
+      const minRunOrdinal = Math.max(0, maxRunOrdinal - this.options.keepLatestRuns + 1);
+      for (const group of completeGroups) {
+        if (group.runOrdinal >= minRunOrdinal) {
+          keepAnchorIds.add(group.anchorId);
+        }
+      }
+    } else {
+      const nonCheckpointGroups = completeGroups.filter((group) => !group.isCheckpointGroup);
+      if (this.options.keepLatestToolPairs > 0) {
+        for (const group of nonCheckpointGroups.slice(-this.options.keepLatestToolPairs)) {
+          keepAnchorIds.add(group.anchorId);
+        }
+      }
+    }
+
+    if (latestCheckpointGroup) {
+      keepAnchorIds.add(latestCheckpointGroup.anchorId);
+    }
+
+    return completeGroups.filter((group) => keepAnchorIds.has(group.anchorId));
+  }
+
+  private enforceMaxInteractionGroups(
+    groupsToKeep: Array<ToolInteractionGroup<AiMessage>>,
+    context: PreprocessorContext,
+  ): Array<ToolInteractionGroup<AiMessage>> {
+    if (groupsToKeep.length <= this.options.maxInteractionGroups) {
+      return groupsToKeep;
+    }
+
+    if (this.options.overflowStrategy === 'fail-fast') {
+      throw new ContextProviderError({
+        code: TOOL_HISTORY_OVERFLOW_ERROR_CODE,
+        fatal: true,
+        providerName: this.name,
+        message: `工具历史交互组数量 ${groupsToKeep.length} 超过上限 ${this.options.maxInteractionGroups}`,
+      });
+    }
+
+    const latestCheckpointGroup = findLatestCheckpointGroup(groupsToKeep);
+    const selectedAnchorIds = new Set<string>();
+    if (latestCheckpointGroup) {
+      selectedAnchorIds.add(latestCheckpointGroup.anchorId);
+    }
+
+    const sortedByLatestAction = [...groupsToKeep].sort((left, right) => right.endIndex - left.endIndex);
+    for (const group of sortedByLatestAction) {
+      if (selectedAnchorIds.size >= this.options.maxInteractionGroups) {
+        break;
+      }
+      selectedAnchorIds.add(group.anchorId);
+    }
+
+    this.debug('⚠️ 工具历史交互组超过上限，按最近行动裁剪', {
+      原始保留组数: groupsToKeep.length,
+      裁剪后组数: selectedAnchorIds.size,
+      上限: this.options.maxInteractionGroups,
+    }, context);
+
+    return groupsToKeep.filter((group) => selectedAnchorIds.has(group.anchorId));
+  }
+
   private compressToolInteractionGroup(
     group: ToolInteractionGroup<AiMessage>,
     context: PreprocessorContext,
@@ -183,4 +303,20 @@ export class ToolHistoryCompressorPreprocessor extends BasePreprocessor {
       },
     };
   }
+}
+
+function normalizeNonNegativeInteger(value: number | undefined, fallback: number): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return fallback;
+  }
+  return Math.max(0, Math.floor(value));
+}
+
+function findLatestCheckpointGroup<T>(
+  groups: Array<ToolInteractionGroup<T>>,
+): ToolInteractionGroup<T> | undefined {
+  return groups
+    .filter((group) => group.isCheckpointGroup)
+    .sort((left, right) => left.endIndex - right.endIndex)
+    .at(-1);
 }

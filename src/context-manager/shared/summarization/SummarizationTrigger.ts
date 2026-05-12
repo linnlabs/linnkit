@@ -39,7 +39,7 @@ export class SummarizationTrigger {
     const messagesToKeep = states
       .filter((s) => s.action.startsWith('keep_'))
       .map((s) => s.message);
-    const modelIdentifier = context.config.DEFAULT_MODEL_ID;
+    const modelIdentifier = context.config.TOKEN_ENCODING_NAME;
     const usedTokensPrecise = messagesToKeep.reduce(
       (total, msg) => total + TokenCalculator.estimateTokensPrecise(msg.content, modelIdentifier),
       0

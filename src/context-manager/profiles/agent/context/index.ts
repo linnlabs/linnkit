@@ -8,7 +8,7 @@ export {
   createAgentContextBuilderConfig,
   validateAgentConfig,
 } from './config';
-export type { AgentContextBuildStats } from './config';
+export type { AgentContextBuildStats, AgentContextBuilderConfig } from './config';
 
 export { ConversationSession } from './ConversationSession';
 export * from './providers';

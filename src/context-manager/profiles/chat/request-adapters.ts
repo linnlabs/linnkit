@@ -3,13 +3,37 @@ import type { GenerateRequest } from './contracts';
 import { aiMessageToChatMessage } from './utils/messageAdapters';
 import type { AiMessage } from '../../../contracts';
 
+export interface ChatGenerateRequestAdapterInput extends AgentProfileRequest {
+  context_before?: string;
+  context_after?: string;
+  current_paragraph?: string;
+  document_fragment?: string;
+  document_title?: string;
+  project_metadata?: {
+    id?: string;
+    name?: string;
+    description?: string;
+  };
+  document_metadata?: {
+    id?: string;
+    title?: string;
+  };
+  user_quote?: {
+    text: string;
+    source?: Record<string, unknown>;
+    display_label?: string;
+  };
+  completionLengthHint?: string;
+  recentRejections?: GenerateRequest['recentRejections'];
+}
+
 /**
  * Product request adapter:
  * - keeps AgentInvokeRequest -> GenerateRequest conversion out of orchestrator core
  * - makes the remaining app-specific request shape explicit and replaceable
  */
 export function buildGenerateRequestFromAgentRequest(
-  request: AgentProfileRequest,
+  request: ChatGenerateRequestAdapterInput,
   conversationHistory: AiMessage[],
 ): GenerateRequest {
   return {

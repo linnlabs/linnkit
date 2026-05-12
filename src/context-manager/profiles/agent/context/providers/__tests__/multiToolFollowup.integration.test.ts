@@ -85,7 +85,7 @@ describe('multi tool follow-up integration', () => {
     });
 
     const compressedResult = await pipelineHarness.runPreprocessors([
-      new ToolHistoryCompressorPreprocessor({ keepLatestToolPairs: 0 }),
+      new ToolHistoryCompressorPreprocessor({ strategy: 'per-pair', keepLatestToolPairs: 0 }),
     ]);
     const compressedSummary = compressedResult.messages.find(
       (message) => message.metadata?.isCompressedToolHistory === true,
@@ -206,7 +206,7 @@ describe('multi tool follow-up integration', () => {
       totalBudget: 100_000,
     });
     const compressedResult = await pipelineHarness.runPreprocessors([
-      new ToolHistoryCompressorPreprocessor({ keepLatestToolPairs: 2 }),
+      new ToolHistoryCompressorPreprocessor({ strategy: 'per-pair', keepLatestToolPairs: 2 }),
       new HistoryPurificationPreprocessor({ logPrefix: 'SidecarRootCauseTest' }),
     ]);
     const workingMemoryResult = await pipelineHarness.runProvider(
@@ -290,7 +290,7 @@ describe('multi tool follow-up integration', () => {
       totalBudget: 100_000,
     });
     const preprocessed = await pipelineHarness.runPreprocessors([
-      new ToolHistoryCompressorPreprocessor({ keepLatestToolPairs: 2 }),
+      new ToolHistoryCompressorPreprocessor({ strategy: 'per-pair', keepLatestToolPairs: 2 }),
       new ToolReplayProtocolGuardPreprocessor({
         policy: {
           provider: 'deepseek',

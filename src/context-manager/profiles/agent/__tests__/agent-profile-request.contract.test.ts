@@ -4,7 +4,7 @@ import type { FenceInjection } from '../../shared/fences';
 import type { AgentProfileRequest } from '../contracts';
 
 describe('AgentProfileRequest contract', () => {
-  it('accepts host-provided fence injections while keeping legacy fields during migration', () => {
+  it('accepts host-provided fence injections without product-specific legacy fields', () => {
     const fences: FenceInjection[] = [
       {
         kind: 'memory-context',
@@ -16,13 +16,8 @@ describe('AgentProfileRequest contract', () => {
       query: 'hello',
       promptKey: 'default',
       fences,
-      document_fragment: 'legacy document fragment',
-      context_before: 'legacy before',
-      context_after: 'legacy after',
-      user_quote: { text: 'quoted text' },
     };
 
     expect(request.fences).toBe(fences);
-    expect(request.document_fragment).toBe('legacy document fragment');
   });
 });
