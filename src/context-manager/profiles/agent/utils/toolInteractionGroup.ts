@@ -18,6 +18,17 @@ type ToolCallRecord = {
   };
 };
 
+interface ToolInteractionGroupBuildOptions {
+  /**
+   * 工具调用与工具结果允许相隔的最大消息数。
+   *
+   * 中文备注：超过窗口的 tool_output 不再配对，避免很旧的 tool_calls 被远处结果误粘连。
+   */
+  maxPairingDistance?: number;
+  /** 识别 checkpoint 工具组的工具名。默认保持 0.5.x 的 context_checkpoint。 */
+  checkpointToolName?: string;
+}
+
 export interface ToolInteractionGroupItem<T> {
   toolCallId: string;
   toolName: string;
@@ -95,7 +106,10 @@ function hasCheckpointMarker(message: AiMessage): boolean {
   return typeof rawOutput === 'string' && rawOutput.includes('"context_checkpoint"');
 }
 
-function buildToolInteractionGroups<T>(entries: IndexedEntry<T>[]): ToolInteractionGroup<T>[] {
+function buildToolInteractionGroups<T>(
+  entries: IndexedEntry<T>[],
+  options: ToolInteractionGroupBuildOptions = {},
+): ToolInteractionGroup<T>[] {
   type MutableGroup = {
     anchorId: string;
     assistantState: T;
@@ -121,6 +135,7 @@ function buildToolInteractionGroups<T>(entries: IndexedEntry<T>[]): ToolInteract
   const groups: MutableGroup[] = [];
   const activeToolCallIdToGroupIndex = new Map<string, number>();
   let currentRunOrdinal = 0;
+  const checkpointToolName = options.checkpointToolName ?? CHECKPOINT_TOOL_NAME;
 
   for (const entry of entries) {
     const { message } = entry;
@@ -159,7 +174,7 @@ function buildToolInteractionGroups<T>(entries: IndexedEntry<T>[]): ToolInteract
         runOrdinal: currentRunOrdinal,
         startIndex: entry.originalIndex,
         endIndex: entry.originalIndex,
-        isCheckpointGroup: itemList.some((item) => item.toolName === CHECKPOINT_TOOL_NAME),
+        isCheckpointGroup: itemList.some((item) => item.toolName === checkpointToolName),
         isCompressed: false,
         items: itemList,
       };
@@ -186,6 +201,12 @@ function buildToolInteractionGroups<T>(entries: IndexedEntry<T>[]): ToolInteract
     }
 
     const group = groups[groupIndex];
+    if (
+      options.maxPairingDistance !== undefined &&
+      entry.originalIndex - group.assistantIndex > options.maxPairingDistance
+    ) {
+      continue;
+    }
     const item = group.items.find((candidate) => candidate.toolCallId === toolCallId);
     if (!item) {
       continue;
@@ -274,6 +295,7 @@ export function buildToolInteractionGroupsFromMessages(
 
 export function buildToolInteractionGroupsFromStates(
   states: MessageProcessingState[],
+  options: ToolInteractionGroupBuildOptions = {},
 ): ToolInteractionGroup<MessageProcessingState>[] {
   const normalizedPositions = getNormalizedStatePositions(states);
   const entries = states.map((state, orderIndex) => ({
@@ -281,7 +303,7 @@ export function buildToolInteractionGroupsFromStates(
     originalIndex: normalizedPositions[orderIndex],
     message: state.message,
   }));
-  return buildToolInteractionGroups(entries);
+  return buildToolInteractionGroups(entries, options);
 }
 
 export function findCurrentRunStartIndex(messages: AiMessage[]): number {

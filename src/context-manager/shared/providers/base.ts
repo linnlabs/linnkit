@@ -32,6 +32,12 @@ export interface ProviderContext<TConfig = unknown> {
   debugMode: boolean;
   estimateTokens: (message: AiMessage) => number;
   summarizationCallbacks?: SummarizationCallbacks;
+  /**
+   * Host 注入的注册式 AI 调用入口。
+   *
+   * 中文备注：调用方必须通过 request.promptKey / agentId 解析已注册 agent/chat；
+   * framework 不应在 Provider 内直接发起裸 LLM call。
+   */
   generate?: (request: GenerateRequest) => Promise<GenerateResponse>;
 }
 

@@ -55,6 +55,14 @@ export interface ToolExecutionPort {
 }
 
 export interface ObservationPreviewPort {
+  /**
+   * 执行期 observation 预览/落盘治理。
+   *
+   * 中文说明：
+   * - framework 只把 `maxChars/maxLines` 和工具上下文传给 host；
+   * - 完整内容写到本地目录、对象存储还是数据库，由 host 的这个 port 决定；
+   * - 如果返回 `blob_id`，host 需要保证对应读取工具使用同一个 store。
+   */
   truncateObservation(params: {
     context: ObservationPreviewContext;
     toolName: string;

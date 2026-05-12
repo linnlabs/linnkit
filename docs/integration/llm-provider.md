@@ -27,6 +27,31 @@
 
 > ⚠️ **注意**：被工具历史压缩 / 历史摘要替换 / chat formatter 处理过的旧工具组，不再保证 sidecar 可回放——这是 token 预算与 chat 兼容层的设计取舍。如果某个 provider 强要求 reasoning blocks 必须随回传，请确保该工具组以原始 `tool_call_decision + tool_output` 结构进入下一轮上下文。
 
+### 3.1 缺 sidecar 时怎么办
+
+默认情况下，linnkit 不会根据 `model_id` 自己猜 provider 的 replay 约束。host 可以在装配 `AgentMessageOrchestrator` 时通过 `resolveToolReplayProtocolPolicy({ request, modelId })` 提供模型级默认策略；单个 agent 也可以用 `AgentSpec.contextPolicy.providerReplay` 覆盖它。
+
+```ts
+contextPolicy: {
+  profileId: 'agent',
+  providerReplay: {
+    provider: 'system_default',
+    requiresReasoningDetailsForToolReplay: true,
+    missingSidecarBehavior: 'provider_empty_replay_field',
+  },
+}
+```
+
+`missingSidecarBehavior` 的含义：
+
+| 值 | 行为 |
+|---|---|
+| `allow` | 不治理旧工具组，保持原样 |
+| `degrade_to_text` | 把缺少 sidecar 的历史工具组降级成普通 assistant 文本 |
+| `provider_empty_replay_field` | 保留结构化工具组，但标记 `provider_empty_replay_field`，交给 provider adapter 出关时填空字段 |
+
+优先级：`contextPolicy.providerReplay`（agent 级） > `resolveToolReplayProtocolPolicy`（host/model 级） > 默认 `allow`。
+
 ## 4. 你必须做的
 
 1. 实现一个符合 `AgentAiEngine` 的 adapter，把 HTTP / SDK 调用封进 `chatCompletion[Stream]`。

@@ -1,4 +1,5 @@
 export * from './messages';
+export * from './contextPolicy';
 export * from './agentSpec';
 export * from './audit';
 export * from './events';

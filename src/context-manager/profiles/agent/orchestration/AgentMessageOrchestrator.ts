@@ -53,6 +53,11 @@ export interface AgentOrchestratorOptions {
     modelId: string;
   }) => ToolReplayProtocolPolicy | undefined;
   resolveContextPolicy?: (request: AgentProfileRequest) => AgentSpecContextPolicy | undefined;
+  createProviderRegistry?: (params: {
+    request: AgentProfileRequest;
+    contextPolicy: AgentSpecContextPolicy | undefined;
+    contextBuilderConfig: Partial<AgentContextBuilderConfig>;
+  }) => ContextProviderRegistry;
   taskResolver: AgentTaskResolver;
   providerRegistry: ContextProviderRegistry;
   fenceRegistry?: FenceRegistry;
@@ -125,10 +130,24 @@ export class AgentMessageOrchestrator {
     return this.options.resolveContextPolicy?.(request);
   }
 
-  private applyContextPolicy(contextPolicy: AgentSpecContextPolicy | undefined): void {
-    this.agentContextManager.updateConfig({
+  private applyContextPolicy(
+    request: AgentProfileRequest,
+    contextPolicy: AgentSpecContextPolicy | undefined,
+  ): void {
+    const contextBuilderConfig = {
       ...this.baseContextConfig,
       ...(contextPolicy ? contextPolicyToContextBuilderConfig(contextPolicy) : {}),
+    };
+    const providerRegistry = this.options.createProviderRegistry?.({
+      request,
+      contextPolicy,
+      contextBuilderConfig,
+    }) ?? this.options.providerRegistry;
+
+    this.agentContextManager = new AgentContextManager({
+      debugMode: this.options.processing.debugMode,
+      customConfig: contextBuilderConfig,
+      providerRegistry,
     });
   }
 
@@ -158,39 +177,11 @@ export class AgentMessageOrchestrator {
         messageCount: historyMessages.length,
       });
 
-      console.log('[DEBUG-SUMMARY] 📋 Step 1: History messages after conversion from RuntimeEvent[]');
-      const summaryMsgsAfterConversion = historyMessages.filter((m) => m.type === 'history_summary');
-      console.log(`[DEBUG-SUMMARY] Found ${summaryMsgsAfterConversion.length} summary messages`);
-      summaryMsgsAfterConversion.forEach((msg) => {
-        console.log('[DEBUG-SUMMARY]', {
-          id: msg.id,
-          hasMetadata: !!msg.metadata,
-          hasIdRange: !!(msg.metadata?.replacesStartMessageId && msg.metadata?.replacesEndMessageId),
-          startId: msg.metadata?.replacesStartMessageId,
-          endId: msg.metadata?.replacesEndMessageId,
-          originalCount: msg.metadata?.originalMessageCount,
-        });
-      });
-
       const allMessages = this.buildCompleteMessageList(request, historyMessages);
       this.debug('Built complete message list', { totalCount: allMessages.length });
 
-      console.log('[DEBUG-SUMMARY] 📋 Step 2: All messages after buildCompleteMessageList (Task processing)');
-      const summaryMsgsAfterTask = allMessages.filter((m) => m.type === 'history_summary');
-      console.log(`[DEBUG-SUMMARY] Found ${summaryMsgsAfterTask.length} summary messages`);
-      summaryMsgsAfterTask.forEach((msg) => {
-        console.log('[DEBUG-SUMMARY]', {
-          id: msg.id,
-          hasMetadata: !!msg.metadata,
-          hasIdRange: !!(msg.metadata?.replacesStartMessageId && msg.metadata?.replacesEndMessageId),
-          startId: msg.metadata?.replacesStartMessageId,
-          endId: msg.metadata?.replacesEndMessageId,
-          originalCount: msg.metadata?.originalMessageCount,
-        });
-      });
-
       const contextPolicy = this.resolveContextPolicy(request);
-      this.applyContextPolicy(contextPolicy);
+      this.applyContextPolicy(request, contextPolicy);
 
       const preprocessorPipeline = this.buildPreprocessorPipelineForRequest(toolManager, request, contextPolicy);
       const modelId = this.resolvePreprocessorModel(request);
@@ -209,23 +200,6 @@ export class AgentMessageOrchestrator {
         appliedStrategies: preprocessResult.pipelineStats.appliedStrategies,
       });
 
-      console.log('[DEBUG-SUMMARY] 📋 Step 3: Messages after HistoryPurificationPreprocessor');
-      const summaryMsgsAfterPreprocess = preprocessResult.messages.filter((m) => m.type === 'history_summary');
-      console.log(`[DEBUG-SUMMARY] Found ${summaryMsgsAfterPreprocess.length} summary messages`);
-      console.log(
-        `[DEBUG-SUMMARY] Messages removed by purification: ${allMessages.length - preprocessResult.messages.length}`
-      );
-      summaryMsgsAfterPreprocess.forEach((msg) => {
-        console.log('[DEBUG-SUMMARY]', {
-          id: msg.id,
-          hasMetadata: !!msg.metadata,
-          hasIdRange: !!(msg.metadata?.replacesStartMessageId && msg.metadata?.replacesEndMessageId),
-          startId: msg.metadata?.replacesStartMessageId,
-          endId: msg.metadata?.replacesEndMessageId,
-          originalCount: msg.metadata?.originalMessageCount,
-        });
-      });
-
       const tempSession = new ConversationSession('');
       tempSession.getHistory().length = 0;
       preprocessResult.messages.forEach((msg) => {
@@ -238,7 +212,8 @@ export class AgentMessageOrchestrator {
         preprocessResult.messages,
         callbacks,
         undefined,
-        extraOptions?.generate
+        extraOptions?.generate,
+        contextPolicy,
       );
       this.debug('Context built', { afterContextCount: contextResult.messages.length });
 
@@ -307,7 +282,8 @@ export class AgentMessageOrchestrator {
     messages: AiMessage[],
     callbacks?: SummarizationCallbacks,
     phaseOverride?: AgentBuildPhase,
-    generate?: (request: GenerateRequest) => Promise<GenerateResponse>
+    generate?: (request: GenerateRequest) => Promise<GenerateResponse>,
+    contextPolicy?: AgentSpecContextPolicy,
   ): Promise<ContextBuildResult> {
     const totalBudget =
       this.options.tokenBudget.maxTokens - this.options.tokenBudget.reservedForResponse;
@@ -319,7 +295,11 @@ export class AgentMessageOrchestrator {
       totalBudget,
       callbacks,
       phaseOverride,
-      generate
+      generate,
+      {
+        policy: contextPolicy?.contextTrace,
+        effectiveContextPolicy: contextPolicy,
+      },
     );
 
     if (this.options.processing.debugMode) {

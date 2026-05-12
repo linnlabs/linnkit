@@ -17,6 +17,7 @@ export interface ContextManagerAuditRecordInput {
   systemReminder?: {
     ruleIds?: string[];
   };
+  contextTrace?: unknown;
 }
 
 export interface ToolProtocolErrorAuditInput {

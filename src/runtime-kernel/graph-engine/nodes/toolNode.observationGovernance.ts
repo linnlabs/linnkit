@@ -3,9 +3,10 @@ import type {
   ObservationPreviewMeta,
   ObservationPreviewPort,
 } from '../../tools/ports';
+import type { AgentSpecToolObservationGovernancePolicy } from '../../../contracts';
 import { isRecord, readString } from './toolNode.helpers';
 
-export const TOOL_OBSERVATION_PREVIEW_LIMITS = {
+export const DEFAULT_TOOL_OBSERVATION_GOVERNANCE_POLICY = {
   /**
    * 执行期 observation 预览阈值。
    *
@@ -14,9 +15,22 @@ export const TOOL_OBSERVATION_PREVIEW_LIMITS = {
    * - 这是执行期的网络/持久化/实时回放保护，不替代 context-manager 的 `MAX_TOOL_PAIR_TOKENS`；
    * - `MAX_TOOL_PAIR_TOKENS` 仍负责下一轮构建 LLM 上下文时，对整组 tool_calls + tool_output 做 token 预算兜底。
    */
+  enabled: true,
   maxChars: 20_000,
   maxLines: 1_200,
 } as const;
+
+export const TOOL_OBSERVATION_PREVIEW_LIMITS = DEFAULT_TOOL_OBSERVATION_GOVERNANCE_POLICY;
+
+export function resolveToolObservationGovernancePolicy(
+  policy: AgentSpecToolObservationGovernancePolicy | undefined,
+): Required<AgentSpecToolObservationGovernancePolicy> {
+  return {
+    enabled: policy?.enabled ?? DEFAULT_TOOL_OBSERVATION_GOVERNANCE_POLICY.enabled,
+    maxChars: policy?.maxChars ?? DEFAULT_TOOL_OBSERVATION_GOVERNANCE_POLICY.maxChars,
+    maxLines: policy?.maxLines ?? DEFAULT_TOOL_OBSERVATION_GOVERNANCE_POLICY.maxLines,
+  };
+}
 
 function buildToolOutputUiMeta(params: {
   toolName: string;
@@ -71,8 +85,14 @@ export async function applyObservationGovernance(params: {
   toolContext: ObservationPreviewContext;
   structuredObservation: string | undefined;
   observationPreview: ObservationPreviewPort;
+  policy?: AgentSpecToolObservationGovernancePolicy;
 }): Promise<void> {
   if (!params.structuredObservation || !isRecord(params.parsed)) {
+    return;
+  }
+
+  const policy = resolveToolObservationGovernancePolicy(params.policy);
+  if (!policy.enabled) {
     return;
   }
 
@@ -80,8 +100,8 @@ export async function applyObservationGovernance(params: {
     context: params.toolContext,
     toolName: params.toolName,
     text: params.structuredObservation,
-    maxChars: TOOL_OBSERVATION_PREVIEW_LIMITS.maxChars,
-    maxLines: TOOL_OBSERVATION_PREVIEW_LIMITS.maxLines,
+    maxChars: policy.maxChars,
+    maxLines: policy.maxLines,
     meta: buildToolOutputUiMeta({
       toolName: params.toolName,
       parsed: params.parsed,

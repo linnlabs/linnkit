@@ -28,6 +28,7 @@ export function createBuildContextStage(
 
       ctx.mode = contextBuildResult.mode;
       ctx.llmMessages = contextBuildResult.llmMessages;
+      ctx.contextTrace = contextBuildResult.contextTrace;
 
       for (const event of contextBuildResult.summaryEvents) {
         if (!isHistorySummaryEvent(event)) {

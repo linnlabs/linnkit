@@ -1,6 +1,10 @@
 import type { ToolExecutionContext } from '../tools/toolExecutionContext';
 import type { ToolCallExtraContent } from '../llm';
-import type { RuntimeEvent } from '../../contracts';
+import type {
+  AgentSpecSystemReminderPolicy,
+  AgentSpecToolObservationGovernancePolicy,
+  RuntimeEvent,
+} from '../../contracts';
 
 export interface ExecutorLocalState {
   stepCount: number;
@@ -10,7 +14,9 @@ export interface ExecutorLocalState {
   finalStepPolicy?: 'final_answer' | 'force_tools';
   finalStepForcedTools?: string[];
   lastStepsHintThreshold?: number;
-  systemReminderRuleIds?: string[];
+  systemReminderPolicy?: AgentSpecSystemReminderPolicy;
+  toolObservationPolicy?: AgentSpecToolObservationGovernancePolicy;
+  contextCheckpointToolName?: string;
   runLockedModelId?: string;
 }
 

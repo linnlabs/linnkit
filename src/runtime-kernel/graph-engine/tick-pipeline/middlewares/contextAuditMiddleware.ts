@@ -27,6 +27,7 @@ export const contextAuditMiddleware: TickAroundMiddleware = async (ctx, stage, n
     mode: ctx.mode,
     llmMessages: ctx.llmMessages,
     toolNames: toolNamesForAudit,
+    contextTrace: ctx.contextTrace,
   });
 
   if (Array.isArray(ctx.systemReminderHitRuleIds) && ctx.systemReminderHitRuleIds.length > 0) {
@@ -35,6 +36,7 @@ export const contextAuditMiddleware: TickAroundMiddleware = async (ctx, stage, n
       llmMessages: ctx.llmMessages,
       toolNames: toolNamesForAudit,
       systemReminder: { ruleIds: ctx.systemReminderHitRuleIds },
+      contextTrace: ctx.contextTrace,
     });
   }
 };

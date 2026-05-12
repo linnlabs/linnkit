@@ -9,7 +9,7 @@
 linnkit 设计原则：
 
 - **framework 不知道任何 host 产品语义**——`document_fragment` / `project_context` / `<additional_context>` 这种字面绝不出现在 framework 源码里
-- **任意 host 都能注册自己的围栏家族**——linnya 的 `<additional_context>`、linnsy 的 `<memory-context>` / `<system-event>`、未来 IDE agent 的 `<file_context>`，都通过同一套机制插入，不需要任何 host 改 framework 源码
+- **任意 host 都能注册自己的围栏家族**——例如 `<additional_context>`、`<memory-context>`、`<system-event>`、`<file_context>`，都通过同一套机制插入，不需要任何 host 改 framework 源码
 - **注入消息有稳定协议载体**——`AiMessage.type = 'context_injection'` 是唯一通用类型，`metadata.fenceKind` 表达开放的 host kind
 
 正确的做法：把每类上下文声明成一个"围栏家族"（fence kind），通过 `FenceRegistry` 注册，运行时由 `BaseAgentTask` 把 host 请求里的 `fences[]` 自动展开成 `context_injection` 消息，按 `placement` 落到正确位置；旧轮 `lifetime: 'turn-only'` 的注入由 `FenceLifetimePreprocessor` 自动剥离。
@@ -114,18 +114,19 @@ export function withMyFenceInjections(request: MyAgentInvokeRequest): MyAgentInv
 import {
   formatAgentLlmMessages,
   agentOrchestration,
-  FenceLifetimePreprocessor,
-  type MustKeepPolicy,
+  contextPolicyToProviderOptions,
+  mergeContextPolicy,
 } from '@linnlabs/linnkit/context-manager';
 import { myFenceRegistry } from '../../context/agent/registerFences';
 import { withMyFenceInjections } from '../../context/agent/createMyFenceInjections';
 
-const myMustKeepPolicy: MustKeepPolicy = {
-  alwaysKeepTypes: ['system_prompt', 'user_input'],
-  alwaysKeepFenceKinds: ['system-event'],   // 注：只列那些"事件本身就是事实"的 kind
-  truncationRules: [
-    { fenceKind: 'memory-context', maxBudgetFraction: 0.2, strategyName: 'memory-truncate' },
-  ],
+const hostContextPolicyFallback = {
+  mustKeep: {
+    alwaysKeepFenceKinds: ['system-event'],   // 注：只列那些"事件本身就是事实"的 kind
+    truncationRules: [
+      { fenceKind: 'memory-context', maxBudgetFraction: 0.2, strategyName: 'memory-truncate' },
+    ],
+  },
 };
 
 const orchestrator = new agentOrchestration.AgentMessageOrchestrator({
@@ -134,7 +135,17 @@ const orchestrator = new agentOrchestration.AgentMessageOrchestrator({
   taskResolver: myAgentTaskResolver,
   providerRegistry: myProviderRegistry,
   fenceRegistry: myFenceRegistry,              // ← 关键：让 BaseAgentTask 认识 host 的 fence
+  // host 可以保留模型级 provider replay 默认；单个 agent 可用 contextPolicy.providerReplay 覆盖。
   resolveToolReplayProtocolPolicy: ({ modelId }) => myToolReplayPolicy(modelId),
+  resolveContextPolicy: request => mergeContextPolicy({
+    hostFallback: hostContextPolicyFallback,
+    agentSpec: myAgentRegistry.get(request.promptKey)?.config?.contextPolicy,
+  }),
+  createProviderRegistry: ({ contextPolicy, contextBuilderConfig }) =>
+    createMyProviderRegistry({
+      customConfig: contextBuilderConfig,
+      providerOptions: contextPolicyToProviderOptions(contextPolicy),
+    }),
 });
 
 // 调 orchestrator 之前，把 host 字段转成 fences
@@ -160,7 +171,7 @@ const llmMessages = formatAgentLlmMessages(processingResult.messages, {
 
 ## 6. 配 MustKeepPolicy（控制 working memory 裁剪）
 
-`AgentCoreContextProvider` 通过 `MustKeepPolicy` 决定哪些消息一律不被裁。它有两类输入：
+`AgentCoreContextProvider` 通过 `contextPolicy.mustKeep` 决定哪些消息一律不被裁。它有两类输入：
 
 1. `alwaysKeepTypes`：按 `AiMessage.type` 列表（`'system_prompt' | 'user_input' | ...`）。默认值 `DEFAULT_MUST_KEEP_POLICY`
 2. `alwaysKeepFenceKinds`：按 fence kind 列表（host 注入的 `metadata.fenceKind`）
@@ -170,6 +181,32 @@ const llmMessages = formatAgentLlmMessages(processingResult.messages, {
 - `lifetime: 'persisted'` 的 fence kind，多半也想 must-keep → 加进 `alwaysKeepFenceKinds`
 - `lifetime: 'turn-only'` 的 fence kind，本身就只在本轮，**不要**加进 `alwaysKeepFenceKinds`
 - 想限量截断（不丢但只保留预算的 X%）：用 `truncationRules`
+
+推荐把全局业务默认放进 host fallback，把单个 agent 的差异写在 `AgentDefinition.config.contextPolicy`：
+
+```ts
+// host fallback：所有 agent 都默认保留 system-event
+const hostContextPolicyFallback = {
+  mustKeep: {
+    alwaysKeepFenceKinds: ['system-event'],
+  },
+};
+
+// 单个 agent：额外把 memory-context 限量保留
+config: {
+  contextPolicy: {
+    profileId: 'agent',
+    mustKeep: {
+      alwaysKeepFenceKinds: ['system-event', 'memory-context'],
+      truncationRules: [
+        { fenceKind: 'memory-context', maxBudgetFraction: 0.2, strategyName: 'memory-truncate' },
+      ],
+    },
+  },
+}
+```
+
+开启 `contextTrace.enabled` 后，你可以在 `ContextBuildResult.contextTrace.events` 里看到 fence 对应消息为什么被 `kept_by_CORE_CONTEXT` 或被截断。
 
 ## 7. Fence 消费的全链路一图
 

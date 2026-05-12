@@ -4,7 +4,7 @@
 
 > 你在自己的仓库装了 `@linnlabs/linnkit`，要把一个 Agent 跑起来，至少要写什么、应该从哪里开始抄。
 
-**读者画像**：在外部独立仓库（如 `linnsy daemon` / `linnya`-like product / 任意自研 agent host）通过 `npm install @linnlabs/linnkit` 装包，准备从零接入的开发者。
+**读者画像**：在外部独立仓库（如 daemon、桌面应用、Web 服务、知识库 agent 或任意自研 agent host）通过 `npm install @linnlabs/linnkit` 装包，准备从零接入的开发者。
 
 ---
 
@@ -117,7 +117,8 @@ import type { RuntimeEvent } from '@linnlabs/linnkit/contracts';
 | 主题 | 文档 |
 |------|------|
 | 接 LLM provider（OpenAI / Anthropic / DeepSeek / OpenRouter）| [llm-provider.md](./llm-provider.md) |
-| 注册工具集 | [tools.md](./tools.md) |
+| 注册工具集 / 配置超长 observation 落盘路径 | [tools.md](./tools.md) |
+| **上下文工程总览**（所有作用在 messages 上的机制 + `contextPolicy` / `ContextTrace` 可观测闭环）⭐ | [context-engineering.md](./context-engineering.md) |
 | **接 context engineering（fence 注册 + 注入）⭐ 一等接入面** | [context-fences.md](./context-fences.md) |
 | 配置工具历史压缩策略（per-pair / per-run / none）| [tool-history.md](./tool-history.md) |
 | 接持久化（Checkpointer / EventStore / RunRegistryStore）| [persistence.md](./persistence.md) |
@@ -142,8 +143,9 @@ import type { RuntimeEvent } from '@linnlabs/linnkit/contracts';
 1. 本文 §1-§6 → 先把"我装了啥、它给我啥"看清
 2. [installation.md](./installation.md) → 装包鉴权跑通 smoke
 3. [quickstart.md](./quickstart.md) → 写一个能跑的最小骨架
-4. [context-fences.md](./context-fences.md) ⭐ → **第一周必读**——上下文工程是 linnkit 一等接入面，错过后期回滚成本高
-5. 按需读单点接入文档
+4. [context-engineering.md](./context-engineering.md) ⭐ → **第一周必读 · 鸟瞰**：所有作用在 messages 上的机制是什么、如何声明 `contextPolicy`、如何用 `ContextTrace` 解释最终 token 决策
+5. [context-fences.md](./context-fences.md) ⭐ → **第一周必读 · 实操**：fence 注册与注入是 linnkit 一等接入面
+6. 按需读单点接入文档
 
 **续作（按需）**：
 

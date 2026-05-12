@@ -75,6 +75,51 @@ describe('toolNode.observationGovernance', () => {
     );
   });
 
+  it('应允许通过 contextPolicy 覆盖执行期 observation 阈值', async () => {
+    truncateObservationMock.mockResolvedValue({
+      truncated: false,
+      preview: 'unchanged',
+    });
+
+    await applyObservationGovernance({
+      parsed: { observation: 'content' },
+      toolName: 'search',
+      toolContext: {},
+      structuredObservation: 'content',
+      observationPreview: {
+        truncateObservation: truncateObservationMock,
+      },
+      policy: {
+        maxChars: 4096,
+        maxLines: 200,
+      },
+    });
+
+    expect(truncateObservationMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        maxChars: 4096,
+        maxLines: 200,
+      }),
+    );
+  });
+
+  it('禁用 observation governance 时不应调用落盘预览端口', async () => {
+    await applyObservationGovernance({
+      parsed: { observation: 'very long text' },
+      toolName: 'search',
+      toolContext: {},
+      structuredObservation: 'very long text',
+      observationPreview: {
+        truncateObservation: truncateObservationMock,
+      },
+      policy: {
+        enabled: false,
+      },
+    });
+
+    expect(truncateObservationMock).not.toHaveBeenCalled();
+  });
+
   it('应按工具名组装 uiMeta', async () => {
     truncateObservationMock.mockResolvedValue({
       truncated: false,

@@ -1,15 +1,19 @@
 import { Logger } from '../../shared/logger';
 import type { ContextProviderRegistry } from './providers/registry';
 import type { ProviderContext } from './providers/base';
+import { TokenCalculator } from '../../shared/TokenCalculator';
 import {
   runContextPipeline,
   type ContextPipelineStats,
   type RunContextPipelineResult,
 } from './context-pipeline';
 import type { AiMessage } from '../../contracts';
+import type { ContextTraceCollector } from './context-trace';
 
 export interface ContextManagerBaseConfig {
   AVG_CHARS_PER_TOKEN: number;
+  TOOL_CALL_OVERHEAD_TOKENS?: number;
+  TOKEN_ENCODING_NAME?: string;
 }
 
 export interface ContextManagerBaseOptions<TConfig, TRegistry> {
@@ -41,7 +45,7 @@ export abstract class ContextManagerBase<
     options: ContextManagerBaseOptions<TConfig, TRegistry>,
     init: ContextManagerBaseInit<TConfig, TRegistry>,
   ) {
-    this.debugMode = true;
+    this.debugMode = options.debugMode ?? false;
     this.config = options.customConfig
       ? { ...init.defaultConfig, ...options.customConfig }
       : init.defaultConfig;
@@ -56,7 +60,11 @@ export abstract class ContextManagerBase<
   }
 
   protected estimateTokens(message: AiMessage): number {
-    return Math.ceil(message.content.length / this.config.AVG_CHARS_PER_TOKEN);
+    return TokenCalculator.estimateMessageTokens(message, {
+      encoding: this.config.TOKEN_ENCODING_NAME,
+      avgCharsPerToken: this.config.AVG_CHARS_PER_TOKEN,
+      toolCallOverhead: this.config.TOOL_CALL_OVERHEAD_TOKENS,
+    });
   }
 
   protected debug(message: string, data?: Record<string, unknown>): void {
@@ -75,6 +83,7 @@ export abstract class ContextManagerBase<
     buildStats: TStats;
     providerContext: TContext;
     getPhaseByProviderName: (providerName: string) => TPhase | null;
+    contextTrace?: ContextTraceCollector;
   }): Promise<RunContextPipelineResult> {
     return runContextPipeline({
       messages: options.messages,
@@ -85,6 +94,7 @@ export abstract class ContextManagerBase<
       estimateTokens: message => this.estimateTokens(message),
       getPhaseByProviderName: options.getPhaseByProviderName,
       debug: (message, data) => this.debug(message, data),
+      contextTrace: options.contextTrace,
     });
   }
 

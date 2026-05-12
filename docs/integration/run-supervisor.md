@@ -25,7 +25,7 @@ const handle = await supervisor.registerRun({
 
 ## 2. 接入规则
 
-- `runId` 建议由 host 显式传入。像 linnya 这种已有 `turnId` 的宿主，直接用 `runId = turnId`，这样 `RunHandle.observe({ includePersisted: true })` 能复用 EventStore 里的 runId 索引。
+- `runId` 建议由 host 显式传入。如果 host 已有稳定的 `turnId` / request id，可以直接用 `runId = turnId`，这样 `RunHandle.observe({ includePersisted: true })` 能复用 EventStore 里的 runId 索引。
 - `RunHandle.signal` 是 runner 内部唯一信号来源；不要再给 GraphExecutor 另起一根 ad-hoc `AbortController`。
 - `AgentRunnerService.run()` 一类 host runner 应同步返回 `{ handle, result }`：UI 可以立刻拿 handle 做 cancel/observe/cost，执行结果继续等 `result`。
 - runner 生命周期必须显式写：启动前 `markRunning()`，正常结束 `markCompleted()`，异常结束 `markFailed()`，取消由 `handle.cancel({ reason })` 写 `cancelled`。

@@ -14,22 +14,34 @@ import type { SummarizationProviderContext } from './config';
 export interface SummarizationOptions {
   maxSummaryTokens: number;
   targetCompressionRatio?: number;
-  promptKey: string;
+  /**
+   * 执行摘要的已注册 agent/chat ID。
+   *
+   * 中文备注：linnkit 不持有 prompt 正文，也不直接决定模型调用；这里只携带注册引用，
+   * 真正的 prompt 构建与模型策略由 host 的注册表解释。
+   */
+  agentId: string;
   modelId: string | null;
   fallbackModelId?: string | null;
   language: 'zh' | 'en' | 'auto';
+  failureBehavior?: 'fail-fast' | 'continue-if-within-budget';
+  /** 内部调参与测试注入，默认保持生产重试行为。 */
+  maxRetries?: number;
+  /** 内部调参与测试注入，默认 1000ms。 */
+  retryDelayMs?: number;
 }
 
 export class AISummaryGenerator {
   private readonly defaultOptions: SummarizationOptions;
   private readonly fallbackModelId: string | null;
   private readonly MAX_RETRIES: number;
-  private readonly RETRY_DELAY_MS = 1000;
+  private readonly RETRY_DELAY_MS: number;
 
   constructor(options: SummarizationOptions) {
     this.defaultOptions = options;
     this.fallbackModelId = options.fallbackModelId ?? null;
-    this.MAX_RETRIES = 3;
+    this.MAX_RETRIES = normalizePositiveInteger(options.maxRetries, 3);
+    this.RETRY_DELAY_MS = normalizeNonNegativeInteger(options.retryDelayMs, 1000);
   }
 
   async generateHistorySummary(
@@ -137,7 +149,7 @@ export class AISummaryGenerator {
         }, context);
 
         const summaryRequest: GenerateRequest = {
-          promptKey: this.defaultOptions.promptKey,
+          promptKey: this.defaultOptions.agentId,
           modelId,
           prompt: conversationText,
         };
@@ -185,4 +197,18 @@ export class AISummaryGenerator {
   private sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
+}
+
+function normalizePositiveInteger(value: number | undefined, fallback: number): number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+    return fallback;
+  }
+  return Math.floor(value);
+}
+
+function normalizeNonNegativeInteger(value: number | undefined, fallback: number): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return fallback;
+  }
+  return Math.max(0, Math.floor(value));
 }

@@ -10,7 +10,7 @@
 
 import type { AgentInvocationRequest } from '../../ports';
 import type { ExecutorLocalState } from '../graph-engine/types';
-import type { RuntimeEvent } from '../../contracts';
+import type { AgentSpecSystemReminderExtraRule, AgentSpecSystemReminderTrigger, RuntimeEvent } from '../../contracts';
 
 export interface SystemReminderContext {
   request: AgentInvocationRequest;
@@ -38,3 +38,15 @@ export interface SystemReminderRule {
    */
   build: (ctx: SystemReminderContext) => string;
 }
+
+export type SystemReminderTriggerEvaluator = (
+  ctx: SystemReminderContext,
+  trigger: AgentSpecSystemReminderTrigger,
+) => boolean;
+
+export type SystemReminderContentTemplate = (
+  ctx: SystemReminderContext,
+  args: Record<string, unknown> | undefined,
+) => string;
+
+export interface SystemReminderRuleDefinition extends AgentSpecSystemReminderExtraRule {}

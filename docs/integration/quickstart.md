@@ -106,7 +106,7 @@ main();
 
 ## 3. 这一节为什么是骨架而不是 copy-paste 可跑
 
-`GraphExecutor` 的依赖袋在 0.x 仍在收口（不是稳定 public 形状）。**官方的可参考装配示例** 在 linnkit 真源仓 (`BCAutumn/Tingtalk_official_version`) 的 `src/app-hosts/linnya/adapters/runtime-assembly/*`、`src/app-hosts/linnya/adapters/context-injection/defaultGraphExecutorContextBuilder.ts` 下。如果你需要它们的具体形状，请直接对着那份代码抄一遍；不要凭这份骨架猜。
+`GraphExecutor` 的依赖袋在 0.x 仍在收口（不是稳定 public 形状）。建议把本页当作最小装配骨架：生产接入时按 [llm-provider.md](./llm-provider.md)、[tools.md](./tools.md)、[context-fences.md](./context-fences.md)、[run-supervisor.md](./run-supervisor.md) 逐项补齐 host adapter，不要依赖任何未导出的仓库内部路径。
 
 后续单点接入指南给的是**稳定的合同**，可以放心抄。
 

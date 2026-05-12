@@ -38,3 +38,28 @@ export interface TruncationResult {
  * 调试日志函数类型
  */
 export type DebugFn = (message: string, data?: Record<string, unknown>) => void;
+
+/**
+ * 工作记忆各子策略的统一返回形态。
+ *
+ * 中文备注：
+ * - 子策略只负责修改 states 并返回增量统计；
+ * - 总 token 与最终 ProviderResult 仍由 AgentWorkingMemoryProvider 汇总，避免职责扩散。
+ */
+export interface WorkingMemoryRetentionResult {
+  tokensUsed: number;
+  processedCount: number;
+  strategiesApplied: string[];
+}
+
+export interface ToolInteractionRetentionResult extends WorkingMemoryRetentionResult {
+  historicalToolGroupsKept: number;
+}
+
+export interface HistoricalToolRetentionResult extends WorkingMemoryRetentionResult {
+  toolGroupsKept: number;
+}
+
+export type HistoricalToolCandidate =
+  | { kind: 'compressed'; sortIndex: number; state: MessageProcessingState }
+  | { kind: 'group'; sortIndex: number; group: ToolInteractionGroup<MessageProcessingState> };

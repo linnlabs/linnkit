@@ -12,6 +12,7 @@ export * as enrichment from './enrichment';
 export * as runSupervisor from './run-supervisor';
 export * as telemetry from './telemetry';
 export * as audit from './audit';
+export * as systemReminder from './system-reminder';
 
 // === 扁平 re-export（业界 namespace + flat 双重暴露惯例） ===
 // 与上方 namespace 共存：namespace 暴露分层结构，扁平暴露 P1 收口的消费符号。
@@ -24,6 +25,7 @@ export * from './graph-engine';
 export * from './child-run-trace';
 export * from './enrichment';
 export * from './audit';
+export * from './system-reminder';
 
 // === 顶层符号 ===
 export { ENGINE_ERROR_CODES } from '../shared/errorClassifier';

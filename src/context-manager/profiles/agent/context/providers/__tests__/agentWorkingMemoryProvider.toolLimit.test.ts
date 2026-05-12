@@ -105,12 +105,29 @@ function makeCompressedToolHistory(i: number): AiMessage {
   };
 }
 
+function makeTextMessage(id: string, role: 'user' | 'assistant', type: AiMessage['type'], content: string): AiMessage {
+  return {
+    id,
+    role,
+    type,
+    content,
+    timestamp: 9000,
+  } as AiMessage;
+}
+
 function makeProviderContext(): ProviderContext {
   return {
     totalBudget: 100000,
     config: AGENT_CONTEXT_BUILDER_CONFIG,
     debugMode: false,
     estimateTokens: () => 1,
+  };
+}
+
+function makeProviderContextWithPhase(phase: string): ProviderContext & { currentPhase: { phase: string } } {
+  return {
+    ...makeProviderContext(),
+    currentPhase: { phase },
   };
 }
 
@@ -231,5 +248,143 @@ describe('AgentWorkingMemoryProvider tool limits', () => {
 
     expect(keptCompressed).toHaveLength(2);
     expect(keptCompressed).toEqual(['c_tool_4', 'c_tool_5']);
+  });
+
+  it('prioritizes the latest complete tool group during post_tool_call phase', async () => {
+    const provider = new AgentWorkingMemoryProvider({
+      MAX_RECENT_TOOL_INTERACTIONS_TO_KEEP: 0,
+      MAX_TOOL_INTERACTION_GROUPS_TO_KEEP: 0,
+    });
+    const oldPair = makeToolPair(1);
+    const latestPair = makeToolPair(2);
+    const states = buildStates([
+      makeTextMessage('user_1', 'user', 'user_input', '用户输入'),
+      oldPair.toolCalls,
+      oldPair.toolOutput,
+      latestPair.toolCalls,
+      latestPair.toolOutput,
+    ]);
+
+    const result = await provider.provide(states, 100000, makeProviderContextWithPhase('post_tool_call'));
+    const kept = result.states
+      .filter((state) => state.action === 'keep_working_memory')
+      .map((state) => state.message.id);
+
+    expect(result.strategiesApplied).toContain('post_tool_call_priority');
+    expect(kept).toEqual(expect.arrayContaining(['a_tc_2', 't_out_2']));
+  });
+
+  it('keeps only the configured number of latest thought messages', async () => {
+    const provider = new AgentWorkingMemoryProvider({ MAX_THOUGHTS_TO_KEEP: 2 });
+    const states = buildStates([
+      makeTextMessage('thought_1', 'assistant', 'thought', '第一段思考'),
+      makeTextMessage('thought_2', 'assistant', 'thought', '第二段思考'),
+      makeTextMessage('thought_3', 'assistant', 'thought', '第三段思考'),
+      makeTextMessage('assistant_text', 'assistant', 'final_answer', '普通回复'),
+    ]);
+
+    const result = await provider.provide(states, 100000, makeProviderContext());
+    const keptThoughts = result.states
+      .filter((state) => state.action === 'keep_working_memory' && state.message.type === 'thought')
+      .map((state) => state.message.id);
+
+    expect(keptThoughts).toEqual(['thought_2', 'thought_3']);
+    expect(result.strategiesApplied.filter((strategy) => strategy === 'thought_processing')).toHaveLength(2);
+  });
+
+  it('keeps configured minimum tool groups even when working-memory budget is exhausted', async () => {
+    const provider = new AgentWorkingMemoryProvider({
+      MIN_TOOL_INTERACTIONS_TO_KEEP: 1,
+      MAX_RECENT_TOOL_INTERACTIONS_TO_KEEP: 1,
+      MAX_TOOL_INTERACTION_GROUPS_TO_KEEP: 1,
+    });
+    const pair = makeToolPair(1);
+    const states = buildStates([
+      pair.toolCalls,
+      pair.toolOutput,
+      makeTextMessage('user_1', 'user', 'user_input', '继续'),
+    ]);
+
+    const result = await provider.provide(states, 1, makeProviderContext());
+    const kept = result.states
+      .filter((state) => state.action === 'keep_working_memory')
+      .map((state) => state.message.id);
+
+    expect(kept).toEqual(expect.arrayContaining(['a_tc_1', 't_out_1']));
+  });
+
+  it('honors toolPairingSearchRange when matching tool outputs', async () => {
+    const pair = makeToolPair(1);
+    const farMessages = [
+      pair.toolCalls,
+      makeTextMessage('assistant_gap', 'assistant', 'final_answer', '间隔消息'),
+      pair.toolOutput,
+    ];
+    const narrowProvider = new AgentWorkingMemoryProvider({
+      TOOL_PAIRING_SEARCH_RANGE: 1,
+      MIN_TOOL_INTERACTIONS_TO_KEEP: 0,
+      MAX_RECENT_TOOL_INTERACTIONS_TO_KEEP: 1,
+      MAX_TOOL_INTERACTION_GROUPS_TO_KEEP: 1,
+    });
+
+    const narrowResult = await narrowProvider.provide(buildStates(farMessages), 100000, makeProviderContext());
+    const narrowKept = narrowResult.states
+      .filter((state) => state.action === 'keep_working_memory')
+      .map((state) => state.message.id);
+
+    expect(narrowKept).not.toContain('a_tc_1');
+    expect(narrowKept).not.toContain('t_out_1');
+
+    const wideProvider = new AgentWorkingMemoryProvider({
+      TOOL_PAIRING_SEARCH_RANGE: 2,
+      MIN_TOOL_INTERACTIONS_TO_KEEP: 0,
+      MAX_RECENT_TOOL_INTERACTIONS_TO_KEEP: 1,
+      MAX_TOOL_INTERACTION_GROUPS_TO_KEEP: 1,
+    });
+
+    const wideResult = await wideProvider.provide(buildStates(farMessages), 100000, makeProviderContext());
+    const wideKept = wideResult.states
+      .filter((state) => state.action === 'keep_working_memory')
+      .map((state) => state.message.id);
+
+    expect(wideKept).toEqual(expect.arrayContaining(['a_tc_1', 't_out_1']));
+  });
+
+  it('keeps plain text conversation messages when budget allows', async () => {
+    const provider = new AgentWorkingMemoryProvider();
+    const states = buildStates([
+      makeTextMessage('user_old', 'user', 'user_input', '旧问题'),
+      makeTextMessage('assistant_old', 'assistant', 'final_answer', '旧回答'),
+      makeTextMessage('user_new', 'user', 'user_input', '新问题'),
+    ]);
+
+    const result = await provider.provide(states, 100000, makeProviderContext());
+    const kept = result.states
+      .filter((state) => state.action === 'keep_working_memory')
+      .map((state) => state.message.id);
+
+    expect(kept).toEqual(expect.arrayContaining(['user_old', 'assistant_old', 'user_new']));
+    expect(result.strategiesApplied).toContain('text_conversation');
+  });
+
+  it('keeps historical raw tool groups through P3 when current-turn retention is disabled', async () => {
+    const provider = new AgentWorkingMemoryProvider({
+      MAX_RECENT_TOOL_INTERACTIONS_TO_KEEP: 0,
+      MAX_TOOL_INTERACTION_GROUPS_TO_KEEP: 1,
+    });
+    const historicalPair = makeToolPair(1);
+    const states = buildStates([
+      historicalPair.toolCalls,
+      historicalPair.toolOutput,
+      makeTextMessage('user_1', 'user', 'user_input', '继续'),
+    ]);
+
+    const result = await provider.provide(states, 100000, makeProviderContext());
+    const kept = result.states
+      .filter((state) => state.action === 'keep_working_memory')
+      .map((state) => state.message.id);
+
+    expect(result.strategiesApplied).toContain('historical_tool_interaction');
+    expect(kept).toEqual(expect.arrayContaining(['a_tc_1', 't_out_1']));
   });
 });

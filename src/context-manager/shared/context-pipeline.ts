@@ -8,6 +8,7 @@ import {
 } from './providers/base';
 import type { ContextProviderRegistry } from './providers/registry';
 import type { AiMessage, RuntimeEvent } from '../../contracts';
+import type { ContextTraceCollector } from './context-trace';
 
 export interface ContextPipelineStats<TPhase extends PropertyKey> {
   phaseTiming: Record<TPhase, number>;
@@ -34,6 +35,7 @@ export interface RunContextPipelineOptions<
   estimateTokens: (message: AiMessage) => number;
   getPhaseByProviderName: (providerName: string) => TPhase | null;
   debug?: (message: string, data?: Record<string, unknown>) => void;
+  contextTrace?: ContextTraceCollector;
 }
 
 export interface RunContextPipelineResult {
@@ -41,6 +43,7 @@ export interface RunContextPipelineResult {
   finalTokens: number;
   strategiesApplied: string[];
   events: RuntimeEvent[];
+  states: MessageProcessingState[];
 }
 
 export async function runContextPipeline<
@@ -58,6 +61,7 @@ export async function runContextPipeline<
     estimateTokens,
     getPhaseByProviderName,
     debug,
+    contextTrace,
   } = options;
 
   let states: MessageProcessingState[] = messages.map((message, index) => ({
@@ -82,12 +86,23 @@ export async function runContextPipeline<
 
     if (provider.shouldSkip?.(states, availableBudget, providerContext)) {
       debug?.(`⏭️ 跳过Provider: ${provider.name}`, { availableBudget });
+      contextTrace?.recordProvider({
+        providerName: provider.name,
+        skipped: true,
+        durationMs: performance.now() - phaseStartTime,
+        beforeStates: states,
+        afterStates: states,
+        tokensUsed: 0,
+        strategiesApplied: [],
+        remainingBudget: availableBudget,
+      });
       continue;
     }
 
     debug?.(`🔄 执行Provider: ${provider.name}`, { availableBudget });
 
     try {
+      const beforeStates = cloneStatesForTrace(states);
       const result = await provider.provide(states, availableBudget, providerContext);
 
       states = result.states;
@@ -103,6 +118,16 @@ export async function runContextPipeline<
 
       availableBudget -= result.tokensUsed;
       allStrategiesApplied.push(...result.strategiesApplied);
+      contextTrace?.recordProvider({
+        providerName: provider.name,
+        skipped: false,
+        durationMs: performance.now() - phaseStartTime,
+        beforeStates,
+        afterStates: states,
+        tokensUsed: result.tokensUsed,
+        strategiesApplied: result.strategiesApplied,
+        remainingBudget: availableBudget,
+      });
 
       const phaseName = getPhaseByProviderName(provider.name);
       if (phaseName !== null) {
@@ -134,13 +159,19 @@ export async function runContextPipeline<
 
   const finalMessages = generateFinalMessages(states);
   const finalTokens = finalMessages.reduce((total, message) => total + estimateTokens(message), 0);
+  contextTrace?.recordMessageDecisions(states);
 
   return {
     finalMessages,
     finalTokens,
     strategiesApplied: [...new Set(allStrategiesApplied)],
     events: allEvents,
+    states,
   };
+}
+
+function cloneStatesForTrace(states: ReadonlyArray<MessageProcessingState>): MessageProcessingState[] {
+  return states.map(state => ({ ...state }));
 }
 
 export function generateFinalMessages(states: MessageProcessingState[]): AiMessage[] {

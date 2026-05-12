@@ -4,6 +4,10 @@ import {
   AgentSpec,
   ToolBindingSpec,
 } from '../agentSpec';
+import {
+  AgentSpecContextPolicy,
+  defineContextPolicy,
+} from '../contextPolicy';
 
 describe('AgentSpec contract', () => {
   it('accepts a minimal valid spec', () => {
@@ -58,10 +62,81 @@ describe('AgentSpec contract', () => {
           maxPairTokens: 6000,
           maxOutputSummaryTokens: 1000,
         },
+        toolOutput: {
+          observationGovernance: {
+            enabled: true,
+            maxChars: 32000,
+            maxLines: 1600,
+          },
+        },
+        providerReplay: {
+          provider: 'system_default',
+          requiresReasoningDetailsForToolReplay: true,
+          missingSidecarBehavior: 'provider_empty_replay_field',
+        },
         summarization: {
           triggerThreshold: 0.7,
           budgetPercentage: 0.12,
           oldestMessagesPercentage: 0.75,
+          agentId: 'history_compression',
+          failureBehavior: 'continue-if-within-budget',
+        },
+        mustKeep: {
+          alwaysKeepTypes: ['system_prompt', 'user_input', 'tool_output'],
+          alwaysKeepFenceKinds: ['project-context'],
+          truncationRules: [
+            {
+              fenceKind: 'memory-context',
+              maxBudgetFraction: 0.2,
+              strategyName: 'memory-truncate',
+            },
+          ],
+        },
+        workingMemory: {
+          maxRecentToolInteractions: 3,
+          minToolInteractionsToKeep: 2,
+          toolPairingSearchRange: 12,
+        },
+        checkpoint: {
+          keepPairsBefore: 4,
+          triggerToolName: 'phase_checkpoint',
+        },
+        reasoningRetention: {
+          keepLatestThoughts: 3,
+        },
+        tokenEstimation: {
+          encoding: 'cl100k_base',
+          avgCharsPerToken: 2,
+          toolCallOverhead: 50,
+        },
+        systemReminder: {
+          enabledRuleIds: ['last-steps-hint'],
+          thresholds: {
+            toolCallStreak: 10,
+            taskstateReflectionPeriod: 30,
+            budgetWarningRatio: 0.9,
+            lastStepsHintThreshold: 2,
+          },
+          extraRules: [
+            {
+              id: 'memory-density-warning',
+              trigger: {
+                kind: 'tool-call-streak',
+                threshold: 5,
+                moduloStep: true,
+              },
+              contentTemplate: 'memoryDensityWarning',
+              contentArgs: {
+                resourceName: 'memory_recall',
+              },
+            },
+          ],
+        },
+        contextTrace: {
+          enabled: true,
+          includeMessageIds: true,
+          includeTokenBreakdown: true,
+          maxTraceEvents: 200,
         },
       },
       modelHints: {
@@ -79,6 +154,33 @@ describe('AgentSpec contract', () => {
     });
 
     expect(result.success).toBe(true);
+  });
+
+  it('defineContextPolicy fills defaults without making minimal host policies invalid', () => {
+    const explicitMinimalPolicy: AgentSpecContextPolicy = { profileId: 'agent' };
+    const minimalResult = AgentSpecContextPolicy.safeParse(explicitMinimalPolicy);
+    const policy = defineContextPolicy({
+      toolHistory: {
+        keepLatestRuns: 2,
+      },
+      contextTrace: {
+        enabled: true,
+      },
+    });
+
+    expect(minimalResult.success).toBe(true);
+    expect(policy.profileId).toBe('agent');
+    expect(policy.toolHistory?.strategy).toBe('per-run');
+    expect(policy.toolHistory?.keepLatestRuns).toBe(2);
+    expect(policy.toolOutput?.observationGovernance).toEqual({
+      enabled: true,
+      maxChars: 20_000,
+      maxLines: 1_200,
+    });
+    expect(policy.providerReplay).toEqual({});
+    expect(policy.mustKeep?.alwaysKeepTypes).toEqual(['system_prompt', 'user_input']);
+    expect(policy.contextTrace?.enabled).toBe(true);
+    expect(policy.contextTrace?.maxTraceEvents).toBe(200);
   });
 
   it('rejects invalid toolHistory strategy values', () => {
@@ -108,6 +210,89 @@ describe('AgentSpec contract', () => {
         profileId: 'agent',
         toolHistory: {
           overflowStrategy: 'silent',
+        },
+      },
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects invalid providerReplay missing sidecar behavior values', () => {
+    const result = AgentSpecContextPolicy.safeParse({
+      profileId: 'agent',
+      providerReplay: {
+        missingSidecarBehavior: 'silent',
+      },
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects invalid toolOutput observation governance limits', () => {
+    const result = AgentSpecContextPolicy.safeParse({
+      profileId: 'agent',
+      toolOutput: {
+        observationGovernance: {
+          maxChars: 0,
+        },
+      },
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects invalid mustKeep message types', () => {
+    const result = AgentSpecContextPolicy.safeParse({
+      profileId: 'agent',
+      mustKeep: {
+        alwaysKeepTypes: ['host_private_message'],
+      },
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects simultaneous enabled and disabled system reminder rule lists', () => {
+    const result = AgentSpecContextPolicy.safeParse({
+      profileId: 'agent',
+      systemReminder: {
+        enabledRuleIds: ['a'],
+        disabledRuleIds: ['b'],
+      },
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects executable functions in system reminder content args', () => {
+    const result = AgentSpecContextPolicy.safeParse({
+      profileId: 'agent',
+      systemReminder: {
+        extraRules: [
+          {
+            id: 'unsafe-rule',
+            trigger: {
+              kind: 'tool-call-streak',
+              threshold: 3,
+            },
+            contentTemplate: 'unsafeTemplate',
+            contentArgs: {
+              unsafe: () => true,
+            },
+          },
+        ],
+      },
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects non-string summarization agentId values', () => {
+    const result = AgentSpecContextPolicy.safeParse({
+      profileId: 'agent',
+      summarization: {
+        agentId: {
+          prompt: 'do not inline prompt text',
         },
       },
     });

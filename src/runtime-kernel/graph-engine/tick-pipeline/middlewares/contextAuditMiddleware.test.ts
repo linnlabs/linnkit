@@ -21,6 +21,7 @@ function createRequest(): AgentInvocationRequest {
 
 function createContext(): TickPipelineContext {
   const request = createRequest();
+  const contextTrace = { enabled: true, events: [] };
   return {
     input: {
       request,
@@ -50,6 +51,7 @@ function createContext(): TickPipelineContext {
     mode: 'agent',
     conversationId: 'conv_audit',
     turnId: 'turn_audit',
+    contextTrace,
   };
 }
 
@@ -114,12 +116,14 @@ describe('contextAuditMiddleware', () => {
       mode: 'agent',
       llmMessages: ctx.llmMessages,
       toolNames: ['tool_a'],
+      contextTrace: ctx.contextTrace,
     });
     expect(recordAfterContextManagerOnSystemReminderHitMock).toHaveBeenCalledWith({
       mode: 'agent',
       llmMessages: ctx.llmMessages,
       toolNames: ['tool_a'],
       systemReminder: { ruleIds: ['last_steps_hint'] },
+      contextTrace: ctx.contextTrace,
     });
   });
 

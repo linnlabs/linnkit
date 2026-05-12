@@ -431,6 +431,21 @@ export function validateAgentConfig(config: AgentContextBuilderConfig): boolean 
     console.warn('MAX_RECENT_TOOL_INTERACTIONS_TO_KEEP should not exceed MAX_TOOL_INTERACTION_GROUPS_TO_KEEP');
     return false;
   }
+
+  if (config.AVG_CHARS_PER_TOKEN <= 0) {
+    console.warn('AVG_CHARS_PER_TOKEN should be positive');
+    return false;
+  }
+
+  if (config.TOOL_CALL_OVERHEAD_TOKENS < 0) {
+    console.warn('TOOL_CALL_OVERHEAD_TOKENS should be non-negative');
+    return false;
+  }
+
+  if (config.TOKEN_ENCODING_NAME.trim().length === 0) {
+    console.warn('TOKEN_ENCODING_NAME should not be empty');
+    return false;
+  }
   
   return true;
 }

@@ -171,6 +171,85 @@ describe('CheckpointSummarizationProvider', () => {
     expect(hasSummaryMessage).toBe(false);
   });
 
+  it('按 keepPairsBefore 保留 checkpoint 前指定数量的工具对', async () => {
+    const configurableProvider = new CheckpointSummarizationProvider({ keepPairsBefore: 4 });
+    const tools = Array.from({ length: 5 }, (_, index) => makeToolPair(`tool_${index + 1}`, `tool_${index + 1} result`));
+    const checkpoint = makeToolPair('context_checkpoint', 'Context checkpoint created.');
+    checkpoint.out.metadata = {
+      ...(checkpoint.out.metadata ?? {}),
+      raw_output: makeCheckpointContent('Keep four pairs before checkpoint'),
+    };
+    const states: MessageProcessingState[] = [
+      makeState(makeMsg({ role: 'system', content: 'system prompt' }), 'keep_core'),
+      makeState(makeMsg({ role: 'user', content: 'old task' })),
+      ...tools.flatMap((tool) => [makeState(tool.call), makeState(tool.out)]),
+      makeState(checkpoint.call),
+      makeState(checkpoint.out),
+    ];
+
+    const result = await configurableProvider.provide(states, 100000, makeProviderContext());
+    const keptToolOutputs = result.states
+      .filter((state) => state.message.type === 'tool_output' && state.action === 'keep_working_memory')
+      .map((state) => state.message.content);
+
+    expect(result.strategiesApplied).toContain('checkpoint_trim_before');
+    expect(keptToolOutputs).not.toContain('tool_1 result');
+    expect(keptToolOutputs).toEqual(expect.arrayContaining([
+      'tool_2 result',
+      'tool_3 result',
+      'tool_4 result',
+      'tool_5 result',
+      'Context checkpoint created.',
+    ]));
+  });
+
+  it('按 triggerToolName 识别自定义 checkpoint 工具名', async () => {
+    const configurableProvider = new CheckpointSummarizationProvider({
+      triggerToolName: 'phase_checkpoint',
+    });
+    const oldTool = makeToolPair('tool_1', 'tool_1 result');
+    const customCheckpoint = makeToolPair('phase_checkpoint', 'Phase checkpoint created.');
+    customCheckpoint.out.metadata = {
+      ...(customCheckpoint.out.metadata ?? {}),
+      raw_output: makeCheckpointContent('Custom checkpoint summary'),
+    };
+    const states: MessageProcessingState[] = [
+      makeState(makeMsg({ role: 'system', content: 'system prompt' }), 'keep_core'),
+      makeState(makeMsg({ role: 'user', content: 'old task' })),
+      makeState(oldTool.call),
+      makeState(oldTool.out),
+      makeState(customCheckpoint.call, 'skip'),
+      makeState(customCheckpoint.out, 'skip'),
+    ];
+
+    const result = await configurableProvider.provide(states, 100000, makeProviderContext());
+    const checkpointCall = result.states.find((state) => state.message.id === customCheckpoint.call.id);
+    const checkpointOutput = result.states.find((state) => state.message.id === customCheckpoint.out.id);
+
+    expect(result.strategiesApplied).toContain('checkpoint_trim_before');
+    expect(checkpointCall?.action).toBe('keep_working_memory');
+    expect(checkpointOutput?.action).toBe('keep_working_memory');
+  });
+
+  it('未配置 triggerToolName 时不把自定义工具名当作 checkpoint', async () => {
+    const customCheckpoint = makeToolPair('phase_checkpoint', 'Phase checkpoint created.');
+    customCheckpoint.out.metadata = {
+      ...(customCheckpoint.out.metadata ?? {}),
+      raw_output: makeCheckpointContent('Custom checkpoint summary'),
+    };
+    const states: MessageProcessingState[] = [
+      makeState(makeMsg({ role: 'system', content: 'system prompt' }), 'keep_core'),
+      makeState(customCheckpoint.call, 'skip'),
+      makeState(customCheckpoint.out, 'skip'),
+    ];
+
+    const result = await provider.provide(states, 100000, makeProviderContext());
+
+    expect(result.strategiesApplied).toHaveLength(0);
+    expect(result.states.find((state) => state.message.id === customCheckpoint.call.id)?.action).toBe('skip');
+    expect(result.states.find((state) => state.message.id === customCheckpoint.out.id)?.action).toBe('skip');
+  });
+
   it('旧 history_summary 会被裁剪为 skip', async () => {
     const tool1 = makeToolPair('tool_1', 'tool_1 result');
     const checkpoint = makeToolPair('context_checkpoint', 'Context checkpoint created.');
@@ -358,7 +437,7 @@ describe('CheckpointSummarizationProvider', () => {
     const toolCalls1 = makeMsg({
       role: 'assistant',
       type: 'tool_calls',
-      content: null as any,
+      content: '',
       metadata: {
         tool_calls: [{ id: toolCallId, type: 'function', function: { name: 'context_checkpoint', arguments: '{}' } }],
       },
@@ -367,7 +446,7 @@ describe('CheckpointSummarizationProvider', () => {
     const toolCalls2 = makeMsg({
       role: 'assistant',
       type: 'tool_calls',
-      content: null as any,
+      content: '',
       metadata: {
         tool_calls: [{ id: toolCallId, type: 'function', function: { name: 'context_checkpoint', arguments: '{}' } }],
       },

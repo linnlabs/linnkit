@@ -4,7 +4,7 @@
 
 AuditPort 是"决策账本"。Telemetry 记录事实（比如一次 LLM 调用了多久、用了多少 token），Audit 记录**为什么做了这个决定**（比如为什么取消、为什么拒绝工具、为什么 fallback 到另一个模型）。
 
-这套接入方式是 host-neutral 的：linnya、在线秘书 agent、未来的知识库 agent 都只需要实现自己的 EventStore / file / SIEM sink，不需要把产品语义写回 linnkit。
+这套接入方式是 host-neutral 的：桌面应用、在线秘书 agent、知识库 agent 或任意自研 agent host 都只需要实现自己的 EventStore / file / SIEM sink，不需要把产品语义写回 linnkit。
 
 ## 1. 最小接入骨架
 

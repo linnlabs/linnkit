@@ -4,7 +4,11 @@ export * from './agent-harness/assertions';
 export { createGraphLoopHarness } from '../runtime-kernel';
 export { createDefaultGraphExecutor } from '../runtime-kernel';
 export { createScriptedAiEngineHarness } from './agent-harness/scriptedAiEngineHarness';
-export { createReplayHarness } from './context-harness/replayHarness';
+export {
+  assertContextPolicyInvariants,
+  createReplayHarness,
+  validateContextPolicyInvariants,
+} from './context-harness';
 export {
   assertRunInvariants,
   createCollectingAuditPort,
@@ -30,6 +34,15 @@ export type {
   ScriptedLlmTurn,
   ScriptedToolCall,
 } from './agent-harness/scriptedAiEngineHarness';
+export type {
+  ContextPolicyInvariantContext,
+  ContextPolicyInvariantFailure,
+  ContextPolicyInvariantId,
+  ContextPolicyInvariantReport,
+  ContextPolicyInvariantValidator,
+  ReplayHarness,
+  ValidateContextPolicyInvariantsOptions,
+} from './context-harness';
 export type {
   CollectingAuditPortHarness,
   MockTelemetryPortHarness,

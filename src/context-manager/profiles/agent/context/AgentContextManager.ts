@@ -20,8 +20,14 @@ import {
   buildContextResult,
   generateContextRecommendations,
 } from '../../../shared/context-result';
+import { ContextTraceCollector, type ContextTrace } from '../../../shared/context-trace';
 import type { GenerateRequest, GenerateResponse } from '../../chat/contracts';
-import type { AiMessage, RuntimeEvent } from '../../../../contracts';
+import type {
+  AgentSpecContextPolicy,
+  AgentSpecContextTracePolicy,
+  AiMessage,
+  RuntimeEvent,
+} from '../../../../contracts';
 
 /**
  * Agent 专用的 Provider 上下文
@@ -69,6 +75,9 @@ export interface ContextBuildResult {
   
   /** 🔥 新增：Provider生成的运行时事件（如摘要事件） */
   events?: RuntimeEvent[];
+
+  /** ContextTrace：解释本次上下文构建如何保留/裁剪消息。 */
+  contextTrace?: ContextTrace;
 }
 
 /**
@@ -121,7 +130,11 @@ export class AgentContextManager extends ContextManagerBase<
     totalBudget: number,
     callbacks?: SummarizationCallbacks,
     phaseOverride?: AgentBuildPhase,  // 保留参数兼容性，但不再使用
-    generate?: (request: GenerateRequest) => Promise<GenerateResponse>
+    generate?: (request: GenerateRequest) => Promise<GenerateResponse>,
+    traceOptions?: {
+      policy?: AgentSpecContextTracePolicy;
+      effectiveContextPolicy?: AgentSpecContextPolicy;
+    },
   ): Promise<ContextBuildResult> {
     // 计算摘要触发相关信息
     const summarizationThreshold = this.config.SUMMARIZATION_TRIGGER_THRESHOLD;
@@ -149,6 +162,12 @@ export class AgentContextManager extends ContextManagerBase<
         generate,
         agentRequest: request
       };
+      const contextTrace = ContextTraceCollector.create({
+        policy: traceOptions?.policy,
+        effectivePolicy: traceOptions?.effectiveContextPolicy,
+        totalBudget,
+        originalCount: preprocessedMessages.length,
+      });
 
       // 核心流程：编排各个Provider按优先级处理预处理过的消息
       const { finalMessages, finalTokens, strategiesApplied, events } =
@@ -158,6 +177,7 @@ export class AgentContextManager extends ContextManagerBase<
           buildStats,
           providerContext: enhancedContext,
           getPhaseByProviderName: providerName => this.getPhaseByProviderName(providerName),
+          contextTrace,
         });
       
       const endTime = performance.now();
@@ -185,7 +205,8 @@ export class AgentContextManager extends ContextManagerBase<
         preprocessedMessages.length, 
         strategiesApplied, 
         buildStats,
-        events
+        events,
+        contextTrace?.build(finalMessages, finalTokens),
       );
 
     } catch (error) {
@@ -246,7 +267,8 @@ export class AgentContextManager extends ContextManagerBase<
     originalCount: number,
     strategiesApplied: string[],
     buildStats: AgentContextBuildStats,
-    events: RuntimeEvent[] = []  // 🔥 新增：事件列表
+    events: RuntimeEvent[] = [],  // 🔥 新增：事件列表
+    contextTrace?: ContextTrace,
   ): ContextBuildResult {
     const recommendations = this.generateRecommendations(buildStats, totalBudget);
     return buildContextResult({
@@ -261,6 +283,7 @@ export class AgentContextManager extends ContextManagerBase<
       coreTypes: this.config.CORE_MESSAGE_TYPES,
       recommendations,
       events,
+      contextTrace,
     });
   }
   /**

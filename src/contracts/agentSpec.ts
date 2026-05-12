@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { AgentSpecContextPolicy } from './contextPolicy';
 
 const JsonRecord = z.record(z.string(), z.unknown());
 
@@ -29,39 +30,6 @@ export const ToolBindingSpec = z.object({
   metadata: JsonRecord.optional(),
 });
 export type ToolBindingSpec = z.infer<typeof ToolBindingSpec>;
-
-export const AgentSpecBudgetPolicy = z.object({
-  maxTokens: z.number().int().positive().optional(),
-  reservedForResponse: z.number().int().nonnegative().optional(),
-  workingMemoryBudgetPercentage: z.number().min(0).max(1).optional(),
-});
-export type AgentSpecBudgetPolicy = z.infer<typeof AgentSpecBudgetPolicy>;
-
-export const AgentSpecToolHistoryPolicy = z.object({
-  strategy: z.enum(['per-pair', 'per-run', 'none']).optional(),
-  keepLatestToolPairs: z.number().int().nonnegative().optional(),
-  keepLatestRuns: z.number().int().nonnegative().optional(),
-  maxInteractionGroups: z.number().int().nonnegative().optional(),
-  overflowStrategy: z.enum(['keep-latest', 'fail-fast']).optional(),
-  maxPairTokens: z.number().int().nonnegative().optional(),
-  maxOutputSummaryTokens: z.number().int().nonnegative().optional(),
-});
-export type AgentSpecToolHistoryPolicy = z.infer<typeof AgentSpecToolHistoryPolicy>;
-
-export const AgentSpecSummarizationPolicy = z.object({
-  triggerThreshold: z.number().min(0).max(1).optional(),
-  budgetPercentage: z.number().min(0).max(1).optional(),
-  oldestMessagesPercentage: z.number().min(0).max(1).optional(),
-});
-export type AgentSpecSummarizationPolicy = z.infer<typeof AgentSpecSummarizationPolicy>;
-
-export const AgentSpecContextPolicy = z.object({
-  profileId: z.string().min(1),
-  budget: AgentSpecBudgetPolicy.optional(),
-  toolHistory: AgentSpecToolHistoryPolicy.optional(),
-  summarization: AgentSpecSummarizationPolicy.optional(),
-});
-export type AgentSpecContextPolicy = z.infer<typeof AgentSpecContextPolicy>;
 
 export const AgentSpecModelHints = z.object({
   preferredProviders: z.array(z.string().min(1)).optional(),

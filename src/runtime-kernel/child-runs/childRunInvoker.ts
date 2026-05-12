@@ -21,7 +21,7 @@ import { recordRunTranscript } from '../../shared/llmAuditRecorder';
 import type { ModelResolverLike } from '../llm/modelResolver';
 import type { SubRunTracePublisher } from '../child-run-trace/subrunTrace.types';
 import type { GraphNode } from '../graph-engine/types';
-import type { RuntimeEvent } from '../../contracts';
+import type { AgentSpecContextPolicy, AgentSpecSystemReminderPolicy, RuntimeEvent } from '../../contracts';
 import { createChildRunToolContext } from './childToolContext';
 import {
   appendUniqueEvents,
@@ -44,7 +44,8 @@ export interface ChildRunAgentConfig {
     lastStepsHintThreshold?: number;
     forcedTools?: readonly string[];
   };
-  systemReminderRuleIds?: readonly string[];
+  contextPolicy?: AgentSpecContextPolicy;
+  systemReminderPolicy?: AgentSpecSystemReminderPolicy;
   systemPromptBuilder?: (request: AgentInvocationRequest) => string;
   judgeToolName?: string;
 }
@@ -195,14 +196,14 @@ export class ChildRunInvoker {
       }
     }
 
-    const srRuleIds = agentConfig.systemReminderRuleIds;
-    if (Array.isArray(srRuleIds)) {
-      const normalized = srRuleIds
-        .map((x) => (typeof x === 'string' ? x.trim() : ''))
-        .filter((x) => x.length > 0);
-      if (normalized.length > 0) {
-        executorLocalPolicy.systemReminderRuleIds = normalized;
-      }
+    const systemReminderPolicy = resolveChildRunSystemReminderPolicy(agentConfig);
+    if (systemReminderPolicy) {
+      executorLocalPolicy.systemReminderPolicy = systemReminderPolicy;
+    }
+
+    const contextCheckpointToolName = agentConfig.contextPolicy?.checkpoint?.triggerToolName;
+    if (typeof contextCheckpointToolName === 'string' && contextCheckpointToolName.trim().length > 0) {
+      executorLocalPolicy.contextCheckpointToolName = contextCheckpointToolName.trim();
     }
 
     const seedHistory: RuntimeEvent[] = Array.isArray(seedHistoryEvents) ? seedHistoryEvents : [];
@@ -328,4 +329,27 @@ export class ChildRunInvoker {
       error,
     };
   }
+}
+
+function resolveChildRunSystemReminderPolicy(
+  agentConfig: ChildRunAgentConfig,
+): AgentSpecSystemReminderPolicy | undefined {
+  const configured = agentConfig.systemReminderPolicy ?? agentConfig.contextPolicy?.systemReminder;
+  const threshold = agentConfig.stepPolicy?.lastStepsHintThreshold;
+  const nextPolicy: AgentSpecSystemReminderPolicy = {
+    ...(configured ?? {}),
+  };
+
+  if (
+    typeof threshold === 'number' &&
+    Number.isFinite(threshold) &&
+    nextPolicy.thresholds?.lastStepsHintThreshold === undefined
+  ) {
+    nextPolicy.thresholds = {
+      ...(nextPolicy.thresholds ?? {}),
+      lastStepsHintThreshold: threshold,
+    };
+  }
+
+  return Object.keys(nextPolicy).length > 0 ? nextPolicy : undefined;
 }

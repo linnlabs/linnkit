@@ -13,12 +13,19 @@ import {
   createAgentContextBuilderConfig,
   type AgentContextBuilderConfig,
 } from '../config';
-import { ToolPairMatcher, ToolPairTruncator, ReplacementSourceTagger } from './working-memory';
+import {
+  ToolPairMatcher,
+  ToolPairTruncator,
+  ReplacementSourceTagger,
+  processHistoricalToolInteractions,
+  processTextConversations,
+  processToolInteractions,
+  promoteMostRecentToolPair,
+} from './working-memory';
 import type { DebugFn } from './working-memory';
 import {
   buildToolInteractionGroupsFromStates,
   findLastUserInputOriginalIndex,
-  type ToolInteractionGroup,
 } from '../../utils/toolInteractionGroup';
 
 /**
@@ -101,7 +108,7 @@ export class AgentWorkingMemoryProvider extends BaseContextProvider {
     const workingMemoryBudget = Math.floor(availableBudget * config.WORKING_MEMORY_BUDGET_PERCENTAGE);
     const remainingBudget = workingMemoryBudget - coreTokens;
 
-    if (remainingBudget <= 0) {
+    if (remainingBudget <= 0 && config.MIN_TOOL_INTERACTIONS_TO_KEEP <= 0) {
       this.debug('⚠️ 核心上下文已用尽预算，跳过工作记忆填充', {
         coreTokens,
         workingMemoryBudget
@@ -113,13 +120,17 @@ export class AgentWorkingMemoryProvider extends BaseContextProvider {
     const processedIds = new Set<string>();
     const inPostToolCall = this.readCurrentPhase(context) === 'post_tool_call';
     if (inPostToolCall) {
-      const pri = this.promoteMostRecentToolPair(
-        states,
+      const pri = promoteMostRecentToolPair({
+        allStates: states,
         processedIds,
-        workingMemoryTokens,
-        workingMemoryBudget,
-        context
-      );
+        currentTokens: workingMemoryTokens,
+        budgetLimit: workingMemoryBudget,
+        estimateTokens: context.estimateTokens,
+        matcher: this.matcher,
+        truncator: this.truncator,
+        tagger: this.tagger,
+        debug: this.createDebugFn(context),
+      });
       workingMemoryTokens += pri.tokensUsed;
       processedCount += pri.processedCount;
       strategiesApplied.push(...pri.strategiesApplied);
@@ -127,7 +138,9 @@ export class AgentWorkingMemoryProvider extends BaseContextProvider {
 
     // 获取所有跳过的消息状态，用于填充
     const skippedStates = states.filter(s => s.action === 'skip');
-    const toolGroups = buildToolInteractionGroupsFromStates(states);
+    const toolGroups = buildToolInteractionGroupsFromStates(states, {
+      maxPairingDistance: config.TOOL_PAIRING_SEARCH_RANGE,
+    });
 
     // === Agent专用逻辑：工具优先填充策略 ===
     const maxToolGroupsTotal = config.MAX_TOOL_INTERACTION_GROUPS_TO_KEEP;
@@ -139,18 +152,21 @@ export class AgentWorkingMemoryProvider extends BaseContextProvider {
 
     // P1 优先级：工具交互（tool_calls 和 tool 消息）- 配对保留
     this.debug('🔧 P1优先级：开始处理工具交互（配对保留）', { remainingBudget: workingMemoryBudget - workingMemoryTokens });
-    const p1Result = await this.processToolInteractions(
-      states,
+    const p1Result = processToolInteractions({
+      allStates: states,
       toolGroups,
       processedIds,
-      workingMemoryTokens,
-      workingMemoryBudget,
-      context,
-      {
-        maxToolPairsToKeep: Math.min(maxRecentToolPairs, maxToolGroupsTotal),
-        lastUserOriginalIndex
-      }
-    );
+      currentTokens: workingMemoryTokens,
+      budgetLimit: workingMemoryBudget,
+      estimateTokens: context.estimateTokens,
+      maxToolPairsToKeep: Math.min(maxRecentToolPairs, maxToolGroupsTotal),
+      minToolPairsToKeep: config.MIN_TOOL_INTERACTIONS_TO_KEEP,
+      lastUserOriginalIndex,
+      matcher: this.matcher,
+      truncator: this.truncator,
+      tagger: this.tagger,
+      debug: this.createDebugFn(context),
+    });
 
     workingMemoryTokens += p1Result.tokensUsed;
     processedCount += p1Result.processedCount;
@@ -162,13 +178,15 @@ export class AgentWorkingMemoryProvider extends BaseContextProvider {
       this.debug('💬 P2优先级：开始处理纯文本对话', {
         remainingBudget: workingMemoryBudget - workingMemoryTokens
       });
-      const p2Result = await this.processTextConversations(
+      const p2Result = processTextConversations({
         skippedStates,
         processedIds,
-        workingMemoryTokens,
-        workingMemoryBudget,
-        context
-      );
+        currentTokens: workingMemoryTokens,
+        budgetLimit: workingMemoryBudget,
+        config,
+        matcher: this.matcher,
+        debug: this.createDebugFn(context),
+      });
 
       workingMemoryTokens += p2Result.tokensUsed;
       processedCount += p2Result.processedCount;
@@ -181,18 +199,22 @@ export class AgentWorkingMemoryProvider extends BaseContextProvider {
         remainingBudget: workingMemoryBudget - workingMemoryTokens
       });
       const remainingToolGroups = Math.max(0, maxToolGroupsTotal - historicalToolGroupsKept);
-      const p3Result = await this.processHistoricalToolInteractions(
-        states,
+      const p3Result = processHistoricalToolInteractions({
+        allStates: states,
         toolGroups,
         processedIds,
-        workingMemoryTokens,
-        workingMemoryBudget,
-        context,
-        {
-          maxToolGroupsToKeep: remainingToolGroups,
-          lastUserOriginalIndex
-        }
-      );
+        currentTokens: workingMemoryTokens,
+        budgetLimit: workingMemoryBudget,
+        estimateTokens: context.estimateTokens,
+        maxToolGroupsToKeep: remainingToolGroups,
+        minToolGroupsToKeep: config.MIN_TOOL_INTERACTIONS_TO_KEEP,
+        alreadyKeptToolGroups: historicalToolGroupsKept,
+        lastUserOriginalIndex,
+        matcher: this.matcher,
+        truncator: this.truncator,
+        tagger: this.tagger,
+        debug: this.createDebugFn(context),
+      });
 
       workingMemoryTokens += p3Result.tokensUsed;
       processedCount += p3Result.processedCount;
@@ -221,360 +243,6 @@ export class AgentWorkingMemoryProvider extends BaseContextProvider {
   }
 
   /**
-   * P1优先级处理：工具交互（配对保留）
-   */
-  private async processToolInteractions(
-    allStates: MessageProcessingState[],
-    toolGroups: ToolInteractionGroup<MessageProcessingState>[],
-    processedIds: Set<string>,
-    currentTokens: number,
-    budgetLimit: number,
-    context: ProviderContext,
-    options: { maxToolPairsToKeep: number; lastUserOriginalIndex: number | null }
-  ): Promise<{ tokensUsed: number; processedCount: number; strategiesApplied: string[]; historicalToolGroupsKept: number }> {
-    let tokensUsed = 0;
-    let processedCount = 0;
-    const strategiesApplied: string[] = [];
-    let historicalToolGroupsKept = 0;
-    const maxToolPairsToKeep = Math.max(0, Math.floor(options.maxToolPairsToKeep));
-    const lastUserOriginalIndex = options.lastUserOriginalIndex;
-    const debugFn = this.createDebugFn(context);
-
-    for (let index = toolGroups.length - 1; index >= 0; index -= 1) {
-      const group = toolGroups[index];
-      const isInCurrentTurn =
-        lastUserOriginalIndex === null
-          ? true
-          : group.startIndex > lastUserOriginalIndex;
-
-      if (!isInCurrentTurn) {
-        if (historicalToolGroupsKept >= maxToolPairsToKeep) {
-          break;
-        }
-      }
-
-      if (currentTokens + tokensUsed >= budgetLimit) {
-        this.debug('💰 达到预算限制，停止工具交互填充', {
-          currentTokens: currentTokens + tokensUsed,
-          budgetLimit
-        }, context);
-        break;
-      }
-
-      if (processedIds.has(group.anchorId)) {
-        continue;
-      }
-
-      if (!group.isComplete) {
-        this.debug('⚠️ 跳过不完整工具组，避免破坏协议顺序', {
-          anchorId: group.anchorId,
-          toolCallIds: group.toolCallIds,
-        }, context);
-        continue;
-      }
-
-      this.tagger.tagReplacementSources(group.messages, allStates);
-
-      const fit = this.matcher.canFitToolPair(group, currentTokens + tokensUsed, budgetLimit, debugFn);
-      if (fit.canFit) {
-        for (const pairState of fit.pair) {
-          if (pairState.action === 'skip') {
-            pairState.action = 'keep_working_memory';
-            pairState.phase = 'WORKING_MEMORY';
-            tokensUsed += pairState.tokens;
-            processedCount++;
-          }
-          processedIds.add(pairState.message.id);
-        }
-        strategiesApplied.push('tool_interaction_pairing');
-        if (!isInCurrentTurn) {
-          historicalToolGroupsKept++;
-        }
-
-        this.debug(`✅ P1保留工具交互对`, {
-          anchorId: group.anchorId,
-          pairSize: fit.pair.length,
-          tokens: fit.totalTokens,
-        }, context);
-      } else {
-        const truncationResult = this.truncator.truncate(group, context.estimateTokens, debugFn);
-        if (truncationResult.success) {
-          const fitAfterTruncation = this.matcher.canFitToolPair(group, currentTokens + tokensUsed, budgetLimit, debugFn);
-          if (!fitAfterTruncation.canFit) {
-            this.debug('💰 截断后仍无法装入预算，停止继续保留更旧工具对（保持结构一致）', {
-              pairTokens: fitAfterTruncation.totalTokens,
-              budgetLimit
-            }, context);
-            break;
-          }
-          for (const pairState of fitAfterTruncation.pair) {
-            if (pairState.action === 'skip') {
-              pairState.action = 'keep_working_memory';
-              pairState.phase = 'WORKING_MEMORY';
-              tokensUsed += pairState.tokens;
-              processedCount++;
-            }
-            processedIds.add(pairState.message.id);
-          }
-          strategiesApplied.push('tool_interaction_truncation');
-          if (!isInCurrentTurn) {
-            historicalToolGroupsKept++;
-          }
-          this.debug(`✅ P1截断工具交互对`, {
-            anchorId: group.anchorId,
-            pairSize: fitAfterTruncation.pair.length,
-            tokens: fitAfterTruncation.totalTokens,
-            truncatedTokens: truncationResult.tokensSaved
-          }, context);
-        } else {
-          this.debug(`❌ P1截断工具交互对失败`, {
-            anchorId: group.anchorId,
-            pairSize: group.messages.length,
-            tokens: group.messages.reduce((sum, s) => sum + s.tokens, 0)
-          }, context);
-        }
-      }
-    }
-
-    return { tokensUsed, processedCount, strategiesApplied, historicalToolGroupsKept };
-  }
-
-  /**
-   * P2优先级处理：纯文本对话
-   */
-  private async processTextConversations(
-    skippedStates: MessageProcessingState[],
-    processedIds: Set<string>,
-    currentTokens: number,
-    budgetLimit: number,
-    context: ProviderContext
-  ): Promise<{ tokensUsed: number; processedCount: number; strategiesApplied: string[] }> {
-    let tokensUsed = 0;
-    let processedCount = 0;
-    const strategiesApplied: string[] = [];
-    let thoughtsKeptCount = 0;
-    const config = this.config;
-
-    for (let i = skippedStates.length - 1; i >= 0; i--) {
-      const state = skippedStates[i];
-
-      if (currentTokens + tokensUsed >= budgetLimit) {
-        this.debug('💰 达到预算限制，停止纯文本对话填充', {
-          currentTokens: currentTokens + tokensUsed,
-          budgetLimit
-        }, context);
-        break;
-      }
-
-      if (state.action !== 'skip' || processedIds.has(state.message.id)) {
-        continue;
-      }
-
-      // 处理历史摘要
-      if (state.message.role === 'system' && state.message.type === 'history_summary') {
-        if (currentTokens + tokensUsed + state.tokens <= budgetLimit) {
-          state.action = 'keep_working_memory';
-          state.phase = 'WORKING_MEMORY';
-          tokensUsed += state.tokens;
-          processedCount++;
-          processedIds.add(state.message.id);
-          strategiesApplied.push('history_summary');
-
-          this.debug(`✅ P2保留历史摘要`, {
-            id: state.message.id,
-            tokens: state.tokens,
-            totalTokens: currentTokens + tokensUsed
-          }, context);
-        }
-        continue;
-      }
-
-      // 处理纯文本用户消息
-      if (state.message.role === 'user' &&
-          !state.message.metadata?.tool_name &&
-          state.message.metadata?.fragmentType !== 'document') {
-
-        if (currentTokens + tokensUsed + state.tokens <= budgetLimit) {
-          state.action = 'keep_working_memory';
-          state.phase = 'WORKING_MEMORY';
-          tokensUsed += state.tokens;
-          processedCount++;
-          strategiesApplied.push('text_conversation');
-
-          this.debug(`✅ P2保留用户文本消息`, {
-            id: state.message.id,
-            tokens: state.tokens,
-            totalTokens: currentTokens + tokensUsed
-          }, context);
-        }
-      }
-
-      // 处理纯文本助手消息
-      else if (state.message.role === 'assistant' &&
-               !state.message.metadata?.tool_name &&
-               !state.message.metadata?.tool_calls &&
-               state.message.type !== 'tool_calls') {
-        // 压缩后的工具历史摘要消息不应按"纯文本对话"纳入
-        if (this.matcher.isCompressedToolHistoryMessage(state.message)) {
-          continue;
-        }
-
-        // 处理 thought 消息
-        if (state.message.type === 'thought') {
-          if (thoughtsKeptCount < config.MAX_THOUGHTS_TO_KEEP) {
-            if (currentTokens + tokensUsed + state.tokens <= budgetLimit) {
-              state.action = 'keep_working_memory';
-              state.phase = 'WORKING_MEMORY';
-              tokensUsed += state.tokens;
-              processedCount++;
-              thoughtsKeptCount++;
-              strategiesApplied.push('thought_processing');
-
-              this.debug(`✅ P2保留thought消息`, {
-                id: state.message.id,
-                tokens: state.tokens,
-                totalTokens: currentTokens + tokensUsed
-              }, context);
-            }
-          }
-        } else {
-          // 处理普通助手消息
-          if (currentTokens + tokensUsed + state.tokens <= budgetLimit) {
-            state.action = 'keep_working_memory';
-            state.phase = 'WORKING_MEMORY';
-            tokensUsed += state.tokens;
-            processedCount++;
-            strategiesApplied.push('text_conversation');
-
-            this.debug(`✅ P2保留助手文本消息`, {
-              id: state.message.id,
-              tokens: state.tokens,
-              totalTokens: currentTokens + tokensUsed
-            }, context);
-          }
-        }
-      }
-    }
-
-    return { tokensUsed, processedCount, strategiesApplied };
-  }
-
-  /**
-   * P3优先级处理：历史工具交互
-   */
-  private async processHistoricalToolInteractions(
-    allStates: MessageProcessingState[],
-    toolGroups: ToolInteractionGroup<MessageProcessingState>[],
-    processedIds: Set<string>,
-    currentTokens: number,
-    budgetLimit: number,
-    context: ProviderContext,
-    options: { maxToolGroupsToKeep: number; lastUserOriginalIndex: number }
-  ): Promise<{ tokensUsed: number; processedCount: number; strategiesApplied: string[]; toolGroupsKept: number }> {
-    let tokensUsed = 0;
-    let processedCount = 0;
-    const strategiesApplied: string[] = [];
-    let toolGroupsKept = 0;
-    const maxToolGroupsToKeep = Math.max(0, Math.floor(options.maxToolGroupsToKeep));
-    const debugFn = this.createDebugFn(context);
-
-    const candidates = this.buildHistoricalToolCandidates(allStates, toolGroups, options.lastUserOriginalIndex);
-    for (const candidate of candidates) {
-      if (toolGroupsKept >= maxToolGroupsToKeep) {
-        break;
-      }
-
-      if (currentTokens + tokensUsed >= budgetLimit) {
-        this.debug('💰 达到预算限制，停止历史工具交互填充', {
-          currentTokens: currentTokens + tokensUsed,
-          budgetLimit
-        }, context);
-        break;
-      }
-
-      if (candidate.kind === 'compressed') {
-        const state = candidate.state;
-        if (processedIds.has(state.message.id) || state.action !== 'skip') {
-          continue;
-        }
-        if (currentTokens + tokensUsed + state.tokens > budgetLimit) {
-          continue;
-        }
-        state.action = 'keep_working_memory';
-        state.phase = 'WORKING_MEMORY';
-        tokensUsed += state.tokens;
-        processedCount++;
-        processedIds.add(state.message.id);
-        toolGroupsKept++;
-        strategiesApplied.push('compressed_tool_history');
-        continue;
-      }
-
-      const group = candidate.group;
-      if (processedIds.has(group.anchorId) || !group.isComplete) {
-        continue;
-      }
-
-      this.tagger.tagReplacementSources(group.messages, allStates);
-      const fit = this.matcher.canFitToolPair(group, currentTokens + tokensUsed, budgetLimit, debugFn);
-      if (fit.canFit) {
-        for (const pairState of fit.pair) {
-          if (pairState.action === 'skip') {
-            pairState.action = 'keep_working_memory';
-            pairState.phase = 'WORKING_MEMORY';
-            tokensUsed += pairState.tokens;
-            processedCount++;
-          }
-          processedIds.add(pairState.message.id);
-        }
-        strategiesApplied.push('historical_tool_interaction');
-        toolGroupsKept++;
-
-        this.debug(`✅ P3保留历史工具交互`, {
-          anchorId: group.anchorId,
-          pairSize: fit.pair.length,
-          tokens: fit.totalTokens,
-        }, context);
-        continue;
-      }
-
-      const truncationResult = this.truncator.truncate(group, context.estimateTokens, debugFn);
-      if (!truncationResult.success) {
-        this.debug(`❌ P3截断历史工具交互对失败`, {
-          anchorId: group.anchorId,
-          pairSize: group.messages.length,
-          tokens: group.messages.reduce((sum, state) => sum + state.tokens, 0),
-        }, context);
-        continue;
-      }
-
-      const fitAfterTruncation = this.matcher.canFitToolPair(group, currentTokens + tokensUsed, budgetLimit, debugFn);
-      if (!fitAfterTruncation.canFit) {
-        continue;
-      }
-      for (const pairState of fitAfterTruncation.pair) {
-        if (pairState.action === 'skip') {
-          pairState.action = 'keep_working_memory';
-          pairState.phase = 'WORKING_MEMORY';
-          tokensUsed += pairState.tokens;
-          processedCount++;
-        }
-        processedIds.add(pairState.message.id);
-      }
-      strategiesApplied.push('historical_tool_interaction_truncation');
-      toolGroupsKept++;
-      this.debug(`✅ P3截断历史工具交互对`, {
-        anchorId: group.anchorId,
-        pairSize: fitAfterTruncation.pair.length,
-        tokens: fitAfterTruncation.totalTokens,
-        truncatedTokens: truncationResult.tokensSaved
-      }, context);
-    }
-
-    return { tokensUsed, processedCount, strategiesApplied, toolGroupsKept };
-  }
-
-  /**
    * 计算当前已使用的Token数
    */
   private calculateUsedTokens(states: MessageProcessingState[]): number {
@@ -583,101 +251,4 @@ export class AgentWorkingMemoryProvider extends BaseContextProvider {
       .reduce((total, state) => total + state.tokens, 0);
   }
 
-  /**
-   * POST_TOOL_CALL 阶段优先保留最近工具对
-   */
-  private promoteMostRecentToolPair(
-    allStates: MessageProcessingState[],
-    processedIds: Set<string>,
-    currentTokens: number,
-    budgetLimit: number,
-    context: ProviderContext
-  ): { tokensUsed: number; processedCount: number; strategiesApplied: string[] } {
-    let tokensUsed = 0;
-    let processedCount = 0;
-    const strategiesApplied: string[] = [];
-    const debugFn = this.createDebugFn(context);
-    const toolGroups = buildToolInteractionGroupsFromStates(allStates);
-    const group = [...toolGroups].reverse().find((candidate) => candidate.isComplete);
-    if (!group) {
-      return { tokensUsed, processedCount, strategiesApplied };
-    }
-
-    if (processedIds.has(group.anchorId)) {
-      return { tokensUsed, processedCount, strategiesApplied };
-    }
-
-    this.tagger.tagReplacementSources(group.messages, allStates);
-
-    // 若能直接装入，成对保留
-    const fit = this.matcher.canFitToolPair(group, currentTokens, budgetLimit, debugFn);
-    if (fit.canFit) {
-      for (const s of fit.pair) {
-        if (s.action === 'skip') {
-          s.action = 'keep_working_memory';
-          s.phase = 'WORKING_MEMORY';
-          tokensUsed += s.tokens;
-          processedCount++;
-        }
-        processedIds.add(s.message.id);
-      }
-      strategiesApplied.push('post_tool_call_priority');
-      this.debug('✅ POST_TOOL_CALL：优先保留最近工具交互对', { pairTokens: fit.totalTokens }, context);
-      return { tokensUsed, processedCount, strategiesApplied };
-    }
-
-    // 否则尝试摘要截断后再装入
-    const truncated = this.truncator.truncate(group, context.estimateTokens, debugFn);
-    if (truncated.success) {
-      const fit2 = this.matcher.canFitToolPair(group, currentTokens, budgetLimit, debugFn);
-      if (fit2.canFit) {
-        for (const s of fit2.pair) {
-          if (s.action === 'skip') {
-            s.action = 'keep_working_memory';
-            s.phase = 'WORKING_MEMORY';
-            tokensUsed += s.tokens;
-            processedCount++;
-          }
-          processedIds.add(s.message.id);
-        }
-        strategiesApplied.push('post_tool_call_truncation');
-        this.debug('✅ POST_TOOL_CALL：截断后优先保留最近工具交互对', { pairTokens: fit2.totalTokens }, context);
-        return { tokensUsed, processedCount, strategiesApplied };
-      }
-    }
-
-    return { tokensUsed, processedCount, strategiesApplied };
-  }
-
-  private buildHistoricalToolCandidates(
-    allStates: MessageProcessingState[],
-    toolGroups: ToolInteractionGroup<MessageProcessingState>[],
-    lastUserOriginalIndex: number,
-  ): Array<
-    | { kind: 'compressed'; sortIndex: number; state: MessageProcessingState }
-    | { kind: 'group'; sortIndex: number; group: ToolInteractionGroup<MessageProcessingState> }
-  > {
-    const compressedCandidates = allStates
-      .filter((state) => {
-        if (!this.matcher.isCompressedToolHistoryMessage(state.message)) {
-          return false;
-        }
-        return typeof state.originalIndex === 'number' && state.originalIndex <= lastUserOriginalIndex;
-      })
-      .map((state) => ({
-        kind: 'compressed' as const,
-        sortIndex: state.originalIndex,
-        state,
-      }));
-
-    const groupCandidates = toolGroups
-      .filter((group) => group.startIndex <= lastUserOriginalIndex)
-      .map((group) => ({
-        kind: 'group' as const,
-        sortIndex: group.startIndex,
-        group,
-      }));
-
-    return [...compressedCandidates, ...groupCandidates].sort((left, right) => right.sortIndex - left.sortIndex);
-  }
 }

@@ -99,6 +99,48 @@ describe('ToolNode - 单元测试', () => {
       expect(result.nextNodeId).toBe('llm');
     });
 
+    it('应该从 executorLocal 读取 observation governance 配置', async () => {
+      executeToolMock.mockResolvedValue({
+        success: true,
+        result: JSON.stringify({
+          observation: 'very long output',
+          data: {},
+        }),
+      });
+
+      const state: EngineState = {
+        nodeId: 'tool',
+        local: {
+          conversationId: 'conv_1',
+          turnId: 'turn_1',
+          executorLocal: {
+            stepCount: 0,
+            toolObservationPolicy: {
+              maxChars: 1024,
+              maxLines: 64,
+            },
+          },
+          pendingToolCalls: [
+            {
+              id: 'call_1',
+              type: 'function' as const,
+              function: { name: 'search', arguments: '{"query":"test"}' },
+            },
+          ],
+          toolContext: {},
+        },
+      };
+
+      await toolNode.run(state);
+
+      expect(mockObservationPreview.truncateObservation).toHaveBeenCalledWith(
+        expect.objectContaining({
+          maxChars: 1024,
+          maxLines: 64,
+        }),
+      );
+    });
+
     it('不应覆盖已注入的 toolContext.conversationId（用于 conversation-root artifacts）', async () => {
       let capturedContext: any = null;
       executeToolMock.mockImplementation(async (_toolName: string, _args: unknown, ctx: unknown) => {

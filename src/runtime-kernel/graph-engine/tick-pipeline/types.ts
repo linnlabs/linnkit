@@ -81,6 +81,7 @@ export interface TickPipelineContext {
   llmResp?: LlmCallResponse;
   decision?: AgentStepDecision;
   systemReminderHitRuleIds?: string[];
+  contextTrace?: unknown;
   cloudQuotaFallbackAppliedModelId?: string;
   modelFallbackAudit?: {
     fromModelId: string;

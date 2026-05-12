@@ -1,7 +1,8 @@
 import { 
   IPreprocessor, 
   PreprocessorContext, 
-  PreprocessorResult 
+  PreprocessorResult,
+  type ToolReplayProtocolPolicy,
 } from './base';
 import {
   FenceLifetimePreprocessor,
@@ -25,6 +26,7 @@ export * from './toolReplayProtocolGuard';
 export interface DefaultAgentPreprocessorRegistryOptions {
   fenceRegistry?: FenceRegistry;
   toolHistory?: ToolHistoryCompressorOptions;
+  providerReplay?: ToolReplayProtocolPolicy;
 }
 
 /**
@@ -258,7 +260,7 @@ export function createDefaultAgentPreprocessorRegistry(
   registry.register(new ToolHistoryCompressorPreprocessor(options.toolHistory));
 
   // 注册工具回放协议守卫 - 压缩后、净化前执行，避免旧工具组伪装为结构化 replay
-  registry.register(new ToolReplayProtocolGuardPreprocessor());
+  registry.register(new ToolReplayProtocolGuardPreprocessor({ policy: options.providerReplay }));
   
   // 注册Agent历史净化预处理器 - 优先级1，在压缩后执行
   // 🔥 使用共享实现，配置 Agent 模式的日志前缀

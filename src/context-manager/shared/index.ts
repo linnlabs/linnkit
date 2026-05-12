@@ -13,6 +13,8 @@ export type {
 } from './contracts/chatLineMessage';
 export { CHECKPOINT_MARKER_TYPE } from './checkpointMarker';
 export * from './agentSpecAdapter';
+export * from './contextPolicyMerge';
+export * from './context-trace';
 export * from './preprocessors';
 export * from './providers';
 export * from './summarization';

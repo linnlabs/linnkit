@@ -8,8 +8,10 @@
  * - 允许出现在 LLMRunAudit（after_context_manager）里：因为它属于“本次真实发给模型的输入”
  */
 
+import type { AgentSpecSystemReminderPolicy } from '../../contracts';
+import { createSystemReminderRules } from './rules';
+import { defaultSystemReminderRegistry, type SystemReminderRegistry } from './registry';
 import type { SystemReminderContext, SystemReminderRule } from './types';
-import { SYSTEM_REMINDER_RULES } from './rules';
 import { Logger } from '../../shared/logger';
 
 type LlmMessage = Record<string, unknown> & { content?: unknown };
@@ -41,6 +43,8 @@ export function applySystemReminders(params: {
   llmMessages: unknown[];
   ctx: SystemReminderContext;
   rules?: ReadonlyArray<SystemReminderRule>;
+  policy?: AgentSpecSystemReminderPolicy;
+  registry?: SystemReminderRegistry;
   /**
    * 🔔 命中回调：仅当本次确实发生注入时触发
    *
@@ -51,7 +55,11 @@ export function applySystemReminders(params: {
   onInjected?: (info: { ruleIds: string[] }) => void;
 }): unknown[] {
   const { llmMessages, ctx } = params;
-  const rules = params.rules ?? SYSTEM_REMINDER_RULES;
+  const policy = params.policy ?? ctx.executorLocal?.systemReminderPolicy;
+  const rules = params.rules ?? createSystemReminderRules({
+    policy,
+    registry: params.registry ?? defaultSystemReminderRegistry,
+  });
 
   if (!Array.isArray(llmMessages) || llmMessages.length === 0) return llmMessages;
 

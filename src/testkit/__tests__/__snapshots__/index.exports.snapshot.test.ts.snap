@@ -2,6 +2,7 @@
 
 exports[`src/agent/testkit public exports snapshot > exposes the documented testkit surface 1`] = `
 [
+  "assertContextPolicyInvariants",
   "assertRunInvariants",
   "assertions",
   "createCollectingAuditPort",
@@ -17,6 +18,7 @@ exports[`src/agent/testkit public exports snapshot > exposes the documented test
   "expectMessagesContainToolResult",
   "expectRunEndedWithFinalAnswer",
   "expectToolOutputFedBackToHistory",
+  "validateContextPolicyInvariants",
   "validateRunInvariants",
 ]
 `;

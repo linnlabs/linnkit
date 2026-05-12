@@ -4,6 +4,7 @@ import type { TelemetryPort } from '../../telemetry/telemetryPort';
 import { noopAudit } from '../../audit/noopAudit';
 import { emitAuditEnvelope } from '../../audit/emitAudit';
 import type { AuditPort } from '../../../ports';
+import type { AgentSpecToolObservationGovernancePolicy } from '../../../contracts';
 import type { ToolControlInfo } from '../../tools/ui-types';
 import type {
   ObservationPreviewPort,
@@ -36,11 +37,45 @@ import {
   prepareToolNodeContext,
   type PreparedToolNodeContext,
 } from './toolNode.executionSetup';
+import { DEFAULT_CONTEXT_CHECKPOINT_TOOL_NAME } from '../../system-reminder/helpers';
 
 const logger = new Logger('ToolNode');
 
 function isAbortSignal(value: unknown): value is AbortSignal {
   return value !== null && typeof value === 'object' && 'aborted' in value;
+}
+
+function readContextCheckpointToolName(local: UnknownRecord): string {
+  const executorLocal = local.executorLocal;
+  if (executorLocal && typeof executorLocal === 'object' && !Array.isArray(executorLocal)) {
+    const value = (executorLocal as Record<string, unknown>).contextCheckpointToolName;
+    if (typeof value === 'string' && value.trim().length > 0) {
+      return value.trim();
+    }
+  }
+  return DEFAULT_CONTEXT_CHECKPOINT_TOOL_NAME;
+}
+
+function readToolObservationPolicy(local: UnknownRecord): AgentSpecToolObservationGovernancePolicy | undefined {
+  const executorLocal = local.executorLocal;
+  if (executorLocal && typeof executorLocal === 'object' && !Array.isArray(executorLocal)) {
+    const value = (executorLocal as Record<string, unknown>).toolObservationPolicy;
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      const record = value as Record<string, unknown>;
+      const policy: AgentSpecToolObservationGovernancePolicy = {};
+      if (typeof record.enabled === 'boolean') {
+        policy.enabled = record.enabled;
+      }
+      if (typeof record.maxChars === 'number' && Number.isFinite(record.maxChars)) {
+        policy.maxChars = record.maxChars;
+      }
+      if (typeof record.maxLines === 'number' && Number.isFinite(record.maxLines)) {
+        policy.maxLines = record.maxLines;
+      }
+      return Object.keys(policy).length > 0 ? policy : undefined;
+    }
+  }
+  return undefined;
 }
 
 type ToolNodeSuccessContext = PreparedToolNodeContext & {
@@ -271,6 +306,7 @@ export class ToolNode implements GraphNode {
       toolContext: context.toolContext,
       structuredObservation: readStructuredObservation(context.parsed),
       observationPreview: this.observationPreview,
+      policy: readToolObservationPolicy(context.local),
     });
 
     const control = extractToolControlInfo(context.parsed);
@@ -304,9 +340,11 @@ export class ToolNode implements GraphNode {
       runtimeEvents: context.bridge.getRuntimeEvents(),
     });
 
-    if (context.toolName === 'context_checkpoint') {
+    if (context.toolName === readContextCheckpointToolName(context.local)) {
       context.state.local._checkpointStepReset = true;
-      logger.info('[ToolNode] context_checkpoint 执行成功，设置步数重置标记');
+      logger.info('[ToolNode] context checkpoint 执行成功，设置步数重置标记', {
+        toolName: context.toolName,
+      });
     }
 
     if (control?.terminateRun) {

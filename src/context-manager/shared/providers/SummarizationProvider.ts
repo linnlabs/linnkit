@@ -27,10 +27,12 @@ export class SummarizationProvider extends BaseContextProvider<SummarizationConf
   readonly priority = 3;
 
   private aiGenerator: AISummaryGenerator;
+  private readonly failureBehavior: NonNullable<SummarizationOptions['failureBehavior']>;
 
   constructor(options: SummarizationOptions) {
     super();
     this.aiGenerator = new AISummaryGenerator(options);
+    this.failureBehavior = options.failureBehavior ?? 'fail-fast';
   }
 
   async provide(
@@ -59,13 +61,13 @@ export class SummarizationProvider extends BaseContextProvider<SummarizationConf
 
     const workingMemoryStates = states.filter((s) => s.action.startsWith('keep_working') || s.action.startsWith('keep_'));
 
-    console.log('[AgentSummarizationProvider] 📊 工作记忆状态统计:', {
+    this.debug('📊 工作记忆状态统计', {
       总消息数: workingMemoryStates.length,
       消息类型分布: workingMemoryStates.reduce((acc, s) => {
         acc[s.message.type] = (acc[s.message.type] || 0) + 1;
         return acc;
       }, {} as Record<string, number>),
-    });
+    }, context);
 
     const { allCandidates: candidatesToReplace, coreCandidates: candidatesForPrompt } =
       SummarizationCandidateSelector.identifySummarizationCandidates(
@@ -74,7 +76,7 @@ export class SummarizationProvider extends BaseContextProvider<SummarizationConf
         { fullStateList: states }
       );
 
-    console.log('[AgentSummarizationProvider] 🔥 步骤2完成 - 识别摘要候选:', {
+    this.debug('🔥 步骤2完成 - 识别摘要候选', {
       所有候选数: candidatesToReplace.length,
       核心候选数: candidatesForPrompt.length,
       所有候选类型分布: candidatesToReplace.reduce((acc, s) => {
@@ -86,7 +88,7 @@ export class SummarizationProvider extends BaseContextProvider<SummarizationConf
         return acc;
       }, {} as Record<string, number>),
       所有候选ID列表: candidatesToReplace.map((s) => `${s.message.type}:${s.message.id}`).slice(0, 5),
-    });
+    }, context);
 
     if (candidatesToReplace.length === 0 || candidatesForPrompt.length === 0) {
       return this.createResult(states, 0, [], {
@@ -109,10 +111,10 @@ export class SummarizationProvider extends BaseContextProvider<SummarizationConf
         (candidate) => candidate.message.type === 'history_summary'
       );
 
-      console.log('[AgentSummarizationProvider] 🔥 步骤4完成 - 准备创建摘要消息:', {
+      this.debug('🔥 步骤4完成 - 准备创建摘要消息', {
         替换块消息数: candidatesToReplace.length,
         包含旧摘要: includedOldSummary,
-      });
+      }, context);
 
       const allMessages = states.map((s) => s.message);
       const { state: summaryState, event: summaryEvent } = SummarizationStateUtils.createSummaryMessageState(
@@ -155,6 +157,18 @@ export class SummarizationProvider extends BaseContextProvider<SummarizationConf
       if (context.summarizationCallbacks?.onSummarizationError) {
         const err = error instanceof Error ? error : new Error(String(error));
         context.summarizationCallbacks.onSummarizationError(err);
+      }
+
+      if (this.failureBehavior === 'continue-if-within-budget' && usedTokens <= availableBudget) {
+        this.debug('⚠️ 摘要失败，但当前上下文仍在预算内，按配置继续使用原上下文', {
+          usedTokens,
+          availableBudget,
+        }, context);
+        return this.createResult(states, 0, ['ai_history_summarization_failed_continue'], {
+          processedCount: 0,
+          skippedCount: 0,
+          addedCount: 0,
+        });
       }
 
       const errorMessage = error instanceof Error ? error.message : String(error);

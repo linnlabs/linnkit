@@ -1,4 +1,5 @@
 import type { AiMessage, RuntimeEvent } from '../../contracts';
+import type { ContextTrace } from './context-trace';
 
 export interface RecommendationStats {
   phaseTokenUsage: Record<PropertyKey, { used: number; percentage: number }>;
@@ -20,6 +21,7 @@ export interface BuildContextResultOptions<TBuildStats> {
   coreTypes: readonly string[];
   recommendations: string[];
   events?: RuntimeEvent[];
+  contextTrace?: ContextTrace;
 }
 
 export function buildContextResult<TBuildStats>(
@@ -37,6 +39,7 @@ export function buildContextResult<TBuildStats>(
     coreTypes,
     recommendations,
     events = [],
+    contextTrace,
   } = options;
 
   const tokenDistribution = calculateTokenDistribution(
@@ -69,6 +72,7 @@ export function buildContextResult<TBuildStats>(
       recommendations,
     },
     events,
+    ...(contextTrace ? { contextTrace } : {}),
   };
 }
 

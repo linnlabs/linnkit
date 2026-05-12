@@ -1,4 +1,8 @@
 export { BaseTool, CommonParameterTypes } from './toolContracts';
+export {
+  ContextCheckpointTool,
+  createContextCheckpointTool,
+} from './contextCheckpointTool';
 export { normalizeToolArgs } from './argNormalizer';
 export {
   computeToolIdempotencyKey,
@@ -29,6 +33,13 @@ export type {
   ToolResult,
   UnifiedToolResult,
 } from './toolContracts';
+export type {
+  ContextCheckpointPayload,
+  ContextCheckpointPayloadExtension,
+  ContextCheckpointToolArgs,
+  ContextCheckpointToolHookParams,
+  ContextCheckpointToolOptions,
+} from './contextCheckpointTool';
 export type {
   ObservationPreviewContext,
   ObservationPreviewMeta,

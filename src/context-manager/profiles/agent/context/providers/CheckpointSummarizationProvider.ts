@@ -30,10 +30,8 @@ import {
 
 const logger = new Logger('CheckpointSummarizationProvider');
 
-/** checkpoint 之前保留的最近工具交互轮数 */
-const KEEP_RECENT_TOOL_PAIRS_BEFORE_CHECKPOINT = 2;
-
 const CHECKPOINT_TOOL_NAME = 'context_checkpoint';
+const DEFAULT_KEEP_PAIRS_BEFORE_CHECKPOINT = 2;
 
 type UnknownRecord = Record<string, unknown>;
 function isRecord(v: unknown): v is UnknownRecord {
@@ -82,10 +80,29 @@ function extractCheckpointSummaryFromToolOutputMessage(message: {
   return null;
 }
 
+export interface CheckpointSummarizationProviderOptions {
+  /** checkpoint 之前保留的最近工具交互轮数。 */
+  keepPairsBefore?: number;
+  /** 触发 checkpoint 裁剪的工具名。默认 context_checkpoint。 */
+  triggerToolName?: string;
+}
+
 export class CheckpointSummarizationProvider extends BaseContextProvider {
   readonly name = 'CheckpointSummarizationProvider';
   readonly description = '上下文检查点 - 保留 checkpoint 工具对，裁剪其之前旧历史';
   readonly priority = 2.5;
+
+  private readonly keepPairsBefore: number;
+  private readonly triggerToolName: string;
+
+  constructor(options: CheckpointSummarizationProviderOptions = {}) {
+    super();
+    this.keepPairsBefore = normalizeNonNegativeInteger(
+      options.keepPairsBefore,
+      DEFAULT_KEEP_PAIRS_BEFORE_CHECKPOINT,
+    );
+    this.triggerToolName = normalizeTriggerToolName(options.triggerToolName);
+  }
 
   async provide(
     states: MessageProcessingState[],
@@ -104,9 +121,11 @@ export class CheckpointSummarizationProvider extends BaseContextProvider {
 
     const { checkpointGroup } = checkpointResult;
 
-    logger.info('🔄 检测到 context_checkpoint，开始执行 checkpoint 前历史清理', {
+    logger.info('🔄 检测到 checkpoint，开始执行 checkpoint 前历史清理', {
       totalStates: states.length,
       checkpointAnchorId: checkpointGroup.anchorId,
+      triggerToolName: this.triggerToolName,
+      keepPairsBefore: this.keepPairsBefore,
     });
     const keepBefore = this.findRecentToolPairIndicesBeforeCheckpoint(states, checkpointGroup.startIndex);
 
@@ -197,7 +216,9 @@ export class CheckpointSummarizationProvider extends BaseContextProvider {
   private findCheckpoint(
     states: MessageProcessingState[],
   ): { summary: string; checkpointGroup: ToolInteractionGroup<MessageProcessingState> } | null {
-    const groups = buildToolInteractionGroupsFromStates(states);
+    const groups = buildToolInteractionGroupsFromStates(states, {
+      checkpointToolName: this.triggerToolName,
+    });
     for (let index = groups.length - 1; index >= 0; index -= 1) {
       const group = groups[index];
       const summary = this.extractCheckpointSummaryFromGroup(group);
@@ -213,10 +234,16 @@ export class CheckpointSummarizationProvider extends BaseContextProvider {
    * - 仅扫描 checkpoint tool_calls 之前的历史段
    */
   private findRecentToolPairIndicesBeforeCheckpoint(states: MessageProcessingState[], beforeIndexExclusive: number): number[] {
+    if (this.keepPairsBefore <= 0) {
+      return [];
+    }
+
     const indices: number[] = [];
-    const groups = buildToolInteractionGroupsFromStates(states)
+    const groups = buildToolInteractionGroupsFromStates(states, {
+      checkpointToolName: this.triggerToolName,
+    })
       .filter((group) => group.startIndex < beforeIndexExclusive && group.isComplete && !group.isCheckpointGroup)
-      .slice(-KEEP_RECENT_TOOL_PAIRS_BEFORE_CHECKPOINT);
+      .slice(-this.keepPairsBefore);
     for (const group of groups) {
       indices.push(...group.messageIndexes);
     }
@@ -226,7 +253,7 @@ export class CheckpointSummarizationProvider extends BaseContextProvider {
   private extractCheckpointSummaryFromGroup(
     group: ToolInteractionGroup<MessageProcessingState>,
   ): string | null {
-    if (!group.isCheckpointGroup) {
+    if (!group.toolNames.includes(this.triggerToolName)) {
       return null;
     }
     for (const message of group.toolOutputMessages) {
@@ -239,4 +266,16 @@ export class CheckpointSummarizationProvider extends BaseContextProvider {
   }
 
   // 中文备注：这里不做“跨 tick 幂等事件锚点”，因为本 Provider 是纯裁剪逻辑，重复运行是幂等的。
+}
+
+function normalizeNonNegativeInteger(value: number | undefined, fallback: number): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return fallback;
+  }
+  return Math.max(0, Math.floor(value));
+}
+
+function normalizeTriggerToolName(value: string | undefined): string {
+  const candidate = value?.trim();
+  return candidate && candidate.length > 0 ? candidate : CHECKPOINT_TOOL_NAME;
 }
