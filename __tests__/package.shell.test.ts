@@ -20,12 +20,14 @@ async function readJson(relativePath: string): Promise<Record<string, unknown>> 
 }
 
 /**
- * Smoke test for `@linnlabs/linnkit` 0.4.0 publishable shape.
+ * Smoke test for `@linnlabs/linnkit` 0.5.0 publishable shape.
  *
  * 这个 test 是 docs/release/RELEASE.md §3 工程层不变量的硬性闸门，覆盖：
  *   1. 包元数据（name / version / 不再 private / repository / publishConfig）
  *   2. 7 条可 import 子路径的 conditional exports（types/import/require 三件套，全部指 dist）
- *   3. files 字段只发 dist + 包根 README.md + docs/ 选定子集，不会把 src/ 整棵子树打进 tarball
+ *   3. files 字段只发 dist + 包根 README.md + docs/README.md + docs/integration/ + docs/release/
+ *      docs/framework / docs/archive / docs/99-research-notes / DEVELOPMENT_GUIDE / INTEGRATION_GUIDE
+ *      0.5.0 起一律不进 tarball（外部接入文档全部收口到 docs/integration/）
  *   4. tsconfig.paths 同时为 `linnkit*`（兼容 linnya monorepo）和 `@linnlabs/linnkit*`（真包名）解析
  *   5. linnkit 元数据 notes 仍然守住 browser-safe seam 与前端 deep-import 红线
  *   6. (0.1.3 新增) src/ 里所有非 node-builtin / 非 alias / 非相对路径的 import 都必须在 package.json
@@ -35,11 +37,11 @@ async function readJson(relativePath: string): Promise<Record<string, unknown>> 
  * 任何破坏以上不变量的改动 = break，必须先在 docs/release/RELEASE.md 留一行变更说明。
  */
 describe('packages/linnkit shell manifest', () => {
-  it('declares the publishable @linnlabs/linnkit 0.4.0 shape with dist-only exports', async () => {
+  it('declares the publishable @linnlabs/linnkit 0.5.0 shape with dist-only exports', async () => {
     const manifest = await readJson('package.json');
 
     expect(manifest.name).toBe('@linnlabs/linnkit');
-    expect(manifest.version).toBe('0.4.0');
+    expect(manifest.version).toBe('0.5.0');
     expect(manifest.private).toBeUndefined();
     expect(manifest.type).toBe('module');
     expect(manifest.main).toBe('./dist/index.cjs');
@@ -66,9 +68,15 @@ describe('packages/linnkit shell manifest', () => {
     expect(files).toContain('dist');
     expect(files).not.toContain('src');
     expect(files).toContain('README.md');
-    expect(files).toContain('docs/framework');
+    expect(files).toContain('docs/README.md');
+    expect(files).toContain('docs/integration');
     expect(files).toContain('docs/release');
-    expect(files.some((entry) => typeof entry === 'string' && entry.startsWith('docs/') && entry.endsWith('.md'))).toBe(true);
+    // 0.5.0 起：framework / archive / 99-research-notes / DEVELOPMENT_GUIDE / INTEGRATION_GUIDE 退出 tarball
+    expect(files).not.toContain('docs/framework');
+    expect(files).not.toContain('docs/archive');
+    expect(files).not.toContain('docs/99-research-notes');
+    expect(files).not.toContain('docs/DEVELOPMENT_GUIDE.md');
+    expect(files).not.toContain('docs/INTEGRATION_GUIDE.md');
     expect(files.some((entry) => typeof entry === 'string' && entry.startsWith('src/'))).toBe(false);
 
     const exportsField = manifest.exports;

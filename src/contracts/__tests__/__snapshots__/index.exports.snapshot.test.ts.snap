@@ -2,6 +2,8 @@
 
 exports[`src/agent/contracts public exports snapshot > exposes the documented A-class contracts surface 1`] = `
 [
+  "AUDIT_ACTIONS",
+  "AUDIT_DECISION_OUTCOMES",
   "AgentCapability",
   "AgentSpec",
   "AgentSpecAuditConfig",
@@ -14,6 +16,12 @@ exports[`src/agent/contracts public exports snapshot > exposes the documented A-
   "AgentTodoStatus",
   "AiMessage",
   "AssistantMessage",
+  "AuditActor",
+  "AuditCostDelta",
+  "AuditDecision",
+  "AuditEnvelope",
+  "AuditEvidence",
+  "AuditScope",
   "BaseEvent",
   "BaseSSEEvent",
   "DEFAULT_MAX_STEPS",
@@ -55,6 +63,7 @@ exports[`src/agent/contracts public exports snapshot > exposes the documented A-
   "ToolOutputMeta",
   "UserMessage",
   "createAssistantMessage",
+  "createAuditEnvelopeEvent",
   "createErrorEvent",
   "createFinalAnswerChunkEvent",
   "createFinalAnswerEvent",

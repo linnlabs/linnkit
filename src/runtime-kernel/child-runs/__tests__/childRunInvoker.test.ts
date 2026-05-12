@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { AgentInvocationRequest } from '../../../ports/agent-invocation';
 import type { GraphNode } from '../../graph-engine/types';
-import { InternalAgentInvoker } from '../internalAgentInvoker';
+import { ChildRunInvoker } from '../childRunInvoker';
 import {
   ensureToolContextRuntimeCapability,
   getToolContextRuntimeBinding,
@@ -15,7 +15,7 @@ const noopObservationPreview: ObservationPreviewPort = {
   truncateObservation: vi.fn(async ({ text }) => ({ truncated: false, preview: text })),
 };
 
-describe('InternalAgentInvoker', () => {
+describe('ChildRunInvoker', () => {
   it('默认模型兜底应显式走 ModelResolver，而不是借道 LlmCaller', async () => {
     const capturedRequests: AgentInvocationRequest[] = [];
     const modelResolver = {
@@ -33,7 +33,7 @@ describe('InternalAgentInvoker', () => {
       }),
     };
 
-    const invoker = new InternalAgentInvoker({
+    const invoker = new ChildRunInvoker({
       modelResolver,
       createLlmNode: () => llmNode,
       observationPreview: noopObservationPreview,
@@ -85,6 +85,7 @@ describe('InternalAgentInvoker', () => {
       executionMeta: {
         conversationId: 'parent-conversation',
         turnId: 'parent-turn',
+        runId: 'parent-run',
         parentToolCallId: 'parent-tool-call',
         citationOffset: 9,
       },
@@ -98,7 +99,7 @@ describe('InternalAgentInvoker', () => {
       }),
     };
 
-    const invoker = new InternalAgentInvoker({
+    const invoker = new ChildRunInvoker({
       modelResolver: { resolveModelId: vi.fn(() => 'default-model-from-resolver') },
       createLlmNode: () => llmNode,
       observationPreview: noopObservationPreview,
@@ -112,6 +113,8 @@ describe('InternalAgentInvoker', () => {
       },
       userMessage: '继续执行',
       parentToolContext,
+      runId: 'child-run-1',
+      parentRunId: 'parent-run',
       seedHistoryEvents: seedHistory,
     });
 
@@ -127,6 +130,8 @@ describe('InternalAgentInvoker', () => {
     expect(readToolContextWorkingHistory(childToolContext)).toBe(seedHistory);
     expect(childToolContext.conversationId).toBe('parent-conversation');
     expect(childToolContext.turnId).toMatch(/^turn_/);
+    expect(childToolContext.runId).toBe('child-run-1');
+    expect(childToolContext.parentRunId).toBe('parent-run');
     expect(childToolContext.parentToolCallId).toBeUndefined();
     expect(childToolContext.citationOffset).toBeUndefined();
     expect(childToolContext.deepSearchDepth).toBe(3);
@@ -136,6 +141,7 @@ describe('InternalAgentInvoker', () => {
     expect(readToolContextWorkingHistory(parentToolContext)).toBe(parentHistory);
     expect(parentToolContext.conversationId).toBe('parent-conversation');
     expect(parentToolContext.turnId).toBe('parent-turn');
+    expect(parentToolContext.runId).toBe('parent-run');
     expect(parentToolContext.parentToolCallId).toBe('parent-tool-call');
     expect(parentToolContext.citationOffset).toBe(9);
   });

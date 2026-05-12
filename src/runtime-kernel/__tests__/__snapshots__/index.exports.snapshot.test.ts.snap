@@ -3,11 +3,15 @@
 exports[`src/agent/runtime-kernel public exports snapshot > exposes the documented runtime-kernel namespaces 1`] = `
 [
   "AnswerNode",
+  "AuditEnvelopePersistenceError",
   "BaseTool",
   "CommonParameterTypes",
+  "CompositeAuditPort",
   "ENGINE_ERROR_CODES",
   "ENGINE_STATE_SCHEMA_VERSION",
   "EventBusSubRunTracePublisher",
+  "EventStoreAuditPort",
+  "FileAuditPort",
   "GraphAgentExecutor",
   "GraphExecutor",
   "LLMPolicyEngine",
@@ -19,12 +23,21 @@ exports[`src/agent/runtime-kernel public exports snapshot > exposes the document
   "ToolNode",
   "UserNode",
   "WaitUserNode",
+  "audit",
+  "childRunTrace",
   "childRuns",
   "computeToolIdempotencyKey",
+  "consoleAudit",
+  "createCompositeAudit",
+  "createConsoleAudit",
   "createDefaultGraphExecutor",
+  "createEventStoreAudit",
+  "createFileAudit",
   "createGraphLoopHarness",
   "createMonotonicEventIdFactory",
   "defaultPolicyEngine",
+  "emitAuditEnvelope",
+  "emitSandboxDecisionAudit",
   "enrichment",
   "ensureToolContextRuntimeCapability",
   "events",
@@ -33,6 +46,7 @@ exports[`src/agent/runtime-kernel public exports snapshot > exposes the document
   "getToolContextRuntimeBinding",
   "graph",
   "llm",
+  "noopAudit",
   "normalizeToolArgs",
   "readToolContextModelId",
   "readToolContextPersistedHistory",
@@ -43,16 +57,21 @@ exports[`src/agent/runtime-kernel public exports snapshot > exposes the document
   "runContext",
   "runSupervisor",
   "stripRuntimeReservedToolContextPatch",
-  "subrun",
   "summarizeCheckpoint",
   "telemetry",
   "tools",
 ]
 `;
 
+exports[`src/agent/runtime-kernel public exports snapshot > snapshots the childRunTrace namespace 1`] = `
+[
+  "EventBusSubRunTracePublisher",
+]
+`;
+
 exports[`src/agent/runtime-kernel public exports snapshot > snapshots the childRuns namespace 1`] = `
 [
-  "InternalAgentInvoker",
+  "ChildRunInvoker",
   "pickChildRunSeedHistory",
 ]
 `;
@@ -119,13 +138,13 @@ exports[`src/agent/runtime-kernel public exports snapshot > snapshots the runCon
 
 exports[`src/agent/runtime-kernel public exports snapshot > snapshots the runSupervisor namespace 1`] = `
 [
+  "DefaultRunHandle",
+  "DefaultRunSupervisor",
   "MemoryRunRegistryStore",
-]
-`;
-
-exports[`src/agent/runtime-kernel public exports snapshot > snapshots the subrun namespace 1`] = `
-[
-  "EventBusSubRunTracePublisher",
+  "NotImplementedError",
+  "RunAlreadyRegisteredError",
+  "RunNotFoundError",
+  "runMetaFromRecord",
 ]
 `;
 

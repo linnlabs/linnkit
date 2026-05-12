@@ -15,13 +15,13 @@ export interface SubRunTraceEnvelope {
   /** 完整文本（kind=*_complete/final_answer 时使用） */
   content?: string;
 
-  /** 关联工具名（kind=action/tool_output 时使用） */
+  /** 关联工具名（kind=tool_call_decision/tool_process/tool_output 时使用） */
   tool_name?: string;
   /** 关联工具调用 ID（子 run 内部的 tool_call_id，用于展示步骤） */
   tool_call_id?: string;
-  /** 工具调用阶段（kind=action 时使用） */
+  /** 工具调用阶段（kind=tool_call_decision/tool_process 时使用） */
   phase?: SubRunTraceEvent['phase'];
-  /** 工具调用状态（kind=action/tool_output 时使用） */
+  /** 工具调用状态（kind=tool_call_decision/tool_process/tool_output 时使用） */
   status?: SubRunTraceEvent['status'];
 
   /** 工具参数（结构不做强约束，避免与业务强耦合） */
@@ -45,4 +45,3 @@ export interface SubRunTraceEnvelope {
 export interface SubRunTracePublisher {
   publish(envelope: SubRunTraceEnvelope): void;
 }
-

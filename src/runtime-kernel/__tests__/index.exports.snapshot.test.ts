@@ -59,9 +59,9 @@ describe('src/agent/runtime-kernel public exports snapshot', () => {
     expect(Object.keys(moduleUnderTest.enrichment).sort()).toMatchSnapshot();
   });
 
-  it('snapshots the subrun namespace', async () => {
+  it('snapshots the childRunTrace namespace', async () => {
     const moduleUnderTest = await import('../index');
-    expect(Object.keys(moduleUnderTest.subrun).sort()).toMatchSnapshot();
+    expect(Object.keys(moduleUnderTest.childRunTrace).sort()).toMatchSnapshot();
   });
 
   it('snapshots the runSupervisor namespace', async () => {

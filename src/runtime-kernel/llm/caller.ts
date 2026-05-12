@@ -93,6 +93,12 @@ export class LlmCaller {
     eventHandler?: (event: AnyAgentEvent) => void,
     signal?: AbortSignal,
     onCloudQuotaFallbackApplied?: (fallbackModelId: string) => void,
+    onModelFallbackApplied?: (info: {
+      fromModelId: string;
+      toModelId: string;
+      reason: string;
+      policy: 'policy-switch' | 'cloud-quota';
+    }) => void,
   ): Promise<LlmCallResult> {
     return callWithRetryFallback({
       deps: this.deps,
@@ -102,6 +108,7 @@ export class LlmCaller {
       eventHandler,
       signal,
       onCloudQuotaFallbackApplied,
+      onModelFallbackApplied,
     });
   }
 

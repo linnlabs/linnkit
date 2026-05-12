@@ -35,6 +35,8 @@ export function createToolContextFixture(options: ToolContextFixtureOptions = {}
     executionMeta: {
       conversationId: context.conversationId,
       turnId: context.turnId,
+      runId: context.runId,
+      parentRunId: context.parentRunId,
     },
   });
 

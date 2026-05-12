@@ -20,6 +20,7 @@ const { getToolDefinitionMock, executeToolMock } = vi.hoisted(() => ({
 }));
 
 vi.mock('../../../../shared/ids', () => ({
+  generateAuditEnvelopeId: vi.fn(() => `audit_${Math.random().toString(16).slice(2)}`),
   generateMessageId: vi.fn(() => `msg_${Math.random().toString(16).slice(2)}`),
 }));
 

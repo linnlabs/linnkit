@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgentInvocationRequest } from '../../../../ports/agent-invocation';
+import { noopAudit } from '../../../audit/noopAudit';
 import type { TelemetryPort } from '../../../telemetry/telemetryPort';
 import type { TickPipelineContext, TickStage } from '../types';
 
@@ -51,6 +52,10 @@ function createContext(
       request,
       history: [],
       stream: true,
+      toolContext: {
+        runId: 'run_telemetry',
+        parentRunId: 'parent_run_telemetry',
+      },
     },
     newEvents: [],
     request,
@@ -66,6 +71,7 @@ function createContext(
     llmCallStartedAt: 100,
     llmCallDurationMs: 35,
     telemetry,
+    audit: noopAudit,
   };
 }
 
@@ -182,6 +188,8 @@ describe('llmTelemetryMiddleware', () => {
         },
         scope: {
           conversationId: 'conv_telemetry',
+          runId: 'run_telemetry',
+          parentRunId: 'parent_run_telemetry',
           turnId: 'turn_telemetry',
         },
       });
@@ -224,6 +232,8 @@ describe('llmTelemetryMiddleware', () => {
       const emittedEvent = telemetry.emitMock.mock.calls[0]![0];
       expect(emittedEvent.scope).toEqual({
         conversationId: undefined,
+        runId: 'run_telemetry',
+        parentRunId: 'parent_run_telemetry',
         turnId: 'turn_telemetry',
       });
     });

@@ -4,6 +4,8 @@ import type { LlmCaller } from '../llm/caller';
 import type { ObservationPreviewPort, ToolExecutionContext, ToolRuntimePort } from '../tools';
 import type { RuntimeEvent } from '../../contracts';
 import { createDefaultGraphExecutor } from './defaultGraphExecutor';
+import type { AuditPort } from '../../ports';
+import type { TelemetryPort } from '../telemetry/telemetryPort';
 
 export interface GraphLoopLlmNodeFactoryParams {
   llmCaller: LlmCaller;
@@ -24,6 +26,8 @@ export interface GraphLoopHarnessOptions {
   history?: RuntimeEvent[];
   maxSteps?: number;
   signal?: AbortSignal;
+  auditPort?: AuditPort;
+  telemetryPort?: TelemetryPort;
   sseSink?: (evt: unknown) => RuntimeEvent[] | void;
 }
 
@@ -70,6 +74,8 @@ export function createGraphLoopHarness(options: GraphLoopHarnessOptions): GraphL
         toolRuntime: options.toolRuntime,
         observationPreview: options.observationPreview,
         maxSteps,
+        auditPort: options.auditPort,
+        telemetryPort: options.telemetryPort,
       });
 
       const local = {

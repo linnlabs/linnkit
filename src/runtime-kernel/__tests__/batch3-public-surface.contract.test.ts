@@ -6,7 +6,7 @@ describe('runtime-kernel Batch 3 public surface', () => {
     expect(runtimeKernel.graph.GraphExecutor).toBeTypeOf('function');
     expect(runtimeKernel.runContext.createDefaultRunContext).toBeTypeOf('function');
     expect(runtimeKernel.enrichment.requestEnricherRegistry).toBeDefined();
-    expect(runtimeKernel.subrun.EventBusSubRunTracePublisher).toBeTypeOf('function');
+    expect(runtimeKernel.childRunTrace.EventBusSubRunTracePublisher).toBeTypeOf('function');
     expect(runtimeKernel.tools.normalizeToolArgs).toBeTypeOf('function');
     expect(runtimeKernel.tools.computeToolIdempotencyKey).toBeTypeOf('function');
     expect(runtimeKernel.tools.findCachedToolOutputByIdempotencyKey).toBeTypeOf('function');

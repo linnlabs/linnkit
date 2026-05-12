@@ -35,6 +35,7 @@ export class MemoryRunRegistryStore implements RunRegistryStore {
     const sorted = Array.from(this.store.values())
       .filter((record) => matchesStatus(record.status, filter.status))
       .filter((record) => (filter.parentRunId === undefined ? true : record.parentRunId === filter.parentRunId))
+      .filter((record) => (filter.agentSpecId === undefined ? true : record.agentSpecId === filter.agentSpecId))
       .filter((record) => (filter.startedAfter === undefined ? true : record.startedAt > filter.startedAfter))
       .filter((record) => (filter.startedBefore === undefined ? true : record.startedAt < filter.startedBefore))
       .sort((left, right) => right.startedAt - left.startedAt || right.updatedAt - left.updatedAt);

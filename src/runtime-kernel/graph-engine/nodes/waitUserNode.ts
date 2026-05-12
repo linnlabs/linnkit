@@ -1,6 +1,13 @@
 import { GraphNode, EngineState, NodeResult } from '../types';
 import { generateMessageId } from '../../../shared/ids';
 import { createSSERequiresUserInteractionEvent } from '../../../contracts';
+import type { AuditPort } from '../../../ports';
+import { emitAuditEnvelope } from '../../audit/emitAudit';
+import { noopAudit } from '../../audit/noopAudit';
+
+export interface WaitUserNodeDependencies {
+  auditPort?: AuditPort;
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
@@ -44,6 +51,11 @@ function buildResumeRequestSnapshot(request: unknown): Record<string, unknown> |
 
 export class WaitUserNode implements GraphNode {
   id = 'wait_user';
+  private readonly auditPort: AuditPort;
+
+  constructor(dependencies: WaitUserNodeDependencies = {}) {
+    this.auditPort = dependencies.auditPort ?? noopAudit;
+  }
 
   async run(state: EngineState): Promise<NodeResult> {
     const local: Record<string, unknown> = state.local || {};
@@ -56,6 +68,9 @@ export class WaitUserNode implements GraphNode {
     local.turnId = turnId;
     const sseSink = typeof local.sseSink === 'function' ? (local.sseSink as (evt: unknown) => void) : undefined;
     const resumeRequestSnapshot = buildResumeRequestSnapshot(local.request);
+    const toolContext = isRecord(local.toolContext) ? local.toolContext : undefined;
+    const runId = toNonEmptyString(toolContext?.['runId']) ?? turnId;
+    const parentRunId = toNonEmptyString(toolContext?.['parentRunId']);
 
     const timestamp = Date.now();
     const id = generateMessageId();
@@ -77,6 +92,16 @@ export class WaitUserNode implements GraphNode {
       }
     }
 
+    const runtimeEventMetadata: Record<string, unknown> = {
+      run_context: {
+        runId,
+        ...(parentRunId === undefined ? {} : { parentRunId }),
+      },
+    };
+    if (resumeRequestSnapshot) {
+      runtimeEventMetadata.resume_request_snapshot = resumeRequestSnapshot;
+    }
+
     const runtimeEvent = {
       type: 'requires_user_interaction' as const,
       id,
@@ -85,12 +110,30 @@ export class WaitUserNode implements GraphNode {
       timestamp,
       version: 1 as const,
       form: spec,
-      metadata: resumeRequestSnapshot
-        ? {
-            resume_request_snapshot: resumeRequestSnapshot,
-          }
-        : undefined,
+      metadata: runtimeEventMetadata,
     };
+
+    await emitAuditEnvelope(this.auditPort, {
+      action: 'wait_user.request',
+      actor: { kind: 'system' },
+      decision: {
+        outcome: 'requested',
+        reason: 'graph paused for user interaction',
+      },
+      evidence: [
+        {
+          kind: 'requires_user_interaction',
+          ref: id,
+          summary: toNonEmptyString((spec as Record<string, unknown>)['prompt']) ?? 'requires user interaction',
+        },
+      ],
+      scope: {
+        conversationId: conversationId || undefined,
+        turnId,
+        runId,
+        parentRunId,
+      },
+    });
 
     state.local = {
       ...local,

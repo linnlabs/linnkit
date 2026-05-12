@@ -33,6 +33,12 @@ export interface CallWithRetriesParams {
   eventHandler?: (event: AnyAgentEvent) => void;
   signal?: AbortSignal;
   onCloudQuotaFallbackApplied?: (fallbackModelId: string) => void;
+  onModelFallbackApplied?: (info: {
+    fromModelId: string;
+    toModelId: string;
+    reason: string;
+    policy: 'policy-switch' | 'cloud-quota';
+  }) => void;
 }
 
 export async function callWithRetryFallback(params: CallWithRetriesParams): Promise<LlmCallResult> {
@@ -44,6 +50,7 @@ export async function callWithRetryFallback(params: CallWithRetriesParams): Prom
     eventHandler,
     signal,
     onCloudQuotaFallbackApplied,
+    onModelFallbackApplied,
   } = params;
 
   let lastError: Error | null = null;
@@ -123,6 +130,12 @@ export async function callWithRetryFallback(params: CallWithRetriesParams): Prom
 
       const policySwitchModelId = tryPolicyModelSwitch(deps, activeModelId, excludedModelIds, lastError);
       if (policySwitchModelId) {
+        onModelFallbackApplied?.({
+          fromModelId: activeModelId,
+          toModelId: policySwitchModelId,
+          reason: lastError.message,
+          policy: 'policy-switch',
+        });
         activeModelId = policySwitchModelId;
         excludedModelIds.add(policySwitchModelId);
         attempt -= 1;
@@ -138,6 +151,12 @@ export async function callWithRetryFallback(params: CallWithRetriesParams): Prom
         onCloudQuotaFallbackApplied,
       });
       if (quotaFallbackModelId) {
+        onModelFallbackApplied?.({
+          fromModelId: activeModelId,
+          toModelId: quotaFallbackModelId,
+          reason: lastError.message,
+          policy: 'cloud-quota',
+        });
         activeModelId = quotaFallbackModelId;
         excludedModelIds.add(quotaFallbackModelId);
         attempt -= 1;

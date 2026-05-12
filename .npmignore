@@ -1,14 +1,25 @@
 # `@linnlabs/linnkit` publish whitelist 已通过 package.json#files 控制：
-#   dist + README.md + docs/{README,INTEGRATION_GUIDE,DEVELOPMENT_GUIDE}.md + docs/framework + docs/release
+#   dist + README.md + docs/README.md + docs/integration/ + docs/release/
 # 这里再加一道兜底黑名单，避免误把开发期文件 / 不发布的 docs 子集 打进 tarball。
 # 任何变动必须同时同步 packages/linnkit/__tests__/package.shell.test.ts 中的 files 断言。
+#
+# 0.5.0 重组：以下三类 docs 已退出 npm tarball，仅作为仓库内部档案
+#   - docs/framework/         linnkit 维护方的协议演进 / 升级计划 / 决策档案
+#   - docs/archive/           早期抽包决策档案（已归档）
+#   - docs/99-research-notes/ 外部项目调研笔记池
+#   - docs/INTEGRATION_GUIDE.md（已拆分为 docs/integration/）
+#   - docs/DEVELOPMENT_GUIDE.md（linnkit 维护方专用）
+# 外部接入方需要的所有内容都在 docs/integration/ + docs/release/。
 
 # 源码本体：以 src/index.ts 形态运行的代码不发布；外部消费者一律从 dist/ 引用
 src/
 
-# docs/ 中不发包给消费者的子集（兜底——files 白名单已不带这俩）
+# docs/ 中不发包给消费者的子集（兜底——files 白名单已不带这些）
+docs/framework/
 docs/archive/
 docs/99-research-notes/
+docs/DEVELOPMENT_GUIDE.md
+docs/INTEGRATION_GUIDE.md
 
 # 测试 & 构建过程产物
 __tests__/

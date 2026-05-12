@@ -1,4 +1,5 @@
 import type { AgentInvocationRequest } from '../../../../ports/agent-invocation';
+import { noopAudit } from '../../../audit/noopAudit';
 import { noopTelemetry } from '../../../telemetry/noopTelemetry';
 import type { TickPipelineContext } from '../types';
 
@@ -49,6 +50,7 @@ export function createTestTickPipelineContext(
     conversationId: 'conv_test',
     turnId: 'turn_test',
     telemetry: noopTelemetry,
+    audit: noopAudit,
     ...overrides.context,
   };
 }

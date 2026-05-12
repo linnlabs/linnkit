@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { AuditEnvelope } from './audit';
 
 export const BaseEvent = z.object({
   id: z.string(),
@@ -121,6 +122,10 @@ export const RuntimeEvent = z.discriminatedUnion('type', [
     prompt: z.string().optional(),
   }),
   BaseEvent.extend({
+    type: z.literal('audit_envelope'),
+    envelope: AuditEnvelope,
+  }),
+  BaseEvent.extend({
     type: z.literal('final_answer'),
     answer_id: z.string(),
     content: z.string(),
@@ -161,6 +166,7 @@ export const RuntimeEvent = z.discriminatedUnion('type', [
   BaseEvent.extend({
     type: z.literal('stream_end'),
     reason: z.enum(['complete', 'error', 'interrupted', 'timeout']).optional(),
+    reason_message: z.string().optional(),
     stats: z.object({
       total_events: z.number().optional(),
       duration_ms: z.number().optional(),
@@ -178,6 +184,7 @@ export type ToolOutputEvent = Extract<RuntimeEvent, { type: 'tool_output' }>;
 export type TodoUpdatedEvent = Extract<RuntimeEvent, { type: 'todo_updated' }>;
 export type SubRunTraceEvent = Extract<RuntimeEvent, { type: 'subrun_trace' }>;
 export type RequiresUserInteractionEvent = Extract<RuntimeEvent, { type: 'requires_user_interaction' }>;
+export type AuditEnvelopeEvent = Extract<RuntimeEvent, { type: 'audit_envelope' }>;
 export type FinalAnswerEvent = Extract<RuntimeEvent, { type: 'final_answer' }>;
 export type FinalAnswerChunkEvent = Extract<RuntimeEvent, { type: 'final_answer_chunk' }>;
 export type HistorySummaryEvent = Extract<RuntimeEvent, { type: 'history_summary' }>;
@@ -349,6 +356,31 @@ export const createFinalAnswerEvent = (
   answer_id: answerId,
   content,
   is_complete: true,
+  ...options,
+});
+
+export const createAuditEnvelopeEvent = (
+  id: string,
+  conversationId: string,
+  turnId: string,
+  envelope: AuditEnvelopeEvent['envelope'],
+  options: Partial<AuditEnvelopeEvent> = {},
+): AuditEnvelopeEvent => ({
+  type: 'audit_envelope',
+  id,
+  conversation_id: conversationId,
+  turn_id: turnId,
+  timestamp: envelope.ts,
+  version: 1,
+  envelope,
+  metadata: {
+    audit_action: envelope.action,
+    run_context: {
+      runId: envelope.runId,
+      parentId: envelope.parentRunId,
+      traceId: envelope.scope?.traceId,
+    },
+  },
   ...options,
 });
 

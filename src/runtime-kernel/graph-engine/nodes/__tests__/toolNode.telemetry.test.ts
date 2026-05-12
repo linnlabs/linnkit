@@ -26,6 +26,10 @@ function buildState(call: StandardToolCall): EngineState {
       conversationId: 'conv_telemetry',
       turnId: 'turn_telemetry',
       history: [],
+      toolContext: {
+        runId: 'run_telemetry',
+        parentRunId: 'parent_run_telemetry',
+      },
     },
   };
 }
@@ -67,6 +71,8 @@ describe('ToolNode B2-engine Batch 2: TelemetryPort emit', () => {
       errorCode: undefined,
       scope: {
         conversationId: 'conv_telemetry',
+        runId: 'run_telemetry',
+        parentRunId: 'parent_run_telemetry',
         turnId: 'turn_telemetry',
       },
     });
@@ -97,6 +103,8 @@ describe('ToolNode B2-engine Batch 2: TelemetryPort emit', () => {
       errorCode: 'execution',
       scope: {
         conversationId: 'conv_telemetry',
+        runId: 'run_telemetry',
+        parentRunId: 'parent_run_telemetry',
         turnId: 'turn_telemetry',
       },
     });

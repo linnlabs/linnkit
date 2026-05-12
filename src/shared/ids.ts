@@ -46,6 +46,14 @@ export function generateRunId(): string {
   return shortRandomId('run');
 }
 
+export function generateAuditEnvelopeId(): string {
+  return shortRandomId('audit');
+}
+
+export function generateAuditEnvelopeEventId(): string {
+  return shortRandomId('audit_evt');
+}
+
 export function generateExecutionId(): string {
   return shortRandomId('exec');
 }

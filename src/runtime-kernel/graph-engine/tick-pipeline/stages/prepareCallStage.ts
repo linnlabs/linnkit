@@ -4,6 +4,7 @@ import type { ModelResolverLike } from '../../../llm/modelResolver';
 import type { ToolCatalogPort } from '../../../tools/ports';
 import type { TickPipelineContext, TickStage } from '../types';
 import { readNonEmptyString } from '../helpers';
+import { emitAuditEnvelope } from '../../../audit/emitAudit';
 
 export interface PrepareCallStageDependencies {
   modelResolver: Pick<ModelResolverLike, 'resolveModelId'>;
@@ -21,6 +22,36 @@ export function createPrepareCallStage(
       const lockedRunModelId = readNonEmptyString(ctx.executorLocal?.runLockedModelId);
       const requestedModelId = lockedRunModelId ?? ctx.request.model_id;
       ctx.modelId = dependencies.modelResolver.resolveModelId(requestedModelId);
+      await emitAuditEnvelope(ctx.audit, {
+        action: 'model.select',
+        actor: { kind: 'system' },
+        decision: {
+          outcome: 'recorded',
+          reason: lockedRunModelId
+            ? 'run model lock'
+            : requestedModelId
+              ? 'request model id'
+              : 'default model resolver',
+          metadata: {
+            requestedModelId,
+            lockedRunModelId,
+            selectedModelId: ctx.modelId,
+          },
+        },
+        evidence: [
+          {
+            kind: 'model_resolver',
+            summary: `selected ${ctx.modelId}`,
+          },
+        ],
+        scope: {
+          conversationId: ctx.conversationId || undefined,
+          turnId: ctx.turnId,
+          runId: ctx.input.toolContext?.runId ?? ctx.turnId,
+          parentRunId: ctx.input.toolContext?.parentRunId,
+          modelId: ctx.modelId,
+        },
+      });
       ctx.toolSchemas = dependencies.toolCatalog.getToolSchemas(ctx.request.availableTools, {
         imageGenerationModelId: ctx.request.imageGenerationModelId,
       });

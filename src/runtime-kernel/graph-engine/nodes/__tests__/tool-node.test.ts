@@ -15,6 +15,7 @@ const { getToolDefinitionMock, executeToolMock } = vi.hoisted(() => ({
 }));
 
 vi.mock('../../../../shared/ids', () => ({
+  generateAuditEnvelopeId: vi.fn(() => `audit_${Date.now()}`),
   generateMessageId: vi.fn(() => `msg_${Date.now()}`),
 }));
 

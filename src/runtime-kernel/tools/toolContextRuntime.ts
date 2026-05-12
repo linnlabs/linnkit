@@ -7,6 +7,8 @@ type RuntimeEventSource = () => ReadonlyArray<RuntimeEvent>;
 export interface ToolContextExecutionMeta {
   conversationId?: string;
   turnId?: string;
+  runId?: string;
+  parentRunId?: string;
   parentToolCallId?: string;
   citationOffset?: number;
 }
@@ -26,6 +28,8 @@ export const TOOL_CONTEXT_RUNTIME_RESERVED_KEYS = [
   'getConversationHistoryEvents',
   'conversationId',
   'turnId',
+  'runId',
+  'parentRunId',
   'parentToolCallId',
   'citationOffset',
 ] as const;
@@ -45,6 +49,12 @@ function syncExecutionMetaToContext(context: ToolExecutionContext, meta: ToolCon
   }
   if (typeof meta.turnId === 'string') {
     context.turnId = meta.turnId;
+  }
+  if (typeof meta.runId === 'string') {
+    context.runId = meta.runId;
+  }
+  if (typeof meta.parentRunId === 'string') {
+    context.parentRunId = meta.parentRunId;
   }
   if (typeof meta.parentToolCallId === 'string') {
     context.parentToolCallId = meta.parentToolCallId;

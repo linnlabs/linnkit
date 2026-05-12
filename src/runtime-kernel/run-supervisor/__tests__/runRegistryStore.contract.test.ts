@@ -43,6 +43,55 @@ describe('RunRegistryStore contract', () => {
     ]);
   });
 
+  it('round-trips paused records for N-3.B pause/resume wiring', async () => {
+    const store = new MemoryRunRegistryStore();
+    const record = createRunRecord({
+      status: 'paused',
+      pausedAt: 20,
+      pauseReason: '用户稍后继续',
+    });
+
+    await store.save(record);
+
+    await expect(store.load('run-1')).resolves.toEqual(record);
+  });
+
+  it('lists runs by agentSpecId filter', async () => {
+    const store = new MemoryRunRegistryStore();
+
+    await store.save(createRunRecord({
+      runId: 'run-1',
+      agentSpecId: 'deep_research_leader',
+      startedAt: 30,
+      updatedAt: 30,
+    }));
+    await store.save(createRunRecord({ runId: 'run-2', agentSpecId: 'translation', startedAt: 20, updatedAt: 20 }));
+    await store.save(createRunRecord({
+      runId: 'run-3',
+      agentSpecId: 'deep_research_leader',
+      startedAt: 10,
+      updatedAt: 10,
+    }));
+
+    const result = await store.list({ agentSpecId: 'deep_research_leader' });
+
+    expect(result.nextCursor).toBeUndefined();
+    expect(result.runs).toEqual([
+      createRunRecord({
+        runId: 'run-1',
+        agentSpecId: 'deep_research_leader',
+        startedAt: 30,
+        updatedAt: 30,
+      }),
+      createRunRecord({
+        runId: 'run-3',
+        agentSpecId: 'deep_research_leader',
+        startedAt: 10,
+        updatedAt: 10,
+      }),
+    ]);
+  });
+
   it('deletes records by runId', async () => {
     const store = new MemoryRunRegistryStore();
 

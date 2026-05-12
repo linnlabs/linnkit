@@ -145,6 +145,7 @@ export type SSEErrorEvent = z.infer<typeof SSEErrorEvent>;
 export const SSEStreamEndEvent = BaseSSEEvent.extend({
   type: z.literal('stream_end'),
   reason: z.enum(['complete', 'error', 'interrupted', 'timeout']).optional(),
+  reason_message: z.string().optional(),
   stats: z.object({
     total_events: z.number().optional(),
     duration_ms: z.number().optional(),

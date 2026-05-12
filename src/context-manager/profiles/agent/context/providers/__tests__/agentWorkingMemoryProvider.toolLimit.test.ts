@@ -205,4 +205,31 @@ describe('AgentWorkingMemoryProvider tool limits', () => {
       AGENT_CONTEXT_BUILDER_CONFIG.MAX_TOOL_INTERACTION_GROUPS_TO_KEEP,
     );
   });
+
+  it('honors constructor customConfig instead of hardcoding AGENT_CONTEXT_BUILDER_CONFIG', async () => {
+    const provider = new AgentWorkingMemoryProvider({
+      MAX_TOOL_INTERACTION_GROUPS_TO_KEEP: 2,
+      MAX_RECENT_TOOL_INTERACTIONS_TO_KEEP: 2,
+    });
+    const compressed = Array.from({ length: 5 }, (_, idx) => makeCompressedToolHistory(idx + 1));
+    const userInput: AiMessage = {
+      id: 'user_input_1',
+      role: 'user',
+      type: 'user_input',
+      content: '用户输入',
+      timestamp: 600,
+      metadata: {},
+    };
+
+    const states = buildStates([...compressed, userInput]);
+
+    const result = await provider.provide(states, 100000, makeProviderContext());
+    const keptCompressed = result.states
+      .filter((state) => state.action === 'keep_working_memory')
+      .map((state) => state.message.id)
+      .filter((id) => id.startsWith('c_tool_'));
+
+    expect(keptCompressed).toHaveLength(2);
+    expect(keptCompressed).toEqual(['c_tool_4', 'c_tool_5']);
+  });
 });

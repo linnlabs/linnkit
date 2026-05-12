@@ -1,9 +1,9 @@
-export { InternalAgentInvoker } from './internalAgentInvoker';
+export { ChildRunInvoker } from './childRunInvoker';
 export { pickChildRunSeedHistory } from './historyPolicy';
 
 export type {
-  InternalAgentConfig,
-  InternalAgentInvokeConfig,
-  InternalAgentInvokeResult,
-} from './internalAgentInvoker';
+  ChildRunAgentConfig,
+  ChildRunInvokeConfig,
+  ChildRunInvokeResult,
+} from './childRunInvoker';
 export type { ChildRunInvokerPort, ChildRunRequest, ChildRunResult } from './types';

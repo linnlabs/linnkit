@@ -154,4 +154,99 @@ describe('GraphAgentExecutor - run 内 quota 模型锁定', () => {
     expect(resolveModelId.mock.calls[1]?.[0]).toBe('cloud-deepseek-reasoner');
     expect(callWithRetries).toHaveBeenCalledTimes(2);
   }, 10_000);
+
+  it('模型选择与 fallback 都应发 AuditEnvelope', async () => {
+    const { GraphAgentExecutor } = await import('../executor');
+
+    const auditPort = { emit: vi.fn() };
+    const callWithRetries = vi.fn().mockImplementation(
+      async (
+        _modelId: string,
+        _messages: unknown[],
+        _options: unknown,
+        _eventHandler: unknown,
+        _signal: unknown,
+        onCloudQuotaFallbackApplied?: (fallbackModelId: string) => void,
+        onModelFallbackApplied?: (info: {
+          fromModelId: string;
+          toModelId: string;
+          reason: string;
+          policy: 'policy-switch' | 'cloud-quota';
+        }) => void,
+      ) => {
+        onCloudQuotaFallbackApplied?.('cloud-deepseek-reasoner');
+        onModelFallbackApplied?.({
+          fromModelId: 'cloud-primary-model',
+          toModelId: 'cloud-deepseek-reasoner',
+          reason: 'quota exhausted',
+          policy: 'cloud-quota',
+        });
+        return 'fallback ok';
+      },
+    );
+
+    const executor = new GraphAgentExecutor({
+      llmCaller: { callWithRetries } as never,
+      toolRuntime: {
+        getToolSchemas: vi.fn(() => []),
+        getDisplayOptions: vi.fn(() => undefined),
+      },
+      contextBuilder: {
+        build: vi.fn().mockResolvedValue({
+          mode: 'agent',
+          llmMessages: [{ role: 'user', content: 'hi' }],
+          summaryEvents: [],
+        }),
+      },
+      cloudQuotaFallbackModelId: 'cloud-deepseek-reasoner',
+      modelCatalog: {
+        getModelById: getModelByIdMock,
+        getModelsByCapability: vi.fn(() => []),
+        getModelsByUIVisibility: vi.fn(() => []),
+      },
+      modelResolver: { resolveModelId: vi.fn((modelId?: string) => modelId ?? 'default-chat-model') },
+      auditPort,
+    });
+
+    await executor.tick({
+      request: {
+        query: '继续执行任务',
+        promptKey: 'default',
+        model_id: 'cloud-primary-model',
+        mode: 'agent',
+        maxSteps: 8,
+        enableTools: false,
+        availableTools: [],
+      },
+      history: [],
+      stream: false,
+      executorLocal: { stepCount: 1 },
+      toolContext: {
+        conversationId: 'conv-audit',
+        turnId: 'turn-audit',
+        runId: 'run-audit',
+      },
+    });
+
+    expect(auditPort.emit).toHaveBeenCalledWith(expect.objectContaining({
+      action: 'model.select',
+      runId: 'run-audit',
+      scope: expect.objectContaining({
+        conversationId: 'conv-audit',
+        turnId: 'turn-audit',
+        runId: 'run-audit',
+        modelId: 'cloud-primary-model',
+      }),
+    }));
+    expect(auditPort.emit).toHaveBeenCalledWith(expect.objectContaining({
+      action: 'model.fallback',
+      decision: expect.objectContaining({
+        outcome: 'fallback',
+        policy: 'cloud-quota',
+      }),
+      scope: expect.objectContaining({
+        modelId: 'cloud-deepseek-reasoner',
+      }),
+    }));
+  });
 });

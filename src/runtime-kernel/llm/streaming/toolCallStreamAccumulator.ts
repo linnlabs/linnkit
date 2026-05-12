@@ -59,7 +59,7 @@ export class ToolCallStreamAccumulator {
 
   /**
    * @description
-   * 在 tool_call id + name 都就绪时触发，用于上层发“占位 action”。
+   * 在 tool_call id + name 都就绪时触发，用于上层发“占位 tool_process”。
    */
   private maybeEmitPlaceholder(toolCallId: string, toolName: string, onPlaceholder?: (toolCallId: string, toolName: string) => void): void {
     if (!onPlaceholder) return;

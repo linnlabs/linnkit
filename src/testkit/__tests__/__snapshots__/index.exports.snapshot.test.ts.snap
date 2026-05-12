@@ -2,10 +2,14 @@
 
 exports[`src/agent/testkit public exports snapshot > exposes the documented testkit surface 1`] = `
 [
+  "assertRunInvariants",
   "assertions",
+  "createCollectingAuditPort",
   "createDefaultGraphExecutor",
   "createGraphLoopHarness",
+  "createMockTelemetryPort",
   "createReplayHarness",
+  "createRunSupervisorHarness",
   "createScriptedAiEngineHarness",
   "createToolContextFixture",
   "expectFinalStepForcedTools",
@@ -13,5 +17,6 @@ exports[`src/agent/testkit public exports snapshot > exposes the documented test
   "expectMessagesContainToolResult",
   "expectRunEndedWithFinalAnswer",
   "expectToolOutputFedBackToHistory",
+  "validateRunInvariants",
 ]
 `;

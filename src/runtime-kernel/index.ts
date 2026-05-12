@@ -7,10 +7,11 @@ export * as runContext from './run-context';
 
 export * as llm from './llm';
 export * as childRuns from './child-runs';
+export * as childRunTrace from './child-run-trace';
 export * as enrichment from './enrichment';
-export * as subrun from './subrun';
 export * as runSupervisor from './run-supervisor';
 export * as telemetry from './telemetry';
+export * as audit from './audit';
 
 // === 扁平 re-export（业界 namespace + flat 双重暴露惯例） ===
 // 与上方 namespace 共存：namespace 暴露分层结构，扁平暴露 P1 收口的消费符号。
@@ -20,8 +21,9 @@ export * as telemetry from './telemetry';
 export * from './tools';
 export * from './llm';
 export * from './graph-engine';
-export * from './subrun';
+export * from './child-run-trace';
 export * from './enrichment';
+export * from './audit';
 
 // === 顶层符号 ===
 export { ENGINE_ERROR_CODES } from '../shared/errorClassifier';

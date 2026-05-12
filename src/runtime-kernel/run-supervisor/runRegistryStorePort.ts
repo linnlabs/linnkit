@@ -2,6 +2,7 @@ export type RunStatus =
   | 'pending'
   | 'running'
   | 'awaiting_user'
+  | 'paused'
   | 'completed'
   | 'failed'
   | 'cancelled';
@@ -9,6 +10,7 @@ export type RunStatus =
 export type ListRunsFilter = {
   status?: RunStatus | RunStatus[];
   parentRunId?: string;
+  agentSpecId?: string;
   startedAfter?: number;
   startedBefore?: number;
   limit?: number;
@@ -19,10 +21,13 @@ export type RunRecord = {
   runId: string;
   conversationId: string;
   parentRunId?: string;
+  agentSpecId?: string;
   status: RunStatus;
   currentNode?: string;
   startedAt: number;
   updatedAt: number;
+  pausedAt?: number;
+  pauseReason?: string;
   iterationsUsed?: number;
   iterationBudget?: { max: number; refundable: boolean };
   errorIfAny?: { errorCode: string; message: string; recoverable: boolean };

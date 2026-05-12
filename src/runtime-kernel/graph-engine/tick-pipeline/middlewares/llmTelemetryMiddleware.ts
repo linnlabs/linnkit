@@ -50,6 +50,8 @@ export const llmTelemetryMiddleware: TickAroundMiddleware = async (ctx, stage, n
     scope: {
       conversationId: ctx.conversationId || undefined,
       turnId: ctx.turnId,
+      runId: ctx.input.toolContext?.runId ?? ctx.turnId,
+      parentRunId: ctx.input.toolContext?.parentRunId,
     },
   });
 };

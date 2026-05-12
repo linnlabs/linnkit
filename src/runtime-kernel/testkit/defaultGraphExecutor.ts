@@ -7,6 +7,8 @@ import { UserNode } from '../graph-engine/nodes/userNode';
 import { WaitUserNode } from '../graph-engine/nodes/waitUserNode';
 import type { GraphNode } from '../graph-engine/types';
 import type { ObservationPreviewPort, ToolRuntimePort } from '../tools';
+import type { AuditPort } from '../../ports';
+import type { TelemetryPort } from '../telemetry/telemetryPort';
 
 export interface DefaultGraphExecutorOptions {
   llmNode: GraphNode;
@@ -14,6 +16,8 @@ export interface DefaultGraphExecutorOptions {
   observationPreview: ObservationPreviewPort;
   maxSteps?: number;
   checkpointer?: Checkpointer;
+  auditPort?: AuditPort;
+  telemetryPort?: TelemetryPort;
 }
 
 export function createDefaultGraphExecutor(
@@ -28,8 +32,10 @@ export function createDefaultGraphExecutor(
   executor.registerNode(new ToolNode({
     toolRuntime: options.toolRuntime,
     observationPreview: options.observationPreview,
+    auditPort: options.auditPort,
+    telemetryPort: options.telemetryPort,
   }));
   executor.registerNode(new AnswerNode());
-  executor.registerNode(new WaitUserNode());
+  executor.registerNode(new WaitUserNode({ auditPort: options.auditPort }));
   return executor;
 }

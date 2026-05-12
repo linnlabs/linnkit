@@ -1,6 +1,9 @@
 import { Logger } from '../../../shared/logger';
 import { noopTelemetry } from '../../telemetry/noopTelemetry';
 import type { TelemetryPort } from '../../telemetry/telemetryPort';
+import { noopAudit } from '../../audit/noopAudit';
+import { emitAuditEnvelope } from '../../audit/emitAudit';
+import type { AuditPort } from '../../../ports';
 import type { ToolControlInfo } from '../../tools/ui-types';
 import type {
   ObservationPreviewPort,
@@ -67,6 +70,7 @@ export interface ToolNodeDependencies {
    * 不传时使用 noopTelemetry（observability 默认关闭，业务零影响）。
    */
   telemetryPort?: TelemetryPort;
+  auditPort?: AuditPort;
 }
 
 export class ToolNode implements GraphNode {
@@ -74,11 +78,13 @@ export class ToolNode implements GraphNode {
   private readonly toolRuntime: Pick<ToolCatalogPort, 'getToolDefinition'> & Pick<ToolExecutionPort, 'executeTool'>;
   private readonly observationPreview: ObservationPreviewPort;
   private readonly telemetryPort: TelemetryPort;
+  private readonly auditPort: AuditPort;
 
   constructor(dependencies: ToolNodeDependencies) {
     this.toolRuntime = dependencies.toolRuntime;
     this.observationPreview = dependencies.observationPreview;
     this.telemetryPort = dependencies.telemetryPort ?? noopTelemetry;
+    this.auditPort = dependencies.auditPort ?? noopAudit;
   }
 
   /**
@@ -92,6 +98,8 @@ export class ToolNode implements GraphNode {
     errorCode?: string;
     conversationId: string;
     turnId: string;
+    runId?: string;
+    parentRunId?: string;
   }): void {
     this.telemetryPort.emit({
       kind: 'tool_call',
@@ -102,6 +110,49 @@ export class ToolNode implements GraphNode {
       scope: {
         conversationId: args.conversationId || undefined,
         turnId: args.turnId,
+        ...(args.runId === undefined ? {} : { runId: args.runId }),
+        ...(args.parentRunId === undefined ? {} : { parentRunId: args.parentRunId }),
+      },
+    });
+  }
+
+  private async emitToolDecisionAudit(args: {
+    action: 'tool.allow' | 'tool.deny';
+    toolName: string;
+    toolCallId: string;
+    reason: string;
+    conversationId: string;
+    turnId: string;
+    runId?: string;
+    parentRunId?: string;
+    errorKind?: string;
+  }): Promise<void> {
+    await emitAuditEnvelope(this.auditPort, {
+      parentRunId: args.parentRunId,
+      action: args.action,
+      actor: { kind: 'system' },
+      decision: {
+        outcome: args.action === 'tool.allow' ? 'allowed' : 'denied',
+        reason: args.reason,
+        metadata: {
+          toolCallId: args.toolCallId,
+          errorKind: args.errorKind,
+        },
+      },
+      evidence: [
+        {
+          kind: 'tool_call',
+          ref: args.toolCallId,
+          summary: `${args.action} ${args.toolName}`,
+        },
+      ],
+      scope: {
+        conversationId: args.conversationId || undefined,
+        turnId: args.turnId,
+        runId: args.runId ?? args.turnId,
+        ...(args.parentRunId === undefined ? {} : { parentRunId: args.parentRunId }),
+        toolName: args.toolName,
+        toolCallId: args.toolCallId,
       },
     });
   }
@@ -192,12 +243,24 @@ export class ToolNode implements GraphNode {
   }
 
   private async handleSuccess(context: ToolNodeSuccessContext): Promise<NodeResult> {
+    await this.emitToolDecisionAudit({
+      action: 'tool.allow',
+      toolName: context.toolName,
+      toolCallId: context.toolCallId,
+      reason: 'tool execution succeeded',
+      conversationId: context.conversationId,
+      turnId: context.turnId,
+      runId: context.toolContext.runId,
+      parentRunId: context.toolContext.parentRunId,
+    });
     this.emitToolCallTelemetry({
       toolName: context.toolName,
       durationMs: context.exec.durationMs,
       ok: true,
       conversationId: context.conversationId,
       turnId: context.turnId,
+      runId: context.toolContext.runId,
+      parentRunId: context.toolContext.parentRunId,
     });
 
     applyProtocolFuseState(context.local, 0);
@@ -280,7 +343,18 @@ export class ToolNode implements GraphNode {
     return { kind: 'route', nextNodeId: 'wait_user', events: context.bridge.getRuntimeEvents() };
   }
 
-  private handleError(context: ToolNodeErrorContext): NodeResult {
+  private async handleError(context: ToolNodeErrorContext): Promise<NodeResult> {
+    await this.emitToolDecisionAudit({
+      action: context.exec.errorKind === 'protocol' ? 'tool.deny' : 'tool.allow',
+      toolName: context.toolName,
+      toolCallId: context.toolCallId,
+      reason: context.exec.error ?? 'tool_error',
+      conversationId: context.conversationId,
+      turnId: context.turnId,
+      runId: context.toolContext.runId,
+      parentRunId: context.toolContext.parentRunId,
+      errorKind: context.exec.errorKind,
+    });
     this.emitToolCallTelemetry({
       toolName: context.toolName,
       durationMs: context.exec.durationMs,
@@ -288,6 +362,8 @@ export class ToolNode implements GraphNode {
       errorCode: context.exec.errorKind,
       conversationId: context.conversationId,
       turnId: context.turnId,
+      runId: context.toolContext.runId,
+      parentRunId: context.toolContext.parentRunId,
     });
 
     const errorString = (() => {

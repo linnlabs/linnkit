@@ -8,6 +8,8 @@ import { createEmptyModelCatalog, type ModelCatalogLike } from '../llm/modelCata
 import { ModelResolver, type ModelResolverLike } from '../llm/modelResolver';
 import { noopTelemetry } from '../telemetry/noopTelemetry';
 import type { TelemetryPort } from '../telemetry/telemetryPort';
+import { noopAudit } from '../audit/noopAudit';
+import type { AuditPort } from '../../ports';
 import type { ToolCatalogPort, ToolPresentationPort } from '../tools/ports';
 import { Logger } from '../../shared/logger';
 import type { GraphExecutorContextBuilder } from './executorContextBuilder';
@@ -64,6 +66,7 @@ export interface GraphAgentExecutorDependencies extends GraphAgentExecutorOption
    * 不传时使用 noopTelemetry（保持当前行为：observability 默认关闭，零业务影响）。
    */
   telemetryPort?: TelemetryPort;
+  auditPort?: AuditPort;
 }
 
 export class GraphAgentExecutor {
@@ -74,6 +77,7 @@ export class GraphAgentExecutor {
   private readonly modelResolver: Pick<ModelResolverLike, 'resolveModelId'>;
   private readonly modelCatalog: ModelCatalogLike;
   private readonly telemetryPort: TelemetryPort;
+  private readonly auditPort: AuditPort;
   private readonly stages: TickStage[];
   private readonly middlewares: TickAroundMiddleware[];
 
@@ -91,6 +95,7 @@ export class GraphAgentExecutor {
         modelCatalog: this.modelCatalog,
       });
     this.telemetryPort = dependencies.telemetryPort ?? noopTelemetry;
+    this.auditPort = dependencies.auditPort ?? noopAudit;
     this.stages = [
       createPrepareCallStage({
         modelResolver: this.modelResolver,
@@ -136,8 +141,9 @@ export class GraphAgentExecutor {
       llmMessages: [],
       mode: input.request.mode === 'chat' ? 'chat' : 'agent',
       conversationId: resolveConversationIdForRuntimeEvents(input.toolContext),
-      turnId: `turn_${Date.now()}`,
+      turnId: readNonEmptyString(input.toolContext?.turnId) ?? `turn_${Date.now()}`,
       telemetry: this.telemetryPort,
+      audit: this.auditPort,
     };
 
     logger.info('[GraphAgentExecutor] tick 调用', {

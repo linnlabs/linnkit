@@ -23,6 +23,7 @@ export type RuntimeEventUiProjectionKind =
   | 'tool_process'
   | 'tool_output'
   | 'requires_user_interaction'
+  | 'audit_envelope'
   | 'todo_updated'
   | 'subrun_trace'
   | 'error'
@@ -79,6 +80,12 @@ export function isRequiresUserInteractionRuntimeEvent(
   event: RuntimeEvent,
 ): event is Extract<RuntimeEvent, { type: 'requires_user_interaction' }> {
   return event.type === 'requires_user_interaction';
+}
+
+export function isAuditEnvelopeRuntimeEvent(
+  event: RuntimeEvent,
+): event is Extract<RuntimeEvent, { type: 'audit_envelope' }> {
+  return event.type === 'audit_envelope';
 }
 
 export function isControlRuntimeEvent(
@@ -156,6 +163,8 @@ export function getRuntimeEventUiProjectionKind(
       return 'tool_output';
     case 'requires_user_interaction':
       return 'requires_user_interaction';
+    case 'audit_envelope':
+      return 'audit_envelope';
     case 'todo_updated':
       return 'todo_updated';
     case 'subrun_trace':
@@ -181,6 +190,7 @@ export function describeRuntimeEventLifecycle(
 
   const replayToUi =
     uiProjectionKind !== 'hidden' &&
+    uiProjectionKind !== 'audit_envelope' &&
     uiProjectionKind !== 'final_answer_chunk' &&
     uiProjectionKind !== 'unsupported';
 
@@ -198,6 +208,10 @@ export function describeRuntimeEventLifecycle(
     }
 
     if (isRequiresUserInteractionRuntimeEvent(event)) {
+      return false;
+    }
+
+    if (isAuditEnvelopeRuntimeEvent(event)) {
       return false;
     }
 
@@ -237,6 +251,8 @@ export function describeRuntimeEventLifecycle(
       case 'subrun_trace':
       case 'error':
         return 'event_bus_sse';
+      case 'audit_envelope':
+        return 'none';
       default:
         return 'none';
     }

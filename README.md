@@ -15,7 +15,7 @@
 
 - npm scope：`@linnlabs/linnkit`
 - 当前版本：以 [`package.json#version`](./package.json) 与 [`docs/release/RELEASE.md`](./docs/release/RELEASE.md) 为准（GitHub Packages 私有发布）
-- 阶段：**0.x experimental** — 7 个稳定子入口已收口；Phase F 协议演进仍在路上（详见 [`docs/framework/`](./docs/framework/)）
+- 阶段：**0.x experimental** — 7 个稳定子入口已收口；0.5.0 起 Phase F P0 三件（AgentSpec / RunSupervisor / AuditEnvelope）已落地
 - 公开开源 + npmjs.com 路线见 [`docs/release/RELEASE.md §7`](./docs/release/RELEASE.md)
 
 ## 安装
@@ -26,20 +26,23 @@
 npm install @linnlabs/linnkit
 ```
 
-详细装配链路与 7 个公开子入口的语义见 [`docs/INTEGRATION_GUIDE.md`](./docs/INTEGRATION_GUIDE.md)。
+接入文档按主题拆分在 [`docs/integration/`](./docs/integration/)，建议从 [`docs/integration/README.md`](./docs/integration/README.md) 进入。
 
 ## 文档
 
-文档枢纽在 [`docs/`](./docs/)，主要入口：
+文档枢纽在 [`docs/`](./docs/)：
 
-- [`docs/README.md`](./docs/README.md) —— **Engine 总入口**：模块定位 / 公开子入口 / 读文档顺序
-- [`docs/INTEGRATION_GUIDE.md`](./docs/INTEGRATION_GUIDE.md) —— 接入方装配指南（host 必读）
-- [`docs/DEVELOPMENT_GUIDE.md`](./docs/DEVELOPMENT_GUIDE.md) —— linnkit 包内部 dev 流程
-- [`docs/framework/`](./docs/framework/) —— **活文档**：linnkit 作为独立 Agent 框架的演进
+- [`docs/README.md`](./docs/README.md) —— **框架总入口**：模块定位 / 公开子入口 / 数据流 / 术语速查
+- [`docs/integration/`](./docs/integration/) —— **接入手册集（host 必读）**：按主题拆分的 17 个手册（installation / quickstart / context-fences / run-supervisor / audit / telemetry / ...）
 - [`docs/release/RELEASE.md`](./docs/release/RELEASE.md) —— Build / Publish / Version 流水（每次发包前必读）
 - [`docs/release/RELEASE-HISTORY.md`](./docs/release/RELEASE-HISTORY.md) —— 历次发版长叙事 / 踩坑教训 / PAT runbook
-- [`docs/99-research-notes/`](./docs/99-research-notes/) —— 外部项目调研笔记池
-- [`docs/archive/engine-phases/`](./docs/archive/engine-phases/) —— **已归档**：早期抽包决策档案
+
+仓库内还有以下**内部维护文档**（不在 npm tarball 内，仅 linnkit 维护方使用）：
+
+- `docs/DEVELOPMENT_GUIDE.md` —— linnkit 包内部 dev 流程
+- `docs/framework/` —— 框架演进路线图、协议升级、ADR 决策档案
+- `docs/99-research-notes/` —— 外部项目调研笔记池
+- `docs/archive/` —— 早期抽包决策档案
 
 ## License
 

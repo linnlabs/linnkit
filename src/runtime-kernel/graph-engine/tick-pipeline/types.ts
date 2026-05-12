@@ -8,6 +8,7 @@ import type { ToolExecutionContext } from '../../tools/toolExecutionContext';
 import type { OpenAIToolSchema } from '../../tools/toolContracts';
 import type { LlmCallOptions } from '../../llm/caller';
 import type { TelemetryPort } from '../../telemetry/telemetryPort';
+import type { AuditPort } from '../../../ports';
 import type { ExecutorLocalState, StandardToolCall } from '../types';
 import type { GraphExecutorSummarizationCallbacks } from '../executorContextBuilder';
 import type { RuntimeEvent } from '../../../contracts';
@@ -81,11 +82,18 @@ export interface TickPipelineContext {
   decision?: AgentStepDecision;
   systemReminderHitRuleIds?: string[];
   cloudQuotaFallbackAppliedModelId?: string;
+  modelFallbackAudit?: {
+    fromModelId: string;
+    toModelId: string;
+    reason: string;
+    policy: 'policy-switch' | 'cloud-quota';
+  };
   /**
    * 由 GraphAgentExecutor 注入；middleware/stage 通过 ctx.telemetry.emit() 上报观测事件。
    * 默认 noopTelemetry，宿主侧可注入实际 sink（如 Linnya 的 SqliteTelemetryAdapter）。
    */
   telemetry: TelemetryPort;
+  audit: AuditPort;
 }
 
 export type TickStageId =

@@ -1,5 +1,6 @@
 export * from './messages';
 export * from './agentSpec';
+export * from './audit';
 export * from './events';
 export * from './sub-run-trace';
 export type { AgentTodoSnapshot } from './todo';

@@ -12,7 +12,7 @@ export * as contracts from './contracts';
 // "Vitest failed to access its internal state."。
 // 必须通过显式子入口 `import * as testkit from 'linnkit/testkit'` 使用，且
 // 该子入口只能在 testkit/test 文件里被引用（由 `npm run lint:codename` 守护）。
-export { generateMessageId, generateRunId } from './shared/ids';
+export { generateAuditEnvelopeEventId, generateAuditEnvelopeId, generateMessageId, generateRunId } from './shared/ids';
 export { withLLMTelemetryContext } from './shared/llmTelemetryContext';
 export type { LlmCallTelemetry } from './shared/llmTelemetryContext';
 export { setLlmAuditRecorder } from './shared/llmAuditRecorder';

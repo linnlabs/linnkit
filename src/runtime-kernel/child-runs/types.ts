@@ -42,6 +42,14 @@ export interface ChildRunTracePolicy {
 }
 
 export interface ChildRunExecutionPolicy {
+  /**
+   * 显式 child-run runId。默认由 host adapter 取 subrunId。
+   */
+  runId?: string;
+  /**
+   * 父 runId。默认从 parentToolContext.runId 继承。
+   */
+  parentRunId?: string;
   maxSteps?: number;
   modelId?: string;
   abortSignal?: AbortSignal;
@@ -56,6 +64,8 @@ export interface ChildRunRequest<TParentToolContext = ChildRunParentContext> {
 }
 
 export interface ChildRunResult {
+  runId?: string;
+  parentRunId?: string;
   subrunId: string;
   success: boolean;
   finalAnswer: string;

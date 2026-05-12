@@ -1,5 +1,5 @@
 import type { ToolContextConversationView } from './conversationView';
-import type { SubRunTracePublisher } from '../subrun/subrunTrace.types';
+import type { SubRunTracePublisher } from '../child-run-trace/subrunTrace.types';
 import type { ChildRunInvokerPort } from '../child-runs/types';
 import type { AgentTodoSnapshot, RuntimeEvent } from '../../contracts';
 
@@ -17,6 +17,16 @@ export interface ToolExecutionContext {
    * 说明：Workspace 工具 vNext 协议已不再依赖 index 快照，但 runId 仍可用于其他链路的追踪/调试。
    */
   runId?: string;
+
+  /**
+   * 父级 run 标识。
+   *
+   * 中文备注：
+   * - 顶层 run 通常为空；
+   * - 同步 child-run 会把自己的 `runId` 设为子 run / subrun ID，同时把父 run 写到这里；
+   * - Telemetry / Audit / Cost 聚合依赖这个字段建立父子关系，但 graph-engine 不解释产品语义。
+   */
+  parentRunId?: string;
 
   /**
    * 🔥 引用编号偏移量（用于多次工具调用时的连续编号）

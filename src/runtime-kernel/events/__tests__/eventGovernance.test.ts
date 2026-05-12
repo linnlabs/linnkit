@@ -154,4 +154,29 @@ describe('eventGovernance contract', () => {
     expect(shouldEmitRuntimeEventToSse(checkpointSummary)).toBe(false);
     expect(getRuntimeEventUiProjectionKind(checkpointSummary)).toBe('checkpoint_history_summary');
   });
+
+  it('audit_envelope 应只持久化，不进 UI / 上下文 / SSE', () => {
+    const event = createBaseEvent({
+      type: 'audit_envelope',
+      id: 'audit_evt_1',
+      envelope: {
+        envelopeId: 'audit_1',
+        runId: 'run_1',
+        ts: 1,
+        actor: { kind: 'system' },
+        action: 'model.select',
+        scope: {
+          conversationId: 'conv_contract',
+          runId: 'run_1',
+          turnId: 'turn_contract',
+        },
+      },
+    });
+
+    expect(shouldPersistRuntimeEvent(event)).toBe(true);
+    expect(shouldReplayRuntimeEventToUi(event)).toBe(false);
+    expect(shouldEnterAgentContext(event)).toBe(false);
+    expect(shouldEmitRuntimeEventToSse(event)).toBe(false);
+    expect(getRuntimeEventUiProjectionKind(event)).toBe('audit_envelope');
+  });
 });
