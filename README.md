@@ -171,7 +171,7 @@ console.log(result.finalAnswer);
 - **Version**: see [`package.json`](./package.json)
 - **Distribution**: npmjs.com public registry
 - **Stability**: `0.x` — public sub-entrypoints are locked; Context Engineering API stable since 0.6.0
-- **Open source**: MIT package; source repo split is required before the formal OSS announcement
+- **Open source**: MIT-licensed source is available at <https://github.com/linnlabs/linnkit>
 
 ## License
 

@@ -175,7 +175,7 @@ console.log(result.finalAnswer);
 - 当前版本：以 [package.json](./package.json) 为准。
 - 当前发布：npmjs.com 公开发布。
 - 稳定性：仍是 `0.x`，但公开子入口已经锁定；Context Engineering API 自 0.6.0 起基本稳定。
-- 开源状态：包已按 MIT 协议发布；正式宣布开源前需要先拆出独立公开源码仓。
+- 开源状态：已按 MIT 协议开源，源码仓为 <https://github.com/linnlabs/linnkit>。
 
 ## License
 

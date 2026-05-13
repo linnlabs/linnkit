@@ -104,7 +104,7 @@
     "vitest": "^3.2.4"
   },
   "linnkit": {
-    "phase": "in progress (0.8.0 — TokenizerPort：host 可选注入自定义 tokenizer，默认行为保持 0.7.x)",
+    "phase": "released (0.8.0 — TokenizerPort：host 可选注入自定义 tokenizer，默认行为保持 0.7.x)",
     "sourceOfTruth": "CHANGELOG.md",
     "notes": [
       "子入口 ./runtime-kernel/events 是 browser-safe slim seam：仅暴露 events governance 纯函数，禁止扩展任何 Node-only 依赖（如 node:async_hooks / crypto / fs）",
