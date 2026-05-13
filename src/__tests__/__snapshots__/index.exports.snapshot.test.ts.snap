@@ -3,11 +3,15 @@
 exports[`src/agent public exports snapshot > exposes the documented root public surface 1`] = `
 [
   "contracts",
+  "defineAgent",
+  "defineConfig",
   "generateAuditEnvelopeEventId",
   "generateAuditEnvelopeId",
   "generateMessageId",
   "generateRunId",
   "ports",
+  "resolveConfiguredLlm",
+  "runAgent",
   "runtimeKernel",
   "setLlmAuditRecorder",
   "withLLMTelemetryContext",

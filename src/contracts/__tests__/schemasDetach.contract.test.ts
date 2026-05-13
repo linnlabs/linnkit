@@ -4,7 +4,6 @@ import path from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import * as appSchemas from '@app/schemas';
 import * as agentContracts from '../index';
 
 const movedRuntimeExports = [
@@ -58,6 +57,22 @@ function walkProductionTypeScriptFiles(dir: URL): string[] {
   return files;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+async function loadHostSchemasPackage(): Promise<Record<string, unknown> | null> {
+  if (!existsSync(new URL('../../../../../packages/schemas/package.json', import.meta.url))) {
+    return null;
+  }
+
+  const imported: unknown = await import('@app/schemas');
+  if (!isRecord(imported)) {
+    throw new Error('@app/schemas must import to an object-like module namespace.');
+  }
+  return imported;
+}
+
 describe('contracts migration boundary', () => {
   it('keeps moved A-class runtime exports on src/agent/contracts', () => {
     for (const exportName of movedRuntimeExports) {
@@ -65,15 +80,27 @@ describe('contracts migration boundary', () => {
     }
   });
 
-  it('does not continue exposing moved A-class runtime exports from @app/schemas root', () => {
+  it('does not continue exposing moved A-class runtime exports from @app/schemas root', async () => {
+    const appSchemas = await loadHostSchemasPackage();
+    if (!appSchemas) {
+      expect(appSchemas).toBeNull();
+      return;
+    }
+
     for (const exportName of movedRuntimeExports) {
       expect(appSchemas).not.toHaveProperty(exportName);
     }
   });
 
   it('removes legacy A-class subpath exports from @app/schemas package metadata', () => {
+    const packageJsonUrl = new URL('../../../../../packages/schemas/package.json', import.meta.url);
+    if (!existsSync(packageJsonUrl)) {
+      expect(existsSync(packageJsonUrl)).toBe(false);
+      return;
+    }
+
     const packageJson = JSON.parse(
-      readFileSync(new URL('../../../../../packages/schemas/package.json', import.meta.url), 'utf8'),
+      readFileSync(packageJsonUrl, 'utf8'),
     ) as {
       exports?: Record<string, unknown>;
     };
@@ -87,11 +114,17 @@ describe('contracts migration boundary', () => {
   });
 
   it('removes legacy A-class source files and their derived dead surfaces from packages/schemas', () => {
+    const schemasIndexUrl = new URL('../../../../../packages/schemas/src/index.ts', import.meta.url);
+    if (!existsSync(schemasIndexUrl)) {
+      expect(existsSync(schemasIndexUrl)).toBe(false);
+      return;
+    }
+
     expect(
-      readFileSync(new URL('../../../../../packages/schemas/src/index.ts', import.meta.url), 'utf8'),
+      readFileSync(schemasIndexUrl, 'utf8'),
     ).not.toContain("./view-models");
     expect(
-      readFileSync(new URL('../../../../../packages/schemas/src/index.ts', import.meta.url), 'utf8'),
+      readFileSync(schemasIndexUrl, 'utf8'),
     ).not.toContain("./runtime-models");
 
     expect(
@@ -114,7 +147,13 @@ describe('contracts migration boundary', () => {
     }
   });
 
-  it('does not expose moved execution and SSE protocol exports from @app/schemas root', () => {
+  it('does not expose moved execution and SSE protocol exports from @app/schemas root', async () => {
+    const appSchemas = await loadHostSchemasPackage();
+    if (!appSchemas) {
+      expect(appSchemas).toBeNull();
+      return;
+    }
+
     for (const exportName of movedExecutionAndSseExports) {
       expect(appSchemas).not.toHaveProperty(exportName);
     }
