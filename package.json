@@ -1,6 +1,6 @@
 {
   "name": "@linnlabs/linnkit",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "type": "module",
   "description": "linnkit · vendor-neutral Agent framework. runtime-kernel + context-manager + ports + testkit + browser-safe events seam.",
   "license": "UNLICENSED",
@@ -27,6 +27,9 @@
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "bin": {
+    "linnkit": "./dist/cli.cjs"
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -63,6 +66,11 @@
       "import": "./dist/testkit.js",
       "require": "./dist/testkit.cjs"
     },
+    "./quickstart": {
+      "types": "./dist/quickstart.d.ts",
+      "import": "./dist/quickstart.js",
+      "require": "./dist/quickstart.cjs"
+    },
     "./package.json": "./package.json"
   },
   "scripts": {
@@ -91,9 +99,10 @@
     "tsup": "^8.0.0"
   },
   "linnkit": {
-    "phase": "shippable (0.6.0 — Context Engineering 协议化：AgentSpec.contextPolicy 细粒度配置 + ContextTrace + ObservationPreviewPort + provider replay policy + ContextCheckpointTool；外部接入方可精细控制上下文 token)",
+    "phase": "in progress (0.7.0 — Phase 1C Quickstart + linnkit-cli v0：defineAgent/runAgent/defineConfig + init/run/doctor 三件套；面向首次试用，不替代生产 host 接入)",
     "sourceOfTruth": "packages/linnkit/docs/release/RELEASE.md",
     "notes": [
+      "0.7.0 是 Phase 1C DX minor：新增根入口与 ./quickstart 子入口的 defineAgent/runAgent/defineConfig；新增 linnkit CLI v0（init/run/doctor）；quickstart 生成自包含 demo host（内联 OpenAI-compatible fetch adapter + memory runtime），用于 npm install 后快速试跑，不作为生产 host 接入抽象。详见 docs/release/RELEASE.md §0 v14",
       "0.6.0 是 Context Engineering 协议化 minor：AgentSpec.contextPolicy 从 budget/toolHistory/summarization 扩展到 mustKeep/workingMemory/checkpoint/reasoningRetention/tokenEstimation/systemReminder/contextTrace/toolOutput/providerReplay；summarization 通过 host 注册的 agentId 调用；tool execution observation preview 由 ObservationPreviewPort 落完整副本；provider replay policy 可按 agent 覆盖；新增 host-neutral ContextCheckpointTool/createContextCheckpointTool；framework/01、02 与 99-research-notes 已按 0.6.0 候选线重评。详见 docs/release/RELEASE.md §0 v13",
       "0.5.0 是 Phase F P0 三件 minor：N-1 AgentSpec 一等对象（含 11 字段 contextPolicy + toolHistory 三策略 per-pair/per-run/none + overflowStrategy）；N-3 RunSupervisor/RunHandle v2（cancel/observe/cost + spawnDetached/waitForTerminal/drain/recoverOnBoot + awaiting_user 联动 + 同步 child-run cost 父子聚合）；G-1 AuditEnvelope/AuditPort（5 类非确定性决策 + EventStore/File/Composite sink）；testkit 升级 15 条 run 不变量；命名规范化 child-runs ↔ child-run-trace；INTEGRATION_GUIDE.md 拆分为 docs/integration/ 17 个主题手册；framework/* 与 archive/* 一并下线为内部档案，不再随 npm tarball 发布。详见 docs/release/RELEASE.md §0 v12",
       "0.4.0 是 Phase E 边界整治 minor：AgentProfileRequest 从 framework legacy host 字段收窄到 query/prompt/model/tools/history/fences；MessageFormatter 删除 document_fragment/additional_context 与 [任务完成] 包装；shared userQuoteLifetime 下线，chat 兼容层自持旧 quote 预处理；新增 no-host-leakage 守卫与 shared 禁止 import profiles 规则。chat profile 不在本阶段物理删除，后续随 tools-disabled AgentSpec 收敛。详见 docs/release/RELEASE.md §0 v11",

@@ -61,6 +61,26 @@ function nodeImport(distRelative: string): Promise<NodeImportResult> {
   });
 }
 
+function nodeRun(args: readonly string[]): Promise<NodeImportResult> {
+  return new Promise((resolveResult) => {
+    const child = spawn('node', args, { cwd: PACKAGE_ROOT });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (chunk: Buffer) => {
+      stdout += chunk.toString('utf8');
+    });
+    child.stderr.on('data', (chunk: Buffer) => {
+      stderr += chunk.toString('utf8');
+    });
+    child.on('close', (code) => {
+      resolveResult({ ok: code === 0, exitCode: code, stdout, stderr });
+    });
+    child.on('error', (err) => {
+      resolveResult({ ok: false, exitCode: null, stdout, stderr: String(err.message ?? err) });
+    });
+  });
+}
+
 describe('package.runtime-import — dist 子入口隔离 import 烟雾测试', () => {
   describe('Node 全展开运行时入口（之前会炸 tiktoken wasm，0.1.3 修复）', () => {
     const NODE_RUNTIME_ENTRIES = [
@@ -96,6 +116,10 @@ describe('package.runtime-import — dist 子入口隔离 import 烟雾测试', 
       'dist/contracts.cjs',
       'dist/ports.js',
       'dist/ports.cjs',
+      'dist/quickstart.js',
+      'dist/quickstart.cjs',
+      'dist/cli.js',
+      'dist/cli.cjs',
     ] as const;
 
     it.each(SAFE_ENTRIES)('import("./%s") 应该干净返回', async (entry) => {
@@ -106,6 +130,17 @@ describe('package.runtime-import — dist 子入口隔离 import 烟雾测试', 
         );
       }
       expect(result.stdout).toContain('ok');
+    });
+  });
+
+  describe('CLI bin', () => {
+    it('node dist/cli.cjs --help 应该输出帮助文本且不依赖真实 provider', async () => {
+      const result = await nodeRun(['dist/cli.cjs', '--help']);
+      if (!result.ok) {
+        throw new Error(`Failed to run CLI:\nstdout: ${result.stdout}\nstderr: ${result.stderr}`);
+      }
+      expect(result.stdout).toContain('linnkit v0 CLI');
+      expect(result.stdout).toContain('linnkit init <name>');
     });
   });
 

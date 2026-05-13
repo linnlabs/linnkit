@@ -21,6 +21,23 @@
 npm install @linnlabs/linnkit
 ```
 
+如果你只想先跑 quickstart，也可以全局安装 CLI：
+
+```bash
+npm install -g @linnlabs/linnkit
+linnkit init hello-linnkit
+```
+
+CLI v0 只包含三个命令：
+
+| 命令 | 用途 |
+|---|---|
+| `linnkit init <name>` | 生成一个自包含 demo host（JS ESM + OpenAI-compatible fetch adapter + memory runtime） |
+| `linnkit doctor [--config linnkit.config.mjs]` | 检查 Node / GitHub Packages / env / config / LLM adapter 形状 |
+| `linnkit run <agent-id> --input "..." [--model "..."]` | 运行 quickstart config 里的 agent，打印 final answer 和 cost 摘要 |
+
+`replay` / `inspect` 不在 CLI v0 范围内。真要做生产级 replay / inspect，请接入自己的 EventStore / RunSupervisor，并按 [testing.md](./testing.md) 与 [run-supervisor.md](./run-supervisor.md) 做 host 侧工具。
+
 `peerDependencies`：
 
 | peer | 说明 |
@@ -44,6 +61,12 @@ console.log(typeof runtimeKernel.graph);
 ```
 
 `tsc --noEmit` 通过 + 运行无报错 = 装包成功。如果你在前端项目里这么写会拖进 `node:async_hooks`，请先看 [README.md §5 浏览器规则](./README.md#5-浏览器使用规则硬约束)。
+
+如果想验证 CLI：
+
+```bash
+npx linnkit --help
+```
 
 ---
 

@@ -1,6 +1,14 @@
 export * as ports from './ports';
 export * as runtimeKernel from './runtime-kernel';
 export * as contracts from './contracts';
+export { defineAgent, defineConfig, resolveConfiguredLlm, runAgent } from './quickstart';
+export type {
+  DefinedAgent,
+  DefineAgentInput,
+  LinnkitQuickstartConfig,
+  RunAgentOptions,
+  RunAgentResult,
+} from './quickstart';
 
 // 注意（关键边界规约）：
 // `testkit` 子树**禁止**从根入口 re-export。

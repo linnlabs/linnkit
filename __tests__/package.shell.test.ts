@@ -20,11 +20,11 @@ async function readJson(relativePath: string): Promise<Record<string, unknown>> 
 }
 
 /**
- * Smoke test for `@linnlabs/linnkit` 0.6.0 publishable shape.
+ * Smoke test for `@linnlabs/linnkit` 0.7.0 publishable shape.
  *
  * 这个 test 是 docs/release/RELEASE.md §3 工程层不变量的硬性闸门，覆盖：
  *   1. 包元数据（name / version / 不再 private / repository / publishConfig）
- *   2. 7 条可 import 子路径的 conditional exports（types/import/require 三件套，全部指 dist）
+ *   2. 8 条可 import 子路径的 conditional exports（types/import/require 三件套，全部指 dist）
  *   3. files 字段只发 dist + 包根 README.md + docs/README.md + docs/integration/ + docs/release/
  *      docs/framework / docs/archive / docs/99-research-notes / DEVELOPMENT_GUIDE / INTEGRATION_GUIDE
  *      0.5.0 起一律不进 tarball（外部接入文档全部收口到 docs/integration/）
@@ -37,16 +37,17 @@ async function readJson(relativePath: string): Promise<Record<string, unknown>> 
  * 任何破坏以上不变量的改动 = break，必须先在 docs/release/RELEASE.md 留一行变更说明。
  */
 describe('packages/linnkit shell manifest', () => {
-  it('declares the publishable @linnlabs/linnkit 0.6.0 shape with dist-only exports', async () => {
+  it('declares the publishable @linnlabs/linnkit 0.7.0 shape with dist-only exports', async () => {
     const manifest = await readJson('package.json');
 
     expect(manifest.name).toBe('@linnlabs/linnkit');
-    expect(manifest.version).toBe('0.6.0');
+    expect(manifest.version).toBe('0.7.0');
     expect(manifest.private).toBeUndefined();
     expect(manifest.type).toBe('module');
     expect(manifest.main).toBe('./dist/index.cjs');
     expect(manifest.module).toBe('./dist/index.js');
     expect(manifest.types).toBe('./dist/index.d.ts');
+    expect(manifest.bin).toEqual({ linnkit: './dist/cli.cjs' });
 
     const repository = manifest.repository;
     if (!isRecord(repository)) {
@@ -84,7 +85,7 @@ describe('packages/linnkit shell manifest', () => {
       throw new Error('packages/linnkit/package.json must define an exports object.');
     }
 
-    // Phase E 已彻底完成（2026-04-23），稳定公开入口为 6 个 + 1 个 ./package.json：
+    // Phase 1C 增加 quickstart 子入口后，稳定公开入口为 7 个 + 1 个 ./package.json：
     // - root + 4 个长期稳定子入口
     // - 1 个 browser-safe slim 子入口（events governance 纯函数）
     // - ./package.json：允许接入方读元数据（如检测 version），不算 6 入口之一
@@ -94,6 +95,7 @@ describe('packages/linnkit shell manifest', () => {
       './contracts',
       './package.json',
       './ports',
+      './quickstart',
       './runtime-kernel',
       './runtime-kernel/events',
       './testkit',
@@ -107,6 +109,7 @@ describe('packages/linnkit shell manifest', () => {
       ['./runtime-kernel/events', 'runtime-kernel/events'],
       ['./context-manager', 'context-manager'],
       ['./testkit', 'testkit'],
+      ['./quickstart', 'quickstart'],
     ];
 
     for (const [subentry, distBase] of subentryToDistBase) {
@@ -172,6 +175,7 @@ describe('packages/linnkit shell tsconfig', () => {
     expect(paths['linnkit/runtime-kernel/events']).toEqual(['./src/runtime-kernel/events/index.ts']);
     expect(paths['linnkit/context-manager']).toEqual(['./src/context-manager/index.ts']);
     expect(paths['linnkit/testkit']).toEqual(['./src/testkit/index.ts']);
+    expect(paths['linnkit/quickstart']).toEqual(['./src/quickstart/index.ts']);
 
     // 新别名（@linnlabs/linnkit/*）：与发包后的真名 1:1 对齐，linnsy 端用真名 import，monorepo 内同样能解析
     expect(paths['@linnlabs/linnkit']).toEqual(['./src/index.ts']);
@@ -181,6 +185,7 @@ describe('packages/linnkit shell tsconfig', () => {
     expect(paths['@linnlabs/linnkit/runtime-kernel/events']).toEqual(['./src/runtime-kernel/events/index.ts']);
     expect(paths['@linnlabs/linnkit/context-manager']).toEqual(['./src/context-manager/index.ts']);
     expect(paths['@linnlabs/linnkit/testkit']).toEqual(['./src/testkit/index.ts']);
+    expect(paths['@linnlabs/linnkit/quickstart']).toEqual(['./src/quickstart/index.ts']);
 
     expect(paths).not.toHaveProperty('@app/schemas');
     expect(paths).not.toHaveProperty('@app/schemas/*');

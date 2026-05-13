@@ -1,121 +1,111 @@
-# Quickstart · 5 分钟最小 host 骨架
+# Quickstart · 5 分钟跑通 hello agent
 
-下面这段是"装包后能跑通一轮 agent 对话"的最小骨架。它故意不引入 SSE / persistence / telemetry，把这些放到单独的接入文档：
+本页是 **试用入口**：目标是让你装包后立刻跑通一轮 agent 对话，确认包、配置、LLM adapter 和 graph runtime 能正常工作。
+
+它不是生产接入方案。生产 host 仍然应该按后续主题手册逐项替换 LLM provider、工具系统、持久化、实时通道、审计和上下文工程策略：
 
 - [llm-provider.md](./llm-provider.md)
 - [tools.md](./tools.md)
 - [context-fences.md](./context-fences.md)
 - [persistence.md](./persistence.md)
-- [realtime.md](./realtime.md)
-- [telemetry.md](./telemetry.md)
+- [run-supervisor.md](./run-supervisor.md)
+- [audit.md](./audit.md)
+- [testing.md](./testing.md)
 
-## 1. host 需要的 5 个文件
+## 1. 配 GitHub Packages
+
+在你的项目根目录准备 `.npmrc`：
+
+```ini
+@linnlabs:registry=https://npm.pkg.github.com/
+//npm.pkg.github.com/:_authToken=${GITHUB_PACKAGES_TOKEN}
+```
+
+`GITHUB_PACKAGES_TOKEN` 需要 `read:packages` 权限。
+
+## 2. 创建 demo host
+
+```bash
+npm install -g @linnlabs/linnkit
+linnkit init hello-linnkit
+cd hello-linnkit
+cp .npmrc.example .npmrc
+cp .env.example .env
+npm install
+```
+
+`linnkit init <name>` 会在**当前执行命令的目录**下创建一个同名子目录。例如你在 `/Users/you/projects` 执行 `linnkit init hello-linnkit`，最终路径就是 `/Users/you/projects/hello-linnkit`。如果目标目录已存在且非空，CLI 会直接报错，不会覆盖你的文件。
+
+如果你不想全局安装，也可以在任意已安装 `@linnlabs/linnkit` 的项目里用：
+
+```bash
+npx linnkit init hello-linnkit
+```
+
+## 3. 配置 LLM
+
+编辑 `.env`：
+
+```bash
+OPENAI_API_KEY=sk-...
+OPENAI_BASE_URL=https://api.openai.com/v1
+OPENAI_MODEL=gpt-4.1-mini
+```
+
+quickstart 模板不依赖 OpenAI SDK，只用 Node 20 原生 `fetch` 调 OpenAI-compatible Chat Completions streaming API。你也可以把 `OPENAI_BASE_URL` 指向任何兼容服务。
+
+## 4. 检查环境
+
+```bash
+npx linnkit doctor
+```
+
+`doctor` 会检查：
+
+- Node.js >= 20
+- GitHub Packages `.npmrc` 提示
+- `OPENAI_API_KEY`
+- `linnkit.config.mjs` 能加载
+- agent id 唯一
+- LLM adapter 是否符合 `AgentAiEngine` 形状
+
+## 5. 跑 hello agent
+
+```bash
+npx linnkit run hello --input "你好，介绍一下你自己"
+```
+
+你会看到实时 final answer chunk，结束后会打印：
 
 ```text
-app-hosts/your-app/
-├── adapters/
-│   ├── llm/MyLlmProvider.ts            # 实现 AgentAiEngine
-│   ├── tools/myToolRegistry.ts          # BaseTool[]
-│   └── runtime-assembly/createExecutor.ts
-├── context/agent/myFences.ts            # FenceRegistry 注册
-└── index.ts                             # 装配入口 + 跑一轮 demo
+[linnkit] runId=...
+[linnkit] tokens input=... output=...
 ```
 
-## 2. 文件骨架（伪代码级，编译前需要补全细节）
+## 6. 生成项目里有什么
 
-### `adapters/llm/MyLlmProvider.ts`
-
-```ts
-import type { AgentAiEngine, AgentAiEngineStreamContent, LlmCallOptions, LlmRequestMessage } from '@linnlabs/linnkit/ports';
-
-export class MyLlmProvider implements AgentAiEngine {
-  async chatCompletion(modelId: string, messages: LlmRequestMessage[], options?: LlmCallOptions): Promise<unknown> {
-    // 调用你家 SDK 的非流式接口；返回 OpenAI 风格响应即可
-  }
-  async chatCompletionStream(modelId, messages, options, onContent, onError, onFinish, onThought, onUsage) {
-    // 调用流式接口；每个 chunk 转成 AgentAiEngineStreamContent 调 onContent；
-    // 完成时 onFinish('stop' | 'tool_calls')；usage 走 onUsage
-  }
-}
+```text
+hello-linnkit/
+├── agents/hello.mjs
+├── adapters/openai-compatible.mjs
+├── linnkit.config.mjs
+├── .env.example
+├── .npmrc.example
+└── package.json
 ```
 
-### `adapters/tools/myToolRegistry.ts`
+关键点：
 
-```ts
-import { BaseTool, type ToolExecutionContext } from '@linnlabs/linnkit/runtime-kernel';
+- `agents/hello.mjs` 用 `defineAgent()` 声明一个无工具 agent。
+- `linnkit.config.mjs` 用 `defineConfig()` 声明 agent 列表、默认模型和 LLM adapter。
+- `adapters/openai-compatible.mjs` 是 demo adapter，只证明 `AgentAiEngine` 怎么接；生产接入建议维护自己的 provider adapter。
+- `linnkit run` 内部用 `runAgent()` 自动装配内存版 EventStore / Checkpointer / RunSupervisor，只适合 quickstart 和小型 smoke test。
 
-export class EchoTool extends BaseTool {
-  name = 'echo';
-  description = '回声测试';
-  parameters = { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] } as const;
+## 7. 下一步
 
-  async execute(args: { text: string }, _context: ToolExecutionContext) {
-    return { kind: 'success', data: { echoed: args.text } };
-  }
-}
-
-export const tools = [new EchoTool()];
-```
-
-### `context/agent/myFences.ts`
-
-```ts
-import { createFenceRegistry, type FenceDescriptor } from '@linnlabs/linnkit/context-manager';
-
-export const myFenceDescriptors: FenceDescriptor[] = [
-  // 第一次接入可以先空着；之后按 context-fences.md 一行行加
-];
-
-export const myFenceRegistry = createFenceRegistry(myFenceDescriptors);
-```
-
-### `adapters/runtime-assembly/createExecutor.ts`
-
-```ts
-import { runtimeKernel } from '@linnlabs/linnkit';
-import { MyLlmProvider } from '../llm/MyLlmProvider';
-import { tools } from '../tools/myToolRegistry';
-
-export function createExecutor() {
-  const aiEngine = new MyLlmProvider();
-  const llmCaller = new runtimeKernel.llm.LlmCaller({
-    aiEngine,
-    modelResolver: /* 你自己实现的 ModelResolver；把 modelId → provider/model 解析好 */,
-  });
-  // 把 llmCaller、tools、fence-aware orchestrator 装进 GraphExecutor 依赖袋
-  // 详细签名见 @linnlabs/linnkit/runtime-kernel 的 graph namespace
-  return /* GraphExecutor */;
-}
-```
-
-### `index.ts`
-
-```ts
-import { createExecutor } from './adapters/runtime-assembly/createExecutor';
-
-async function main() {
-  const executor = createExecutor();
-  const result = await executor.runUntilYield({
-    request: { query: '你好', promptKey: 'default', model_id: 'gpt-5' },
-    history: [],
-  });
-  console.log(result);
-}
-main();
-```
-
-## 3. 这一节为什么是骨架而不是 copy-paste 可跑
-
-`GraphExecutor` 的依赖袋在 0.x 仍在收口（不是稳定 public 形状）。建议把本页当作最小装配骨架：生产接入时按 [llm-provider.md](./llm-provider.md)、[tools.md](./tools.md)、[context-fences.md](./context-fences.md)、[run-supervisor.md](./run-supervisor.md) 逐项补齐 host adapter，不要依赖任何未导出的仓库内部路径。
-
-后续单点接入指南给的是**稳定的合同**，可以放心抄。
-
----
-
-## 下一步
-
-- 把 LLM provider 接好 → [llm-provider.md](./llm-provider.md)
-- 注册工具 → [tools.md](./tools.md)
-- **接 context engineering（一等接入面）** → [context-fences.md](./context-fences.md)
-- 接持久化让 run 能落库恢复 → [persistence.md](./persistence.md)
-- 写测试验证装配通了 → [testing.md](./testing.md)
+- 接你自己的 provider：看 [llm-provider.md](./llm-provider.md)
+- 注册工具：看 [tools.md](./tools.md)
+- 精细控制上下文 token：看 [context-fences.md](./context-fences.md)、[tool-history.md](./tool-history.md)
+- 接持久化和恢复：看 [persistence.md](./persistence.md)
+- 接 run 管理：看 [run-supervisor.md](./run-supervisor.md)
+- 写集成测试：看 [testing.md](./testing.md)

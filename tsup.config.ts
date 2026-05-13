@@ -11,6 +11,7 @@ import { defineConfig } from 'tsup';
  *   ./runtime-kernel/events → dist/runtime-kernel/events.{js,cjs,d.ts}  (browser-safe slim seam)
  *   ./context-manager       → dist/context-manager.{js,cjs,d.ts}
  *   ./testkit               → dist/testkit.{js,cjs,d.ts}            (test-only；AGENT-GUARD-10)
+ *   ./quickstart            → dist/quickstart.{js,cjs,d.ts}         (demo host DX helper)
  *
  * 不变量（详见 RELEASE.md §3）：
  *   - 所有公开入口都同时 emit cjs + esm + .d.ts；缺一个就是 break
@@ -33,6 +34,8 @@ export default defineConfig({
     'runtime-kernel/events': 'src/runtime-kernel/events/index.ts',
     'context-manager': 'src/context-manager/index.ts',
     testkit: 'src/testkit/index.ts',
+    quickstart: 'src/quickstart/index.ts',
+    cli: 'src/cli/index.ts',
   },
   format: ['cjs', 'esm'],
   platform: 'node',
