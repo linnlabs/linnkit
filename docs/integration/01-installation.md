@@ -1,6 +1,6 @@
 # Installation · 装包
 
-> **What** · 把 `@linnlabs/linnkit` 装到自己仓库 + 配置鉴权 + 跑通装包 smoke。
+> **What** · 把 `@linnlabs/linnkit` 装到自己仓库 + 跑通装包 smoke。
 > **When to read** · 第一次接入 linnkit；新加 CI 环境；遇到 `Missing tiktoken_bg.wasm` 类装包错误想排查。
 > **Prerequisites** · 无（这是接入第 1 篇）。
 > **Key exports** · 无（本文不涉及 import）。
@@ -8,20 +8,17 @@
 
 ## 1. 这个包发布在哪
 
-`@linnlabs/linnkit` 发布到 **GitHub Packages 私有 registry**（`https://npm.pkg.github.com/`），scope 是 `@linnlabs`。
+`@linnlabs/linnkit` 发布到 **npmjs.com 公开 registry**（`https://registry.npmjs.org/`），scope 是 `@linnlabs`。正常 npm 项目不需要额外 `.npmrc`。
 
-## 2. `.npmrc` 配置
-
-在你的项目根目录新建 `.npmrc`（**不要提交里面的 `_authToken` 明文，请用环境变量**）：
+如果你以前接过 GitHub Packages 私有版本，请删除项目 `.npmrc` 里的旧配置：
 
 ```ini
 @linnlabs:registry=https://npm.pkg.github.com/
-//npm.pkg.github.com/:_authToken=${GITHUB_PACKAGES_TOKEN}
 ```
 
-`GITHUB_PACKAGES_TOKEN` 必须是一个具备 `read:packages` 权限的 GitHub Personal Access Token（且账号要被授权访问 `@linnlabs` org 的私有包）。
+这条旧 registry override 会让 npm 继续去 GitHub Packages 找包，公开版本反而装不到。
 
-## 3. 安装
+## 2. 安装
 
 ```bash
 npm install @linnlabs/linnkit
@@ -39,7 +36,7 @@ CLI v0 只包含三个命令：
 | 命令 | 用途 |
 |---|---|
 | `linnkit init <name>` | 生成一个自包含 demo host（JS ESM + OpenAI-compatible fetch adapter + memory runtime） |
-| `linnkit doctor [--config linnkit.config.mjs]` | 检查 Node / GitHub Packages / env / config / LLM adapter 形状 |
+| `linnkit doctor [--config linnkit.config.mjs]` | 检查 Node / npm registry 配置 / env / config / LLM adapter 形状 |
 | `linnkit run <agent-id> --input "..." [--model "..."]` | 运行 quickstart config 里的 agent，打印 final answer 和 cost 摘要 |
 
 `replay` / `inspect` 不在 CLI v0 范围内。真要做生产级 replay / inspect，请接入自己的 EventStore / RunSupervisor，并按 [testing.md](./testing.md) 与 [run-supervisor.md](./run-supervisor.md) 做 host 侧工具。
@@ -53,7 +50,7 @@ CLI v0 只包含三个命令：
 
 `@linnlabs/linnkit/testkit` 在源码顶层 `import { vi, expect } from 'vitest'`，所以生产代码 **绝对不能** import 这个子入口（详见 [constraints-and-pitfalls.md](./constraints-and-pitfalls.md)）。
 
-## 4. 验证装包成功
+## 3. 验证装包成功
 
 新建一个 `smoke.ts`：
 
@@ -78,13 +75,15 @@ npx linnkit --help
 
 ## 常见装包问题（FAQ）
 
-**Q：我装的是 `@linnlabs/linnkit`，但所有 npm/yarn 都装不下来，401 / 404？**
+**Q：我装的是 `@linnlabs/linnkit`，但 npm/yarn 报 401 / 404？**
 
-99% 概率是 GitHub Packages 鉴权问题。检查：
+优先检查项目或用户级 `.npmrc` 是否还把 `@linnlabs` 指到了旧的 GitHub Packages：
 
-- `.npmrc` 的 `_authToken` 是否正确
-- token 是否有 `read:packages`
-- 账号是否被 `@linnlabs` org 授权
+```bash
+npm config get @linnlabs:registry
+```
+
+如果输出是 `https://npm.pkg.github.com/`，请删掉这条配置，让 npm 回到默认的 `https://registry.npmjs.org/`。
 
 **Q：我能不能 fork linnkit、改它内部然后用我自己的 fork？**
 

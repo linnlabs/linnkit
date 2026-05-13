@@ -1,49 +1,172 @@
-# `@linnlabs/linnkit`
+# linnkit
 
-> Vendor-neutral Agent framework — runtime-kernel + context-manager + ports + testkit + browser-safe events seam.
+**A fine-grained context engineering framework for Agent applications — control every token sent to the model, with clear run lifecycle, audit records, and testable protocol boundaries.**
 
-`linnkit` 是用来构造 Agent 应用的 runtime / 协议骨架，由 4 个层组成：
+[中文文档](./README.zh-CN.md) · [Integration Guide](./docs/integration/README.md) · [Changelog](./CHANGELOG.md)
 
-- **`runtime-kernel`** — graph engine + tools + LLM caller + run supervisor + telemetry
-- **`context-manager`** — agent context profiles + preprocessors
-- **`ports`** — host 装配面（接入方必须实现）
-- **`testkit`** — 包合约测试 primitive
+---
 
-任何想做 agent 应用的接入方都装配它。**框架本身不内置任何具体业务实现**——产品形态、UI 表达层、persistence 选型、SSE 适配器等全部归接入方宿主。
+## What is linnkit?
 
-## 状态
+linnkit is a foundational skeleton for Agent applications:
 
-- npm scope：`@linnlabs/linnkit`
-- 当前版本：以 [`package.json#version`](./package.json) 与 [`docs/release/RELEASE.md`](./docs/release/RELEASE.md) 为准（GitHub Packages 私有发布）
-- 阶段：**0.x experimental** — 8 个稳定子入口已收口；0.6.0 起 Context Engineering 配置面进一步开放，外部接入方可通过 `AgentSpec.contextPolicy` 精细控制上下文 token；0.8.0 起支持注入自定义 `TokenizerPort`
-- 公开开源 + npmjs.com 路线见 [`docs/release/RELEASE.md §7`](./docs/release/RELEASE.md)
+| Layer | Responsibility |
+|-------|---------------|
+| `runtime-kernel` | Run agents, run tools, manage run lifecycle, record events, handle cancellation and cost |
+| `context-manager` | Build the context sent to the model, trim to budget, inject host context |
+| `ports` | Interfaces the host must implement: LLM, tools, storage, tokenizer |
+| `testkit` | Guard the protocol with tests, not oral agreements |
 
-## 安装
+linnkit has no built-in LLM provider, no database binding, no UI, and no opinions on RAG, memory, permissions, or IM integrations. Those belong to your product.
 
-仓库根加 `.npmrc`（参考 [`.npmrc.example`](./.npmrc.example)），然后：
+---
+
+## Why use linnkit?
+
+**Fine-grained context control** — Describe your entire context strategy declaratively with `AgentSpec.contextPolicy`. Configure token budget, tool history retention, summarization triggers, must-keep rules, checkpoint compression, reasoning retention, system reminder injection, observation truncation with full-copy archiving, provider sidecar replay, and custom tokenizer. The context sent to the model is not a hand-assembled `messages[]` array — it's a rule-driven, recorded build process.
+
+**ContextTrace observability** — Every context build produces a machine-readable trace: which messages were kept, which were trimmed, why, how many tokens each step consumed, and whether the final result exceeded the budget. When the model answers incorrectly, you don't need to guess whether context was lost — you can read the trace directly.
+
+**Managed run lifecycle** — `RunSupervisor` and `RunHandle` turn each agent invocation into a stateful run with its own `runId`, cancellation, observable event stream, state queries, cost accounting, synchronous child runs, and spawnable detached background runs. Agents behave like real services, not temporary function calls.
+
+**Audit-first design** — `AuditEnvelope` and `AuditPort` capture important decisions — model selection, tool rejection, fallback, awaiting user input, sandbox decisions — into a unified audit stream. Not for appearances, but so you can answer: *why did the system do that?*
+
+**Clean host boundaries via fence injection** — linnkit doesn't know what "document chunk", "knowledge base", or "project memory" means in your product. Hosts register their own context types as fence families. linnkit handles the rules: when to keep them, when to trim them, how to observe them — without hardcoding business vocabulary.
+
+**Protocol invariants, not conventions** — linnkit's testkit enforces 26 strict invariants: final tokens must not exceed budget, tool calls and outputs must not be separated, must-keep messages must never be trimmed, run state must not stay `running` after termination, budget decisions must actually use the injected custom tokenizer... The more complex an Agent system becomes, the more these invariants protect you from small changes silently breaking the protocol.
+
+---
+
+## What problems does it solve?
+
+If you've built Agent products before, you've likely run into these:
+
+- Context is hard to manage — it's difficult to observe exactly what gets sent to the LLM each time.
+- Long conversations make it unclear what the model actually sees.
+- As tool calls accumulate, deciding what to keep vs. compress becomes guesswork.
+- After a user cancels, run state, event stream, tool execution, and frontend UI can fall out of sync.
+- When multiple agents call each other, cost, events, and errors across parent/child runs are hard to trace.
+- A bug can't be reproduced because nobody recorded how context was trimmed at the time.
+- Tests only check "did the final answer look right" but can't catch a broken protocol.
+
+linnkit's goal is to turn these into configurable, observable, and testable engineering problems.
+
+---
+
+## What linnkit does NOT do
+
+These capabilities matter, but they are not linnkit's responsibility:
+
+- No built-in OpenAI / Claude / Gemini provider.
+- No built-in RAG, vector store, knowledge base, or memory system.
+- No built-in tools (search, file read/write, browser, IM).
+- No built-in UI, console, or DevTools platform.
+- No opinions on permissions, security policy, or billing strategy.
+
+linnkit provides boundaries and protocols to make these easier to integrate. The implementations belong to your product.
+
+This is what allows linnkit to serve multiple different host applications rather than becoming an internal framework for one specific product.
+
+---
+
+## Quick start
+
+Install:
 
 ```bash
 npm install @linnlabs/linnkit
 ```
 
-接入文档按主题拆分在 [`docs/integration/`](./docs/integration/)：通读建议从 [`docs/integration/README.md`](./docs/integration/README.md) 进入；带着具体问题（"怎么自定义 tokenizer / 多 agent 协作 / 注册新 agent" 等）直达 `integration/README.md` 的 §7.5 FAQ-style index。
+Create a demo host:
 
-## 文档
+```bash
+npx linnkit init demo-agent
+cd demo-agent
+npm install
+```
 
-文档枢纽在 [`docs/`](./docs/)：
+After configuring environment variables, check your setup:
 
-- [`docs/README.md`](./docs/README.md) —— **框架总入口**：模块定位 / 公开子入口 / 数据流 / 术语速查
-- [`docs/integration/`](./docs/integration/) —— **接入手册集（host 必读）**：按主题拆分的 18 个手册（installation / quickstart / context-engineering / context-fences / run-supervisor / audit / telemetry / ...），每篇带 Front Matter（What / When / Prerequisites / Key exports / Related）
-- [`docs/release/RELEASE.md`](./docs/release/RELEASE.md) —— Build / Publish / Version 流水（每次发包前必读）
-- [`docs/release/RELEASE-HISTORY.md`](./docs/release/RELEASE-HISTORY.md) —— 历次发版长叙事 / 踩坑教训 / PAT runbook
+```bash
+npx linnkit doctor
+```
 
-仓库内还有以下**内部维护文档**（不在 npm tarball 内，仅 linnkit 维护方使用）：
+Run a hello agent:
 
-- `docs/DEVELOPMENT_GUIDE.md` —— linnkit 包内部 dev 流程
-- `docs/framework/` —— 框架演进路线图、协议升级、ADR 决策档案
-- `docs/99-research-notes/` —— 外部项目调研笔记池
-- `docs/archive/` —— 早期抽包决策档案
+```bash
+npx linnkit run hello --input "Describe linnkit in one sentence"
+```
+
+This quickstart is for getting up and running quickly — it's not a production setup. Production hosts should assemble their own LLM, tools, storage, audit, and context policy by following the [integration guide](./docs/integration/README.md).
+
+---
+
+## Minimal code example
+
+```ts
+import { defineAgent, runAgent } from '@linnlabs/linnkit/quickstart';
+
+const agent = defineAgent({
+  id: 'hello',
+  version: '0.1.0',
+  role: 'Assistant',
+  systemPrompt: 'You are a concise, reliable assistant.',
+  modelId: 'gpt-4o-mini',
+  capabilities: ['agent'],
+  tools: [],
+  contextPolicy: {
+    budget: { maxTokens: 16_000, reservedForResponse: 2_000 },
+  },
+});
+
+const result = await runAgent(agent, { input: 'What is linnkit?', llm });
+console.log(result.finalAnswer);
+```
+
+---
+
+## Public sub-entrypoints
+
+| Sub-entrypoint | Purpose |
+|---------------|---------|
+| `@linnlabs/linnkit` | Root entry — exports main namespaces |
+| `@linnlabs/linnkit/ports` | Interfaces the host must implement |
+| `@linnlabs/linnkit/contracts` | Stable data structures: `AgentSpec`, `AiMessage`, `RuntimeEvent` |
+| `@linnlabs/linnkit/runtime-kernel` | Graph engine, tool runtime, run supervisor |
+| `@linnlabs/linnkit/runtime-kernel/events` | Browser-safe event governance pure functions |
+| `@linnlabs/linnkit/context-manager` | Context build, fence registry, message formatter, context policy |
+| `@linnlabs/linnkit/testkit` | Test harnesses and 26 protocol invariants |
+| `@linnlabs/linnkit/quickstart` | Demo / development helpers |
+
+> **Browser rule**: do not import `@linnlabs/linnkit/runtime-kernel` in a frontend bundle — it pulls in Node-only sub-trees. For frontend event display logic only, use `@linnlabs/linnkit/runtime-kernel/events`.
+
+---
+
+## Documentation
+
+| Document | Content |
+|----------|---------|
+| [docs/integration/README.md](./docs/integration/README.md) | Integration hub — start here |
+| [docs/integration/01-installation.md](./docs/integration/01-installation.md) | Install and registry auth |
+| [docs/integration/02-quickstart.md](./docs/integration/02-quickstart.md) | Quickstart demo |
+| [docs/integration/agent-registration-guide.md](./docs/integration/agent-registration-guide.md) | Agent registration and `AgentSpec` |
+| [docs/integration/context-engineering.md](./docs/integration/context-engineering.md) | Context policy, ContextTrace, TokenizerPort |
+| [docs/integration/context-fences.md](./docs/integration/context-fences.md) | Host context injection |
+| [docs/integration/tools.md](./docs/integration/tools.md) | Tool integration overview |
+| [docs/integration/tool-development-guide.md](./docs/integration/tool-development-guide.md) | Tool design internals |
+| [docs/integration/run-supervisor.md](./docs/integration/run-supervisor.md) | Run lifecycle management |
+| [docs/integration/testing.md](./docs/integration/testing.md) | Testkit and invariants |
+| [CHANGELOG.md](./CHANGELOG.md) | Public release history |
+
+---
+
+## Status
+
+- **Version**: see [`package.json`](./package.json)
+- **Distribution**: npmjs.com public registry
+- **Stability**: `0.x` — public sub-entrypoints are locked; Context Engineering API stable since 0.6.0
+- **Open source**: MIT package; source repo split is required before the formal OSS announcement
 
 ## License
 
-UNLICENSED（私有仓内发布；公开开源 + npmjs.com 公开发布路线见 [`docs/release/RELEASE.md §7`](./docs/release/RELEASE.md)）
+MIT — see [LICENSE](./LICENSE).

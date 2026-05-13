@@ -22,19 +22,18 @@ async function readJson(relativePath: string): Promise<Record<string, unknown>> 
 /**
  * Smoke test for `@linnlabs/linnkit` 0.8.0 publishable shape.
  *
- * 这个 test 是 docs/release/RELEASE.md §3 工程层不变量的硬性闸门，覆盖：
- *   1. 包元数据（name / version / 不再 private / repository / publishConfig）
+ * 这个 test 是公开包 manifest 的硬性闸门，覆盖：
+ *   1. 包元数据（name / version / 不再 private / repository / npmjs publishConfig）
  *   2. 8 条可 import 子路径的 conditional exports（types/import/require 三件套，全部指 dist）
- *   3. files 字段只发 dist + 包根 README.md + docs/README.md + docs/integration/ + docs/release/
- *      docs/framework / docs/archive / docs/99-research-notes / DEVELOPMENT_GUIDE / INTEGRATION_GUIDE
- *      0.5.0 起一律不进 tarball（外部接入文档全部收口到 docs/integration/）
- *   4. tsconfig.paths 同时为 `linnkit*`（兼容 linnya monorepo）和 `@linnlabs/linnkit*`（真包名）解析
+ *   3. files 字段只发 dist + 包根 README.md / CHANGELOG / docs/README.md + docs/integration/
+ *      一次性计划、内部 runbook、历史档案和维护方专用文档都不进 tarball
+ *   4. tsconfig.paths 同时为 `linnkit*`（兼容 monorepo mirror）和 `@linnlabs/linnkit*`（真包名）解析
  *   5. linnkit 元数据 notes 仍然守住 browser-safe seam 与前端 deep-import 红线
  *   6. (0.1.3 新增) src/ 里所有非 node-builtin / 非 alias / 非相对路径的 import 都必须在 package.json
  *     #dependencies 或 #peerDependencies 里声明 —— 防止 0.1.0~0.1.2 那种 tiktoken 既未 declare
  *     又未 external 导致被 inline + wasm 资源缺失的灾难重演。
  *
- * 任何破坏以上不变量的改动 = break，必须先在 docs/release/RELEASE.md 留一行变更说明。
+ * 任何破坏以上不变量的改动 = break，必须同步 CHANGELOG / integration docs。
  */
 describe('packages/linnkit shell manifest', () => {
   it('declares the publishable @linnlabs/linnkit 0.8.0 shape with dist-only exports', async () => {
@@ -53,14 +52,18 @@ describe('packages/linnkit shell manifest', () => {
     if (!isRecord(repository)) {
       throw new Error('packages/linnkit/package.json must define a repository object.');
     }
-    expect(repository.directory).toBe('packages/linnkit');
+    expect(repository.url).toBe('git+https://github.com/linnlabs/linnkit.git');
+    expect(repository.directory).toBeUndefined();
+    expect(manifest.homepage).toBe('https://github.com/linnlabs/linnkit#readme');
+    expect(manifest.bugs).toEqual({ url: 'https://github.com/linnlabs/linnkit/issues' });
 
     const publishConfig = manifest.publishConfig;
     if (!isRecord(publishConfig)) {
       throw new Error('packages/linnkit/package.json must define publishConfig (registry + access).');
     }
-    expect(publishConfig.registry).toBe('https://npm.pkg.github.com/');
-    expect(publishConfig.access).toBe('restricted');
+    expect(publishConfig.registry).toBe('https://registry.npmjs.org/');
+    expect(publishConfig.access).toBe('public');
+    expect(publishConfig.provenance).toBe(true);
 
     const files = manifest.files;
     if (!Array.isArray(files)) {
@@ -68,14 +71,17 @@ describe('packages/linnkit shell manifest', () => {
     }
     expect(files).toContain('dist');
     expect(files).not.toContain('src');
+    expect(files).toContain('LICENSE');
+    expect(files).toContain('CHANGELOG.md');
     expect(files).toContain('README.md');
+    expect(files).toContain('README.zh-CN.md');
     expect(files).toContain('docs/README.md');
     expect(files).toContain('docs/integration');
-    expect(files).toContain('docs/release');
-    // 0.5.0 起：framework / archive / 99-research-notes / DEVELOPMENT_GUIDE / INTEGRATION_GUIDE 退出 tarball
+    // 公开包只带稳定接入文档，不带一次性计划 / 内部 runbook / 历史档案。
     expect(files).not.toContain('docs/framework');
     expect(files).not.toContain('docs/archive');
     expect(files).not.toContain('docs/99-research-notes');
+    expect(files).not.toContain('docs/release');
     expect(files).not.toContain('docs/DEVELOPMENT_GUIDE.md');
     expect(files).not.toContain('docs/INTEGRATION_GUIDE.md');
     expect(files.some((entry) => typeof entry === 'string' && entry.startsWith('src/'))).toBe(false);
@@ -132,7 +138,7 @@ describe('packages/linnkit shell manifest', () => {
     }
 
     expect(typeof linnkitField.phase).toBe('string');
-    expect(linnkitField.sourceOfTruth).toBe('packages/linnkit/docs/release/RELEASE.md');
+    expect(linnkitField.sourceOfTruth).toBe('CHANGELOG.md');
     expect(Array.isArray(linnkitField.notes)).toBe(true);
     const notes = linnkitField.notes as unknown[];
     expect(notes.length).toBeGreaterThanOrEqual(2);
@@ -153,6 +159,15 @@ describe('packages/linnkit shell manifest', () => {
           (n.includes('Node-only') || n.includes('node:async_hooks') || n.includes('crypto')),
       ),
     ).toBe(true);
+    expect(notes.some((n) => typeof n === 'string' && n.includes('docs/release'))).toBe(false);
+    const privateHostNames = ['linn' + 'ya', 'linn' + 'sy'];
+    expect(
+      notes.some(
+        (n) =>
+          typeof n === 'string' &&
+          (privateHostNames.some((name) => n.toLowerCase().includes(name)) || n.includes('GitHub Packages')),
+      ),
+    ).toBe(false);
   });
 });
 
@@ -169,7 +184,7 @@ describe('packages/linnkit shell tsconfig', () => {
       throw new Error('packages/linnkit/tsconfig.json must define compilerOptions.paths.');
     }
 
-    // 旧别名（linnkit/*）：linnya 主仓内大量 import 仍走这条路径，必须保留
+    // 旧别名（linnkit/*）：monorepo mirror 内仍走这条路径，必须保留
     expect(paths.linnkit).toEqual(['./src/index.ts']);
     expect(paths['linnkit/ports']).toEqual(['./src/ports/index.ts']);
     expect(paths['linnkit/contracts']).toEqual(['./src/contracts/index.ts']);
@@ -179,7 +194,7 @@ describe('packages/linnkit shell tsconfig', () => {
     expect(paths['linnkit/testkit']).toEqual(['./src/testkit/index.ts']);
     expect(paths['linnkit/quickstart']).toEqual(['./src/quickstart/index.ts']);
 
-    // 新别名（@linnlabs/linnkit/*）：与发包后的真名 1:1 对齐，linnsy 端用真名 import，monorepo 内同样能解析
+    // 新别名（@linnlabs/linnkit/*）：与发包后的真名 1:1 对齐，monorepo 内同样能解析
     expect(paths['@linnlabs/linnkit']).toEqual(['./src/index.ts']);
     expect(paths['@linnlabs/linnkit/ports']).toEqual(['./src/ports/index.ts']);
     expect(paths['@linnlabs/linnkit/contracts']).toEqual(['./src/contracts/index.ts']);
@@ -197,7 +212,7 @@ describe('packages/linnkit shell tsconfig', () => {
 /**
  * 0.1.3 新增：src/ 第三方 import 反向稽核。
  *
- * 真实事故：0.1.0~0.1.2 三个版本的 TokenCalculator.ts 顶层 `import 'tiktoken'`，但
+ * 真实事故：早期版本的 TokenCalculator.ts 顶层 `import 'tiktoken'`，但
  * package.json 既没声明 dep 也没 external，导致 tsup 把整个 tiktoken JS inline 进 dist，
  * 但 tiktoken_bg.wasm 没跟着进 dist —— 任何 import @linnlabs/linnkit/runtime-kernel 都
  * 立即 "Missing tiktoken_bg.wasm"。

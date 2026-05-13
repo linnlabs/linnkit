@@ -42,7 +42,7 @@ describe('AgentSpec contract', () => {
             maxResults: 5,
           },
           metadata: {
-            owner: 'linnya',
+            owner: 'demo-host',
           },
         },
       ],

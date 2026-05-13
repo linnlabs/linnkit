@@ -9,7 +9,7 @@
  * 本文件仍保留一份 namespace-level re-export，原因：
  * - `runtime-kernel/llm/index.ts` 通过 `export type { ... } from './caller.types'`
  *   继续透出这 5 个 type，保证 `import { llm } from 'linnkit/runtime-kernel'` 后
- *   `llm.LlmCallOptions` 的 namespace 访问语法不变，不 break linnya 主仓 ~若干处
+ *   `llm.LlmCallOptions` 的 namespace 访问语法不变，不破坏存量 host 调用方
  *   namespace 使用点（`llm.LlmCallOptions` / `runtimeKernel.llm.ToolCallChunk`）。
  * - caller.ts 内部仍可以 `import type { ... } from './caller.types'` 获取这些 type。
  *

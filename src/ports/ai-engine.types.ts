@@ -17,7 +17,7 @@
  *
  * 约定：
  * - 本文件**只放类型定义**，不包含业务逻辑；
- * - 供 ports / runtime-kernel / testkit / 外部 host（含 linnya / linnsy）共享引用；
+ * - 供 ports / runtime-kernel / testkit / 外部 host 共享引用；
  * - 字段语义与 OpenAI chat completion / tool calls 协议对齐，兼容 Anthropic / Gemini
  *   等供应商（由各 adapter 做映射）。
  */

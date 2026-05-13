@@ -91,7 +91,7 @@ export interface TickPipelineContext {
   };
   /**
    * 由 GraphAgentExecutor 注入；middleware/stage 通过 ctx.telemetry.emit() 上报观测事件。
-   * 默认 noopTelemetry，宿主侧可注入实际 sink（如 Linnya 的 SqliteTelemetryAdapter）。
+   * 默认 noopTelemetry，宿主侧可注入实际 sink（如 SQLite / OTEL / 自定义日志适配器）。
    */
   telemetry: TelemetryPort;
   audit: AuditPort;

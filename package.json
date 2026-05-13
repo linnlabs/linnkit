@@ -3,26 +3,28 @@
   "version": "0.8.0",
   "type": "module",
   "description": "linnkit · vendor-neutral Agent framework. runtime-kernel + context-manager + ports + testkit + browser-safe events seam.",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/BCAutumn/Tingtalk_official_version.git",
-    "directory": "packages/linnkit"
+    "url": "git+https://github.com/linnlabs/linnkit.git"
   },
-  "homepage": "https://github.com/BCAutumn/Tingtalk_official_version/tree/main/packages/linnkit",
+  "homepage": "https://github.com/linnlabs/linnkit#readme",
   "bugs": {
-    "url": "https://github.com/BCAutumn/Tingtalk_official_version/issues"
+    "url": "https://github.com/linnlabs/linnkit/issues"
   },
   "publishConfig": {
-    "registry": "https://npm.pkg.github.com/",
-    "access": "restricted"
+    "registry": "https://registry.npmjs.org/",
+    "access": "public",
+    "provenance": true
   },
   "files": [
     "dist",
+    "LICENSE",
+    "CHANGELOG.md",
     "README.md",
+    "README.zh-CN.md",
     "docs/README.md",
-    "docs/integration",
-    "docs/release"
+    "docs/integration"
   ],
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -77,7 +79,7 @@
     "build": "tsup",
     "build:clean": "rm -rf dist",
     "prepublishOnly": "npm run build:clean && npm run build && npm run test:smoke && npm run test:smoke:dist",
-    "publish:gh": "npm publish",
+    "publish:npm": "npm publish",
     "publish:dry-run": "npm pack --dry-run",
     "typecheck": "npx tsc --noEmit -p tsconfig.json",
     "test:smoke": "npx vitest run __tests__/package.shell.test.ts",
@@ -100,25 +102,11 @@
   },
   "linnkit": {
     "phase": "in progress (0.8.0 — TokenizerPort：host 可选注入自定义 tokenizer，默认行为保持 0.7.x)",
-    "sourceOfTruth": "packages/linnkit/docs/release/RELEASE.md",
+    "sourceOfTruth": "CHANGELOG.md",
     "notes": [
-      "0.8.0 是 TokenizerPort minor：新增 @linnlabs/linnkit/ports 的 TokenizerPort，runtime-kernel/llm 导出 DefaultTokenizerPort/createDefaultTokenizerPort，context-manager 支持 host 注入自定义 tokenizer，testkit 导出 createMockTokenizerPort；默认不注入时继续走 TokenCalculator + tiktoken + 字符比兜底，0.7.x 行为不变。详见 docs/release/RELEASE.md §0 v15",
-      "0.7.0 是 Phase 1C DX minor：新增根入口与 ./quickstart 子入口的 defineAgent/runAgent/defineConfig；新增 linnkit CLI v0（init/run/doctor）；quickstart 生成自包含 demo host（内联 OpenAI-compatible fetch adapter + memory runtime），用于 npm install 后快速试跑，不作为生产 host 接入抽象。详见 docs/release/RELEASE.md §0 v14",
-      "0.6.0 是 Context Engineering 协议化 minor：AgentSpec.contextPolicy 从 budget/toolHistory/summarization 扩展到 mustKeep/workingMemory/checkpoint/reasoningRetention/tokenEstimation/systemReminder/contextTrace/toolOutput/providerReplay；summarization 通过 host 注册的 agentId 调用；tool execution observation preview 由 ObservationPreviewPort 落完整副本；provider replay policy 可按 agent 覆盖；新增 host-neutral ContextCheckpointTool/createContextCheckpointTool；framework/01、02 与 99-research-notes 已按 0.6.0 候选线重评。详见 docs/release/RELEASE.md §0 v13",
-      "0.5.0 是 Phase F P0 三件 minor：N-1 AgentSpec 一等对象（含 11 字段 contextPolicy + toolHistory 三策略 per-pair/per-run/none + overflowStrategy）；N-3 RunSupervisor/RunHandle v2（cancel/observe/cost + spawnDetached/waitForTerminal/drain/recoverOnBoot + awaiting_user 联动 + 同步 child-run cost 父子聚合）；G-1 AuditEnvelope/AuditPort（5 类非确定性决策 + EventStore/File/Composite sink）；testkit 升级 15 条 run 不变量；命名规范化 child-runs ↔ child-run-trace；INTEGRATION_GUIDE.md 拆分为 docs/integration/ 17 个主题手册；framework/* 与 archive/* 一并下线为内部档案，不再随 npm tarball 发布。详见 docs/release/RELEASE.md §0 v12",
-      "0.4.0 是 Phase E 边界整治 minor：AgentProfileRequest 从 framework legacy host 字段收窄到 query/prompt/model/tools/history/fences；MessageFormatter 删除 document_fragment/additional_context 与 [任务完成] 包装；shared userQuoteLifetime 下线，chat 兼容层自持旧 quote 预处理；新增 no-host-leakage 守卫与 shared 禁止 import profiles 规则。chat profile 不在本阶段物理删除，后续随 tools-disabled AgentSpec 收敛。详见 docs/release/RELEASE.md §0 v11",
-      "0.3.0 是阶段 0 清旧账 minor：BaseTool / AgentTool / ToolCallResult / OpenAIToolSchema 收口到 Record<string, unknown> + 泛型工具参数；删除 linnkitCompat；ContextProviderError 取代字符串 fatal 判断；LLM caller 与 eventMappers 按职责拆分为小文件。因为公开类型边界收窄，按 0.x 策略 bump minor。详见 docs/release/RELEASE.md §0 v10",
-      "0.2.2 是 docs patch：`docs/README.md` 公开 API 表与 7 条子路径对齐；`docs/release/RELEASE.md` 收束 S0 长清单、现行发版 = §5.1 + §2.1；`RELEASE-HISTORY` 与 linnsy 验证措辞同步。`dist` / exports / 类型与 0.2.1 一致。详见 RELEASE.md §0 v9 / RELEASE-HISTORY.md §A.10+§C.8",
-      "0.2.1 是 docs patch：`docs/INTEGRATION_GUIDE.md` 彻底重写为面向 `npm install @linnlabs/linnkit` 的外部接入说明（真包名、7 子入口、GitHub Packages 鉴权、context engineering fence 一等接入骨架）；`dist` 与 0.2.0 字节级一致、exports/类型签名 0 变化。详见 docs/release/RELEASE.md §0 v8 / RELEASE-HISTORY.md §A.9+§C.7",
-      "0.2.0 是 provider sidecar replay 升级：reasoning_details 从工具决策扩展到所有 assistant 产出（含 final_answer）；流式 reasoning_details 通过 provider_sidecar 进入 host finalization；ToolReplayProtocolPolicy 支持 provider_empty_replay_field；linnkit 保持 provider-agnostic，DeepSeek reasoning_content wire format 留在 Linnya integration。详见 docs/release/RELEASE.md §0 v7 / RELEASE-HISTORY.md §A.8+§C.6",
-      "0.1.3 是打包闭合 patch：tiktoken 从 dist inline 改为 external + 在 package.json#dependencies 声明（^1.0.22，与主仓 root 对齐）；vitest 改为 peerDependencies (optional)；runtime-kernel / context-manager / index 三个入口现在能在外部消费者环境干净 import；新增 package.runtime-import.test.ts 与 package.events-browser-safe.test.ts 永久守护；package.shell.test.ts 新增 src 第三方 import 反向稽核守卫，防止同款灾难重演。详见 docs/release/RELEASE.md §0 v6 / RELEASE-HISTORY.md §A.7+§C.5",
-      "0.1.2 是文档/打包结构 patch：所有 .md 从 src/ 收口到包根 docs/（docs/{README,INTEGRATION_GUIDE,DEVELOPMENT_GUIDE,framework,release}/），package.json#files + .npmignore 同步刷新，新增包根 README.md 作为 npmjs/GitHub 标准入口；运行时 dist 字节级一致。详见 docs/release/RELEASE.md §0 v5 修订",
-      "0.1.1 完成 D-5 schemas detach round 2：6 处生产代码从 @app/schemas 改为本包 contracts，dist 不再 fork @app/schemas 内容；linnkit 真正自包含、零跨包 import。详见 docs/release/RELEASE.md §0 v4 修订",
-      "0.1.0 是 linnkit 首个可发布版本；发到 GitHub Packages 私有 scope @linnlabs（linn 系列总品牌 scope；@linn / @linnya GitHub username 已被他人占用，详见 docs/release/RELEASE.md §0 v3 修订）；详见 docs/release/RELEASE.md",
       "子入口 ./runtime-kernel/events 是 browser-safe slim seam：仅暴露 events governance 纯函数，禁止扩展任何 Node-only 依赖（如 node:async_hooks / crypto / fs）",
       "前端代码禁止从 ./runtime-kernel（namespace 全展开入口）import，否则会把 crypto / node:async_hooks 等 Node-only 子树拖进 frontend bundle",
-      "linnya monorepo 内的消费者通过 tsconfig.paths + vite/vitest alias 直读 packages/linnkit/src，零成本；外部消费者（如 linnsy daemon）通过 npm install @linnlabs/linnkit 走 dist 编译产物",
-      "0.x 版本号策略：任何加 export / 改既有签名都 bump minor（不是 patch），保证 ^0.1.0 不会偶然吃到 break；详见 docs/release/RELEASE.md §4"
+      "0.x 版本号策略：任何加 export / 改既有签名都 bump minor（不是 patch），保证消费者不会在 patch 升级中吃到公开 API 变化"
     ]
   }
 }

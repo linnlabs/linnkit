@@ -45,7 +45,6 @@ export async function runCli(
       }
       write('\nNext:\n');
       write(`  cd ${name}\n`);
-      write('  cp .npmrc.example .npmrc\n');
       write('  cp .env.example .env\n');
       write('  npm install\n');
       write('  npx linnkit doctor\n');

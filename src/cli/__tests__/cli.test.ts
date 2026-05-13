@@ -59,6 +59,7 @@ describe('linnkit cli', () => {
 
     expect(files).toContain('package.json');
     expect(files).toContain('linnkit.config.mjs');
+    expect(files).not.toContain('.npmrc.example');
     await expect(runInitCommand({ cwd, name: 'demo' })).rejects.toThrow(/not empty/);
   });
 
@@ -80,6 +81,28 @@ describe('linnkit cli', () => {
     expect(exitCode).toBe(0);
     expect(stdout).toContain('✓ config linnkit.config.mjs');
     expect(stdout).toContain('✓ llm adapter shape');
+    expect(stdout).toContain('✓ npmjs public registry');
+  });
+
+  it('doctor 会提示删除旧 GitHub Packages registry override', async () => {
+    const cwd = await createTempDir();
+    await writeFile(join(cwd, 'linnkit.config.mjs'), createMockConfigSource('ok'), 'utf8');
+    await writeFile(join(cwd, '.env'), 'OPENAI_API_KEY=test\n', 'utf8');
+    await writeFile(join(cwd, '.npmrc'), '@linnlabs:registry=https://npm.pkg.github.com/\n', 'utf8');
+    let stdout = '';
+
+    const exitCode = await runCli(
+      ['doctor'],
+      cwd,
+      (text) => {
+        stdout += text;
+      },
+      () => undefined,
+    );
+
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain('! .npmrc legacy GitHub Packages registry');
+    expect(stdout).toContain('remove the @linnlabs registry override');
   });
 
   it('run 使用 mock config 跑出 final answer 和 cost', async () => {

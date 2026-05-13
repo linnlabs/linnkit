@@ -13,7 +13,7 @@ import type { ToolExecutionResult, ToolRuntimePort } from '../../runtime-kernel'
  * linnkit 包内端到端 smoke：完整 graph loop 行为契约。
  *
  * 中文备注：
- * - 现有 host 侧 `graphLoop.integration.test.ts` 通过 Linnya 默认装配验证 agent 行为；
+ * - host 侧可以用自己的默认装配另写 graphLoop integration test；
  * - 这里在 packages/linnkit 内部用最小 mock 重跑同一组核心场景，
  *   保证 testkit + runtime-kernel 公开面在不依赖 host 的前提下也能闭环；
  * - 一旦未来 PR-D 后 dryrun 镜像消失、内核重构破坏 graph 调度或 testkit seam，

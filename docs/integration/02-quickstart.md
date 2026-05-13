@@ -18,24 +18,12 @@
 - [audit.md](./audit.md)
 - [testing.md](./testing.md)
 
-## 1. 配 GitHub Packages
-
-在你的项目根目录准备 `.npmrc`：
-
-```ini
-@linnlabs:registry=https://npm.pkg.github.com/
-//npm.pkg.github.com/:_authToken=${GITHUB_PACKAGES_TOKEN}
-```
-
-`GITHUB_PACKAGES_TOKEN` 需要 `read:packages` 权限。
-
-## 2. 创建 demo host
+## 1. 创建 demo host
 
 ```bash
 npm install -g @linnlabs/linnkit
 linnkit init hello-linnkit
 cd hello-linnkit
-cp .npmrc.example .npmrc
 cp .env.example .env
 npm install
 ```
@@ -48,7 +36,7 @@ npm install
 npx linnkit init hello-linnkit
 ```
 
-## 3. 配置 LLM
+## 2. 配置 LLM
 
 编辑 `.env`：
 
@@ -60,7 +48,7 @@ OPENAI_MODEL=gpt-4.1-mini
 
 quickstart 模板不依赖 OpenAI SDK，只用 Node 20 原生 `fetch` 调 OpenAI-compatible Chat Completions streaming API。你也可以把 `OPENAI_BASE_URL` 指向任何兼容服务。
 
-## 4. 检查环境
+## 3. 检查环境
 
 ```bash
 npx linnkit doctor
@@ -69,13 +57,13 @@ npx linnkit doctor
 `doctor` 会检查：
 
 - Node.js >= 20
-- GitHub Packages `.npmrc` 提示
+- npm registry 配置（如果检测到旧 GitHub Packages registry override，会提示删除）
 - `OPENAI_API_KEY`
 - `linnkit.config.mjs` 能加载
 - agent id 唯一
 - LLM adapter 是否符合 `AgentAiEngine` 形状
 
-## 5. 跑 hello agent
+## 4. 跑 hello agent
 
 ```bash
 npx linnkit run hello --input "你好，介绍一下你自己"
@@ -96,7 +84,6 @@ hello-linnkit/
 ├── adapters/openai-compatible.mjs
 ├── linnkit.config.mjs
 ├── .env.example
-├── .npmrc.example
 └── package.json
 ```
 

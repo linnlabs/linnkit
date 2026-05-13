@@ -4,7 +4,7 @@
  * 起因：0.1.0 ~ 0.1.2 三个版本的 dist/runtime-kernel.* / dist/context-manager.* / dist/index.* 都把
  * tiktoken 整段 inline bundle 进去（因为 package.json 没声明 tiktoken dep + tsup 默认只把已声明 deps
  * 视为 external），但 tiktoken_bg.wasm 没有跟着进 dist；外部 consumer 一旦 import 这三个入口就立刻
- * 报 "Missing tiktoken_bg.wasm"。详见 docs/release/RELEASE-HISTORY.md §C.5。
+ * 报 "Missing tiktoken_bg.wasm"。
  *
  * 本测试用 `node -e` 子进程在隔离环境里 import dist 产物，覆盖：
  *   1. 之前会炸的 4 个入口（runtime-kernel / context-manager / index）现在能干净 import

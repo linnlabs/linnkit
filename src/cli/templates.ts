@@ -17,19 +17,11 @@ export function createQuickstartTemplateFiles(projectName: string): TemplateFile
           start: 'linnkit run hello --input "你好，介绍一下你自己"',
         },
         dependencies: {
-          '@linnlabs/linnkit': '^0.7.0',
+          '@linnlabs/linnkit': '^0.8.0',
           zod: '^3.22.0',
         },
         devDependencies: {},
       }, null, 2)}\n`,
-    },
-    {
-      path: '.npmrc.example',
-      content: [
-        '@linnlabs:registry=https://npm.pkg.github.com/',
-        '//npm.pkg.github.com/:_authToken=${GITHUB_PACKAGES_TOKEN}',
-        '',
-      ].join('\n'),
     },
     {
       path: '.env.example',
@@ -189,7 +181,6 @@ export function createQuickstartTemplateFiles(projectName: string): TemplateFile
         'A minimal linnkit quickstart project.',
         '',
         '```bash',
-        'cp .npmrc.example .npmrc',
         'cp .env.example .env',
         'npm install',
         'export OPENAI_API_KEY=...',

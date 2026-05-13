@@ -211,16 +211,13 @@ import type { RuntimeEvent } from '@linnlabs/linnkit/contracts';
 - 当前版本：以 `package.json#version` 为准
 - 0.x = pre-release 期：**任何加 export / 改既有签名都 bump minor**，patch 兼容
 - 8 个稳定子入口已在 `package.json#exports` 锁定；任何 deep import 都不在稳定面
-- 详见 `docs/release/RELEASE.md`
+- 公开版本变化见仓根 `CHANGELOG.md`
 
 ---
 
 ## 9. 与其他文档的关系
 
-- **包根 [README.md](../../README.md)**：包级总览（一句话价值 + 装包 + 文档枢纽）
+- **包根 [README.md](../../README.md)**：包级总览
 - **[docs/README.md](../README.md)**：框架总览（运行时分层、数据流、术语速查）
-- **[docs/release/](../release/)**：发版流水 + 历次发版叙事
+- **[CHANGELOG.md](../../CHANGELOG.md)**：公开版本更新记录
 - **本目录**：接入手册（你正在读的）
-
-> ℹ️ **关于内部开发文档**：framework 演进路线图 / ADR 决策档案 / 隐患台账等**不在 npm tarball 里**——它们是 linnkit 维护方的工作档案。如果你想参与 linnkit 开发（不是接入），看仓库 `docs/framework/` + `docs/DEVELOPMENT_GUIDE.md`。
-

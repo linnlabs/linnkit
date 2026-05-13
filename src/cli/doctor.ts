@@ -28,7 +28,7 @@ function isNode20OrNewer(version: string): boolean {
   return Number.isFinite(major) && major >= 20;
 }
 
-async function hasGitHubPackagesHint(cwd: string): Promise<boolean> {
+async function hasLegacyGitHubPackagesRegistry(cwd: string): Promise<boolean> {
   const npmrc = resolve(cwd, '.npmrc');
   if (!(await pathExists(npmrc))) return false;
   const content = await readFile(npmrc, 'utf8');
@@ -60,10 +60,10 @@ export async function runDoctorCommand(options: DoctorCommandOptions): Promise<D
     lines.push(fail('Node version', `requires >= 20, current ${process.versions.node}`));
   }
 
-  if (await hasGitHubPackagesHint(options.cwd)) {
-    lines.push(pass('.npmrc GitHub Packages registry'));
+  if (await hasLegacyGitHubPackagesRegistry(options.cwd)) {
+    lines.push(warn('.npmrc legacy GitHub Packages registry', 'remove the @linnlabs registry override; linnkit is published on npmjs.com'));
   } else {
-    lines.push(warn('.npmrc GitHub Packages registry', 'copy .npmrc.example if npm install cannot find @linnlabs/linnkit'));
+    lines.push(pass('npmjs public registry'));
   }
 
   if (process.env.OPENAI_API_KEY) {

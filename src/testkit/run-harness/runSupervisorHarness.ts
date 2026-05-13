@@ -63,7 +63,7 @@ function cloneEvent(event: RuntimeEvent): RuntimeEvent {
  * RunSupervisor 一站式测试夹具。
  *
  * 中文备注：
- * - 只使用 linnkit package 内部 port，不依赖 Linnya host；
+ * - 只使用 linnkit package 内部 port，不依赖具体 host；
  * - 适合协议测试、外部接入方测试、Quickstart/CLI 的最小 run 验证。
  */
 export function createRunSupervisorHarness<TRequest extends RunRequestSnapshot = RunRequestSnapshot>(

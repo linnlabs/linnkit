@@ -33,13 +33,13 @@ describe('BaseAgentTask.buildMessages', () => {
 
   it('history 已包含当前轮 user 时，不应重复追加 query，且应保持 history 时序', () => {
     const request: AgentProfileRequest = {
-      query: '你是谁，你为什么叫linnya',
+      query: '你是谁，你为什么叫demo-agent',
       promptKey: 'default',
     };
     const history: AiMessage[] = [
-      createUserMessage('user_input', '你是谁，你为什么叫linnya'),
+      createUserMessage('user_input', '你是谁，你为什么叫demo-agent'),
       createAssistantMessage('tool_calls', '我先调用工具。'),
-      createToolMessage('搜索结果：linnya', 'call_search_1', 'web_search'),
+      createToolMessage('搜索结果：demo-agent', 'call_search_1', 'web_search'),
     ];
 
     const messages = task.buildMessages(request, history);
@@ -47,7 +47,7 @@ describe('BaseAgentTask.buildMessages', () => {
       return (
         message.role === 'user' &&
         message.type === 'user_input' &&
-        message.content === '你是谁，你为什么叫linnya'
+        message.content === '你是谁，你为什么叫demo-agent'
       );
     });
 
@@ -56,7 +56,7 @@ describe('BaseAgentTask.buildMessages', () => {
     expect(messages[messages.length - 1]).toMatchObject({
       role: 'tool',
       type: 'tool_output',
-      content: '搜索结果：linnya',
+      content: '搜索结果：demo-agent',
     });
   });
 });

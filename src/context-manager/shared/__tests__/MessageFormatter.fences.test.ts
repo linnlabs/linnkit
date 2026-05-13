@@ -56,7 +56,7 @@ describe('MessageFormatter fences', () => {
     ]);
   });
 
-  it('passes task request content through without Linnya task type text', () => {
+  it('passes task request content through without host-specific task type text', () => {
     const formatter = createMessageFormatter();
 
     expect(formatter.format([

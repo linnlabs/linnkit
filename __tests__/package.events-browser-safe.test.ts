@@ -10,7 +10,7 @@
  *   - 本测试测：dist 静态产物里没有违禁字符串（结构守卫，比 runtime 测更严：
  *               防止有人加 import 后没运行就过测试，本测试 grep 字符串不需要执行）
  *
- * 见 docs/release/RELEASE-HISTORY.md §C.5 / RELEASE.md v6。
+ * 这类问题由公开包 smoke 测试长期守护。
  */
 
 import { readFile } from 'node:fs/promises';

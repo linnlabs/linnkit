@@ -154,7 +154,7 @@ function getRunIdFromMetadata(event: RuntimeEvent): string | undefined {
     return snakeCaseRunId;
   }
 
-  // linnya host 会把 run id 写进 metadata.run_context.runId；persisted replay 必须识别这个真实形状。
+  // 有些 host 会把 run id 写进 metadata.run_context.runId；persisted replay 必须识别这个真实形状。
   const runContext = metadata['run_context'];
   if (isRecord(runContext)) {
     return readStringField(runContext, 'runId') ?? readStringField(runContext, 'run_id');
