@@ -99,6 +99,12 @@ npx linnkit run hello --input "用一句话介绍 linnkit"
 
 这个 quickstart 是为了让你快速跑起来，不代表生产接入方式。生产 host 应该按 [接入文档](./docs/integration/README.md) 装配自己的 LLM、工具、存储、审计和上下文策略。
 
+### 一句话交给 Coding Agent 安装
+
+如果你在用 Claude Code、Codex、Cursor、Windsurf 或其他 coding agent，可以直接把下面这句话发给它：
+
+> 如果还没 clone linnkit，就先 clone https://github.com/linnlabs/linnkit；然后按 README 和 `docs/integration/02-quickstart.md` 初始化一个本地 demo host，优先使用 npm，运行 `linnkit doctor`，不要接入生产存储或真实业务工具，结束时告诉我下一条运行命令，以及还缺哪些 `OPENAI_API_KEY` / `OPENAI_BASE_URL` / `OPENAI_MODEL` 配置需要补充。
+
 ---
 
 ## 最小代码示例

@@ -99,6 +99,12 @@ npx linnkit run hello --input "Describe linnkit in one sentence"
 
 This quickstart is for getting up and running quickly — it's not a production setup. Production hosts should assemble their own LLM, tools, storage, audit, and context policy by following the [integration guide](./docs/integration/README.md).
 
+### One-line prompt for coding agents
+
+If you use Claude Code, Codex, Cursor, Windsurf, or another coding agent, you can paste this directly:
+
+> If linnkit is not cloned yet, clone https://github.com/linnlabs/linnkit first; then follow the README and `docs/integration/02-quickstart.md` to initialize a local demo host, prefer npm, run `linnkit doctor`, do not wire production storage or real business tools, and finish by telling me the next command to run plus which `OPENAI_API_KEY` / `OPENAI_BASE_URL` / `OPENAI_MODEL` settings are still missing.
+
 ---
 
 ## Minimal code example
