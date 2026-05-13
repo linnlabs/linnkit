@@ -21,6 +21,7 @@ import {
 } from '../../../shared/context-result';
 import type { GenerateRequest, GenerateResponse } from '../contracts';
 import type { AiMessage, RuntimeEvent } from '../../../../contracts';
+import type { TokenizerPort } from '../../../../ports';
 
 /**
  * 上下文构建结果接口 - 与TokenBudgetManager保持兼容
@@ -78,6 +79,8 @@ export class ContextManager extends ContextManagerBase<
     debugMode?: boolean;
     customConfig?: Partial<ContextBuilderConfig>;
     providerRegistry?: ContextProviderRegistry;
+    tokenizer?: TokenizerPort;
+    tokenizerModelId?: string;
   } = {}) {
     super(options as ContextManagerBaseOptions<ContextBuilderConfig, ContextProviderRegistry>, {
       defaultConfig: CONTEXT_BUILDER_CONFIG,

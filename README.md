@@ -15,7 +15,7 @@
 
 - npm scope：`@linnlabs/linnkit`
 - 当前版本：以 [`package.json#version`](./package.json) 与 [`docs/release/RELEASE.md`](./docs/release/RELEASE.md) 为准（GitHub Packages 私有发布）
-- 阶段：**0.x experimental** — 7 个稳定子入口已收口；0.6.0 起 Context Engineering 配置面进一步开放，外部接入方可通过 `AgentSpec.contextPolicy` 精细控制上下文 token
+- 阶段：**0.x experimental** — 8 个稳定子入口已收口；0.6.0 起 Context Engineering 配置面进一步开放，外部接入方可通过 `AgentSpec.contextPolicy` 精细控制上下文 token；0.8.0 起支持注入自定义 `TokenizerPort`
 - 公开开源 + npmjs.com 路线见 [`docs/release/RELEASE.md §7`](./docs/release/RELEASE.md)
 
 ## 安装
@@ -26,14 +26,14 @@
 npm install @linnlabs/linnkit
 ```
 
-接入文档按主题拆分在 [`docs/integration/`](./docs/integration/)，建议从 [`docs/integration/README.md`](./docs/integration/README.md) 进入。
+接入文档按主题拆分在 [`docs/integration/`](./docs/integration/)：通读建议从 [`docs/integration/README.md`](./docs/integration/README.md) 进入；带着具体问题（"怎么自定义 tokenizer / 多 agent 协作 / 注册新 agent" 等）直达 `integration/README.md` 的 §7.5 FAQ-style index。
 
 ## 文档
 
 文档枢纽在 [`docs/`](./docs/)：
 
 - [`docs/README.md`](./docs/README.md) —— **框架总入口**：模块定位 / 公开子入口 / 数据流 / 术语速查
-- [`docs/integration/`](./docs/integration/) —— **接入手册集（host 必读）**：按主题拆分的 17 个手册（installation / quickstart / context-fences / run-supervisor / audit / telemetry / ...）
+- [`docs/integration/`](./docs/integration/) —— **接入手册集（host 必读）**：按主题拆分的 18 个手册（installation / quickstart / context-engineering / context-fences / run-supervisor / audit / telemetry / ...），每篇带 Front Matter（What / When / Prerequisites / Key exports / Related）
 - [`docs/release/RELEASE.md`](./docs/release/RELEASE.md) —— Build / Publish / Version 流水（每次发包前必读）
 - [`docs/release/RELEASE-HISTORY.md`](./docs/release/RELEASE-HISTORY.md) —— 历次发版长叙事 / 踩坑教训 / PAT runbook
 

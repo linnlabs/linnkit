@@ -1,5 +1,11 @@
 # Quickstart · 5 分钟跑通 hello agent
 
+> **What** · 用 `defineAgent` + `runAgent` 写 hello agent 最小骨架，5 分钟跑通一轮对话。
+> **When to read** · 装包成功后立刻读；想试用 quickstart helper；写第一个 demo。
+> **Prerequisites** · [`01-installation.md`](./01-installation.md)（装包鉴权已通过）。
+> **Key exports** · `defineAgent` / `runAgent` / `defineConfig` from `@linnlabs/linnkit/quickstart`。
+> **Related** · [`tool-development-guide.md`](./tool-development-guide.md) ⭐ · [`agent-registration-guide.md`](./agent-registration-guide.md) ⭐ · [`llm-provider.md`](./llm-provider.md)
+
 本页是 **试用入口**：目标是让你装包后立刻跑通一轮 agent 对话，确认包、配置、LLM adapter 和 graph runtime 能正常工作。
 
 它不是生产接入方案。生产 host 仍然应该按后续主题手册逐项替换 LLM provider、工具系统、持久化、实时通道、审计和上下文工程策略：

@@ -1,5 +1,11 @@
 # LLM Provider · 接 LLM provider
 
+> **What** · 实现 `AgentAiEngine` 接 OpenAI / Anthropic / DeepSeek / OpenRouter 等 provider，含流式 + 非流式 + reasoning sidecar。
+> **When to read** · 选定 LLM provider 后做适配器；要扩展支持的模型族；做多 provider 路由 / fallback。
+> **Prerequisites** · [`02-quickstart.md`](./02-quickstart.md)。
+> **Key exports** · `AgentAiEngine` / `LlmCallOptions` / `LlmRequestMessage` / `ToolCall` / `ProviderReasoningDetails` from `@linnlabs/linnkit/ports`。
+> **Related** · [`agent-registration-guide.md`](./agent-registration-guide.md) ⭐ · [`context-engineering.md` §10](./context-engineering.md)
+
 ## 1. linnkit 给你的合同
 
 - `AgentAiEngine`（来自 `@linnlabs/linnkit/ports`）：必须实现 `chatCompletion` + `chatCompletionStream` 两个方法。流式接口的回调签名详见类型定义。

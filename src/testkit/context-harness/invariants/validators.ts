@@ -293,3 +293,73 @@ export const validateC11MustKeepTypesKept: ContextPolicyInvariantValidator = (co
       { messageId: message.id, messageType: message.type },
     ));
 };
+
+export const validateC12HostTokenizerDrivesBudget: ContextPolicyInvariantValidator = (context) => {
+  if (!context.tokenizer || !context.trace || !context.trace.includeTokenBreakdown || context.trace.overflowed) {
+    return [];
+  }
+  const tokenizer = context.tokenizer;
+
+  if (!context.originalMessages) {
+    return [failure(
+      'C12_HOST_TOKENIZER_DRIVES_BUDGET',
+      '缺少原始消息，无法校验 host tokenizer',
+      '传入 tokenizer 后，C12 需要 originalMessages 才能核对每条 message-decision.tokens 是否来自 host tokenizer',
+    )];
+  }
+
+  const failures: ContextPolicyInvariantFailure[] = [];
+  const messagesByOriginalIndex = new Map<number, typeof context.originalMessages[number]>();
+  context.originalMessages.forEach((message, index) => {
+    messagesByOriginalIndex.set(index, message);
+  });
+
+  for (const event of messageDecisionEvents(context.trace)) {
+    const message = messagesByOriginalIndex.get(event.originalIndex);
+    if (!message) {
+      failures.push(failure(
+        'C12_HOST_TOKENIZER_DRIVES_BUDGET',
+        'message-decision 找不到原始消息',
+        `originalIndex=${event.originalIndex} 不在 originalMessages 范围内`,
+        { event },
+      ));
+      continue;
+    }
+
+    const expectedTokens = tokenizer.estimateMessage(message, context.tokenizerModelId);
+    if (event.tokens !== expectedTokens) {
+      failures.push(failure(
+        'C12_HOST_TOKENIZER_DRIVES_BUDGET',
+        'message-decision tokens 未使用 host tokenizer',
+        `message ${event.messageId ?? event.originalIndex} tokens=${event.tokens}，host tokenizer 估算=${expectedTokens}`,
+        {
+          originalIndex: event.originalIndex,
+          messageId: event.messageId,
+          actualTokens: event.tokens,
+          expectedTokens,
+          modelId: context.tokenizerModelId,
+        },
+      ));
+    }
+  }
+
+  if (context.finalMessages) {
+    const expectedFinalTokens = context.finalMessages.reduce((sum, message) => {
+      return sum + tokenizer.estimateMessage(message, context.tokenizerModelId);
+    }, 0);
+    if (context.trace.finalTokens !== expectedFinalTokens) {
+      failures.push(failure(
+        'C12_HOST_TOKENIZER_DRIVES_BUDGET',
+        'finalTokens 未使用 host tokenizer',
+        `trace.finalTokens=${context.trace.finalTokens}，host tokenizer 对 finalMessages 的总估算=${expectedFinalTokens}`,
+        {
+          actualFinalTokens: context.trace.finalTokens,
+          expectedFinalTokens,
+          modelId: context.tokenizerModelId,
+        },
+      ));
+    }
+  }
+
+  return failures;
+};

@@ -16,6 +16,17 @@ import type { ChatTaskResolver } from '../tasks/base';
 import { generateMessageId } from '../../../../shared/ids';
 import { buildGenerateRequestFromAgentRequest } from '../request-adapters';
 import type { AiMessage } from '../../../../contracts';
+import type { TokenizerPort } from '../../../../ports';
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function readOptionalStringProperty(value: unknown, key: string): string | undefined {
+  if (!isRecord(value)) return undefined;
+  const candidate = value[key];
+  return typeof candidate === 'string' && candidate.trim().length > 0 ? candidate : undefined;
+}
 
 /**
  * 编排器配置选项
@@ -44,6 +55,7 @@ export interface OrchestratorOptions {
   /** 任务解析器 */
   taskResolver: ChatTaskResolver;
   providerRegistry: ContextProviderRegistry;
+  tokenizer?: TokenizerPort;
 }
 
 /**
@@ -97,6 +109,8 @@ export class MessageOrchestrator {
       // 允许通过 OrchestratorOptions 覆盖默认配置
       customConfig: CONTEXT_BUILDER_CONFIG,
       providerRegistry: options.providerRegistry,
+      tokenizer: options.tokenizer,
+      tokenizerModelId: options.model,
     });
   }
 
@@ -110,6 +124,7 @@ export class MessageOrchestrator {
     generate?: (request: GenerateRequest) => Promise<GenerateResponse>
   ): Promise<ProcessingResult> {
     console.log('[Chat-Orchestrator] 🚀 开始 Chat 对话处理');
+    this.contextManager.updateTokenizerModelId(this.resolveTokenizerModelId(request));
 
     // 🔥 1. [预处理] 首先对原始历史记录进行净化
     const originalHistory = request.conversationHistory || [];
@@ -301,6 +316,12 @@ export class MessageOrchestrator {
     return await this.preprocessorPipeline.process(messages);
   }
 
+  private resolveTokenizerModelId(request?: AgentProfileRequest): string | undefined {
+    return readOptionalStringProperty(request, 'model_id')
+      ?? readOptionalStringProperty(request, 'modelId')
+      ?? this.options.model;
+  }
+
   /**
    * 3. [上下文构建] - 调用ContextManager进行智能Token预算和消息构建
    */
@@ -367,6 +388,7 @@ export class MessageOrchestrator {
     if (newOptions.processing?.debugMode !== undefined) {
       // 这是一个示例，实际中可能需要更复杂的配置更新逻辑
     }
+    this.contextManager.updateTokenizerModelId(this.options.model);
   }
 
   /**

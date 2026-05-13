@@ -20,16 +20,18 @@
 
 按重要度排序：
 
-| 你必须自己写的 | linnkit 给的接入合同（type/symbol）| 从哪里 import |
-|---|---|---|
-| 1. LLM provider 适配器 | `AgentAiEngine` | `@linnlabs/linnkit/ports` |
-| 2. 工具集 | `BaseTool` / `ToolRuntimePort` | `@linnlabs/linnkit/runtime-kernel` |
-| 3. 上下文围栏（fence）注册 + 注入适配 | `FenceRegistry` / `FenceDescriptor` / `FenceInjection` / `MustKeepPolicy` / `FenceLifetimePreprocessor` | `@linnlabs/linnkit/context-manager` |
-| 4. 持久化适配器 | `Checkpointer` / `EventStore` / `RunRegistryStore` | `@linnlabs/linnkit/runtime-kernel` |
-| 5. 实时通道（SSE/WebSocket/MQTT）| linnkit 不规定接口；从 `RuntimeEvent` 自己映射 | `@linnlabs/linnkit/contracts` |
-| 6. graph executor 装配 + 默认 LLM/Tool node | `runtimeKernel.graph.GraphExecutor` 等 | `@linnlabs/linnkit/runtime-kernel` |
-| 7. agent / chat / task 注册表 | `promptKey` 是 opaque string，linnkit 不认识你的产品菜单 | （host 自定义）|
-| 8.（可选）telemetry | `TelemetryPort` | `@linnlabs/linnkit/runtime-kernel` |
+
+| 你必须自己写的                                 | linnkit 给的接入合同（type/symbol）                                                                             | 从哪里 import                          |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------- | ----------------------------------- |
+| 1. LLM provider 适配器                     | `AgentAiEngine`                                                                                         | `@linnlabs/linnkit/ports`           |
+| 2. 工具集                                  | `BaseTool` / `ToolRuntimePort`                                                                          | `@linnlabs/linnkit/runtime-kernel`  |
+| 3. 上下文围栏（fence）注册 + 注入适配                | `FenceRegistry` / `FenceDescriptor` / `FenceInjection` / `MustKeepPolicy` / `FenceLifetimePreprocessor` | `@linnlabs/linnkit/context-manager` |
+| 4. 持久化适配器                               | `Checkpointer` / `EventStore` / `RunRegistryStore`                                                      | `@linnlabs/linnkit/runtime-kernel`  |
+| 5. 实时通道（SSE/WebSocket/MQTT）             | linnkit 不规定接口；从 `RuntimeEvent` 自己映射                                                                     | `@linnlabs/linnkit/contracts`       |
+| 6. graph executor 装配 + 默认 LLM/Tool node | `runtimeKernel.graph.GraphExecutor` 等                                                                   | `@linnlabs/linnkit/runtime-kernel`  |
+| 7. agent / chat / task 注册表              | `promptKey` 是 opaque string，linnkit 不认识你的产品菜单                                                           | （host 自定义）                          |
+| 8.（可选）telemetry                         | `TelemetryPort`                                                                                         | `@linnlabs/linnkit/runtime-kernel`  |
+
 
 ## 3. 推荐目录形态（host 仓库内）
 
@@ -52,25 +54,28 @@ app-hosts/<your-app>/
 
 这是建议而不是强制。下面的术语全部按这个分层取名。
 
-## 4. 公开 API surface（7 个稳定子入口）
+## 4. 公开 API surface（8 个稳定子入口）
 
-`package.json#exports` 写死的子入口当前是 7 个。任何不在这张表里的"deep import"（比如 `@linnlabs/linnkit/context-manager/shared/preprocessors/...`）都不算公开 API，下个 minor 升级随时可能挪。
+`package.json#exports` 写死的子入口当前是 8 个。任何不在这张表里的"deep import"（比如 `@linnlabs/linnkit/context-manager/shared/preprocessors/...` 或 `@linnlabs/linnkit/shared/...`）都不算公开 API，下个 minor 升级随时可能挪。
 
-| 子入口 | 适用环境 | 你能从这里 import 到什么 |
-|---|---|---|
-| `@linnlabs/linnkit` | **Node-only** | `runtimeKernel` / `ports` / `contracts` 三个 namespace；`generateMessageId` / `generateRunId` / `withLLMTelemetryContext` / `setLlmAuditRecorder` |
-| `@linnlabs/linnkit/ports` | **Node-only** | `AgentInvocationRequest` / `AgentAiEngine` / `AgentAiEngineStreamContent` / `LlmCallOptions` / `LlmRequestMessage` / `ToolCall` 等 host 必须实现的合同 |
-| `@linnlabs/linnkit/contracts` | **Node-only** | 长期稳定的合同：`AiMessage` / `SystemMessage` / `UserMessage` / `AssistantMessage` / `ToolMessage` / `RuntimeEvent` / `EventEnvelope` / `SSEEvent` / 默认执行常量 |
-| `@linnlabs/linnkit/runtime-kernel` | **Node-only**（含 `node:async_hooks` / `crypto`）| 全套 runtime：`graph` / `tools` / `execution` / `events` / `runContext` / `llm` / `childRuns` / `childRunTrace` / `runSupervisor` / `telemetry` 等 namespace + 扁平 `BaseTool` / `ToolExecutionContext` / `ENGINE_ERROR_CODES` 等符号 + `createGraphLoopHarness` / `createDefaultGraphExecutor`（仅测试用）|
-| `@linnlabs/linnkit/runtime-kernel/events` | **浏览器安全** | events governance 纯函数：`shouldPersistRuntimeEvent` / `shouldEnterAgentContext` / `shouldEmitRuntimeEventToSse` / `shouldReplayRuntimeEventToUi` / `getRuntimeEventUiProjectionKind` / `eventMapper`，外加 `AnyAgentEvent` / `RuntimeEventLifecycleDecision` 类型 |
-| `@linnlabs/linnkit/context-manager` | **Node-only** | context core：`createMessageFormatter` / `formatAgentLlmMessages` / `messageFormatter` / `createFenceRegistry` / `FenceDescriptor` / `FenceInjection` / `FenceRegistry` / `FenceLifetimePreprocessor` / `MustKeepPolicy` / `DEFAULT_MUST_KEEP_POLICY` / `BaseContextProvider` / `AGENT_CONSTANTS` / agent profile namespace。chat 兼容层只剩下少量扁平导出（`ChatMessageOrchestrator` / `BaseConversationalTask` / `chatMessageToAiMessage` 等），新接入方应只用 agent profile + fence 机制 |
-| `@linnlabs/linnkit/testkit` | **测试专用** | scripted AI engine harness、graph loop harness、tool context fixture、replay harness、断言、`createRunSupervisorHarness` / `createCollectingAuditPort` / `createMockTelemetryPort` / 15 条 run 不变量校验。`AGENT-GUARD-10-no-testkit-in-production` 强制守门——生产代码不能 import |
+
+| 子入口                                       | 适用环境                                           | 你能从这里 import 到什么                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| ----------------------------------------- | ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `@linnlabs/linnkit`                       | **Node-only**                                  | `runtimeKernel` / `ports` / `contracts` 三个 namespace；`generateMessageId` / `generateRunId` / `withLLMTelemetryContext` / `setLlmAuditRecorder`                                                                                                                                                                                                                                                                                                                   |
+| `@linnlabs/linnkit/ports`                 | **Node-only**                                  | `AgentInvocationRequest` / `AgentAiEngine` / `AgentAiEngineStreamContent` / `LlmCallOptions` / `LlmRequestMessage` / `ToolCall` / `TokenizerPort` 等 host 必须实现的合同                                                                                                                                                                                                                                                                                                 |
+| `@linnlabs/linnkit/contracts`             | **Node-only**                                  | 长期稳定的合同：`AiMessage` / `SystemMessage` / `UserMessage` / `AssistantMessage` / `ToolMessage` / `RuntimeEvent` / `EventEnvelope` / `SSEEvent` / 默认执行常量                                                                                                                                                                                                                                                                                                              |
+| `@linnlabs/linnkit/runtime-kernel`        | **Node-only**（含 `node:async_hooks` / `crypto`） | 全套 runtime：`graph` / `tools` / `execution` / `events` / `runContext` / `llm` / `childRuns` / `childRunTrace` / `runSupervisor` / `telemetry` 等 namespace + 扁平 `BaseTool` / `ToolExecutionContext` / `ENGINE_ERROR_CODES` 等符号 + `createGraphLoopHarness` / `createDefaultGraphExecutor`（仅测试用）                                                                                                                                                                     |
+| `@linnlabs/linnkit/runtime-kernel/events` | **浏览器安全**                                      | events governance 纯函数：`shouldPersistRuntimeEvent` / `shouldEnterAgentContext` / `shouldEmitRuntimeEventToSse` / `shouldReplayRuntimeEventToUi` / `getRuntimeEventUiProjectionKind` / `eventMapper`，外加 `AnyAgentEvent` / `RuntimeEventLifecycleDecision` 类型                                                                                                                                                                                                       |
+| `@linnlabs/linnkit/context-manager`       | **Node-only**                                  | context core：`createMessageFormatter` / `formatAgentLlmMessages` / `messageFormatter` / `createFenceRegistry` / `FenceDescriptor` / `FenceInjection` / `FenceRegistry` / `FenceLifetimePreprocessor` / `MustKeepPolicy` / `DEFAULT_MUST_KEEP_POLICY` / `BaseContextProvider` / `AGENT_CONSTANTS` / agent profile namespace。chat 兼容层只剩下少量扁平导出（`ChatMessageOrchestrator` / `BaseConversationalTask` / `chatMessageToAiMessage` 等），新接入方应只用 agent profile + fence 机制 |
+| `@linnlabs/linnkit/testkit`               | **测试专用**                                       | scripted AI engine harness、graph loop harness、tool context fixture、replay harness、断言、`createRunSupervisorHarness` / `createCollectingAuditPort` / `createMockTelemetryPort` / `createMockTokenizerPort` / 15 条 run 不变量 + 12 条 context policy 不变量校验。`AGENT-GUARD-10-no-testkit-in-production` 强制守门——生产代码不能 import                                                                                                                                                 |
+| `@linnlabs/linnkit/quickstart`            | **试用 / demo**                                  | `defineAgent` / `runAgent` / `defineConfig`，用于 5 分钟跑通 hello agent；生产 host 接入仍按本目录主题手册逐项装配                                                                                                                                                                                                                                                                                                                                                                        |
+
 
 ## 5. 浏览器使用规则（硬约束）
 
 **前端代码（renderer / browser bundle）禁止 import `@linnlabs/linnkit/runtime-kernel`**——这条入口是 namespace 全展开，会把 `node:async_hooks` / `crypto` 等 Node-only 子树拖进 frontend bundle。
 
-前端如果只是要做事件展示决策（"这条 RuntimeEvent 该不该回放给 UI？"），从 **`@linnlabs/linnkit/runtime-kernel/events`** 这个 slim seam 取纯函数：
+前端如果只是要做事件展示决策（"这条 RuntimeEvent 该不该回放给 UI？"），从 `**@linnlabs/linnkit/runtime-kernel/events**` 这个 slim seam 取纯函数：
 
 ```ts
 // renderer/src/agentEventPolicy.ts
@@ -106,51 +111,98 @@ import type { RuntimeEvent } from '@linnlabs/linnkit/contracts';
 
 ### 7.1 起步必读（按顺序）
 
-| # | 文档 | 内容 |
-|---|------|------|
-| 1 | 本文 §1-§6 | 它是什么 / 你要写什么 / 7 个公开 API 子入口 / 浏览器规则 |
-| 2 | [installation.md](./installation.md) | 装包 / `.npmrc` 鉴权 / 验证 |
-| 3 | [quickstart.md](./quickstart.md) | 5 分钟最小 host 骨架 |
+
+| #   | 文档                                         | 内容                                   |
+| --- | ------------------------------------------ | ------------------------------------ |
+| 1   | 本文 §1-§6                                   | 它是什么 / 你要写什么 / 8 个公开 API 子入口 / 浏览器规则 |
+| 2   | [01-installation.md](./01-installation.md) | 装包 / `.npmrc` 鉴权 / 验证                |
+| 3   | [02-quickstart.md](./02-quickstart.md)     | 5 分钟最小 host 骨架                       |
+
 
 ### 7.2 单点接入（按你需要的功能查）
 
-| 主题 | 文档 |
-|------|------|
-| 接 LLM provider（OpenAI / Anthropic / DeepSeek / OpenRouter）| [llm-provider.md](./llm-provider.md) |
-| 注册工具集 / 配置超长 observation 落盘路径 | [tools.md](./tools.md) |
-| **上下文工程总览**（所有作用在 messages 上的机制 + `contextPolicy` / `ContextTrace` 可观测闭环）⭐ | [context-engineering.md](./context-engineering.md) |
-| **接 context engineering（fence 注册 + 注入）⭐ 一等接入面** | [context-fences.md](./context-fences.md) |
-| 配置工具历史压缩策略（per-pair / per-run / none）| [tool-history.md](./tool-history.md) |
-| 接持久化（Checkpointer / EventStore / RunRegistryStore）| [persistence.md](./persistence.md) |
-| 接 RunSupervisor + RunHandle | [run-supervisor.md](./run-supervisor.md) |
-| 同步嵌入 vs 异步后台子 agent | [child-runs.md](./child-runs.md) |
-| 接 AuditPort（决策账本）| [audit.md](./audit.md) |
-| 接 telemetry | [telemetry.md](./telemetry.md) |
-| 实时通道（SSE / WebSocket / IPC）| [realtime.md](./realtime.md) |
+
+| 主题                                                                                    | 文档                                                                                                                          |
+| ------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| 接 LLM provider（OpenAI / Anthropic / DeepSeek / OpenRouter）                            | [llm-provider.md](./llm-provider.md)                                                                                        |
+| 工具集接入面（`ToolRuntimePort` / `ObservationPreviewPort`）                                  | [tools.md](./tools.md)                                                                                                      |
+| **工具开发规范**（`BaseTool` 设计哲学 / `data`-`observation` 分层 / 错误处理 / `getExecutionSummary`）⭐ | [tool-development-guide.md](./tool-development-guide.md)                                                                    |
+| **Agent 注册与装配**（`AgentSpec` 静态蓝图 / `defineAgent` quickstart helper / 多 agent 协作）⭐     | [agent-registration-guide.md](./agent-registration-guide.md)                                                                |
+| **上下文工程总览**（所有作用在 messages 上的机制 + `contextPolicy` / `ContextTrace` 可观测闭环）⭐            | [context-engineering.md](./context-engineering.md)                                                                          |
+| **接 context engineering（fence 注册 + 注入）⭐ 一等接入面**                                       | [context-fences.md](./context-fences.md)                                                                                    |
+| 自定义 token 估算（`TokenizerPort` 替换默认 tokenizer · 0.8.0+）                                 | [context-engineering.md §9.4](./context-engineering.md) / [agent-registration-guide.md](./agent-registration-guide.md) §4.1 |
+| 配置工具历史压缩策略（per-pair / per-run / none）                                                 | [tool-history.md](./tool-history.md)                                                                                        |
+| 接持久化（Checkpointer / EventStore / RunRegistryStore）                                    | [persistence.md](./persistence.md)                                                                                          |
+| 接 RunSupervisor + RunHandle                                                           | [run-supervisor.md](./run-supervisor.md)                                                                                    |
+| 同步嵌入 vs 异步后台子 agent                                                                   | [child-runs.md](./child-runs.md)                                                                                            |
+| 接 AuditPort（决策账本）                                                                     | [audit.md](./audit.md)                                                                                                      |
+| 接 telemetry                                                                           | [telemetry.md](./telemetry.md)                                                                                              |
+| 实时通道（SSE / WebSocket / IPC）                                                           | [realtime.md](./realtime.md)                                                                                                |
+
 
 ### 7.3 测试 / 边界 / 速查
 
-| 主题 | 文档 |
-|------|------|
-| 测试与 testkit（两层架构）| [testing.md](./testing.md) |
-| 硬约束 + 不建议做的事 + FAQ | [constraints-and-pitfalls.md](./constraints-and-pitfalls.md) |
-| 术语对照（Checkpoint / Event / Fence 的不同含义）| [glossary.md](./glossary.md) |
+
+| 主题                                     | 文档                                                           |
+| -------------------------------------- | ------------------------------------------------------------ |
+| 测试与 testkit（两层架构）                      | [testing.md](./testing.md)                                   |
+| 硬约束 + 不建议做的事 + FAQ                     | [constraints-and-pitfalls.md](./constraints-and-pitfalls.md) |
+| 术语对照（Checkpoint / Event / Fence 的不同含义） | [glossary.md](./glossary.md)                                 |
+
 
 ### 7.4 推荐阅读顺序
 
 **第一次接入（最少 30 分钟）**：
 
 1. 本文 §1-§6 → 先把"我装了啥、它给我啥"看清
-2. [installation.md](./installation.md) → 装包鉴权跑通 smoke
-3. [quickstart.md](./quickstart.md) → 写一个能跑的最小骨架
-4. [context-engineering.md](./context-engineering.md) ⭐ → **第一周必读 · 鸟瞰**：所有作用在 messages 上的机制是什么、如何声明 `contextPolicy`、如何用 `ContextTrace` 解释最终 token 决策
-5. [context-fences.md](./context-fences.md) ⭐ → **第一周必读 · 实操**：fence 注册与注入是 linnkit 一等接入面
-6. 按需读单点接入文档
+2. [01-installation.md](./01-installation.md) → 装包鉴权跑通 smoke
+3. [02-quickstart.md](./02-quickstart.md) → 写一个能跑的最小骨架
+4. [tool-development-guide.md](./tool-development-guide.md) ⭐ → **写工具**：`BaseTool` 设计哲学、`data` / `observation` 分层、错误处理协议
+5. [agent-registration-guide.md](./agent-registration-guide.md) ⭐ → **注册 Agent**：`AgentSpec` 静态蓝图 / `defineAgent` quickstart helper / 多 agent 协作
+6. [context-engineering.md](./context-engineering.md) ⭐ → **鸟瞰**：所有作用在 messages 上的机制是什么、如何声明 `contextPolicy`、如何用 `ContextTrace` 解释最终 token 决策
+7. [context-fences.md](./context-fences.md) ⭐ → **实操**：fence 注册与注入是 linnkit 一等接入面
+8. 按需读单点接入文档
 
 **续作（按需）**：
 
 - 写测试 → [testing.md](./testing.md)
 - 上线前 → [constraints-and-pitfalls.md](./constraints-and-pitfalls.md) + [glossary.md](./glossary.md)
+
+### 7.5 按问题查文档（FAQ-style · AI agent 友好）
+
+> 当 AI 助手 / 新接入者用自然语言提问时，这里把"我想……"映射到具体文档段落。每个条目精确到文件 + 段号，避免泛指。
+
+
+| 我想……                                                  | 看这个                                                                                                                                                            |
+| ----------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ……装包跑通最小骨架                                            | [01-installation.md](./01-installation.md) → [02-quickstart.md](./02-quickstart.md)                                                                            |
+| ……换一个 LLM 模型 / 接 OpenAI / Anthropic / DeepSeek        | [llm-provider.md](./llm-provider.md)                                                                                                                           |
+| ……写一个自定义工具（怎么定义 `data` / `observation` / 错误处理）        | [tool-development-guide.md](./tool-development-guide.md) ⭐                                                                                                     |
+| ……把工具注册到 agent 上                                      | [tools.md](./tools.md) + [agent-registration-guide.md §2](./agent-registration-guide.md) ⭐                                                                     |
+| ……让工具产生的超长 observation 不占满上下文                         | [tools.md §5](./tools.md)（`ObservationPreviewPort`）+ [context-engineering.md §6](./context-engineering.md)                                                     |
+| ……定义一个新 agent / 写 `AgentSpec`                         | [agent-registration-guide.md](./agent-registration-guide.md) ⭐                                                                                                 |
+| ……配 token 预算 / 控制每个 token                             | [agent-registration-guide.md](./agent-registration-guide.md) §4.1（`contextPolicy.budget` / 默认 tokenizer）+ [context-engineering.md](./context-engineering.md) ⭐ |
+| ……用真实的 Claude / Gemini tokenizer 替代默认                 | [context-engineering.md §9.4](./context-engineering.md)（`TokenizerPort`）+ [agent-registration-guide.md](./agent-registration-guide.md) §4.1                    |
+| ……被动摘要：先注册摘要 agent、再填 `summarization.agentId`         | [agent-registration-guide.md](./agent-registration-guide.md) §4.2 + [context-engineering.md](./context-engineering.md) §5.4                                    |
+| ……把 host 的"当前文件 / 项目状态 / 引用段落"喂给 agent                | [context-fences.md](./context-fences.md) ⭐                                                                                                                     |
+| ……让关键信息（如 user prefs）永远不被裁掉                           | [context-fences.md](./context-fences.md) ⭐（`mustKeep` policy）                                                                                                  |
+| ……工具调用反复占满上下文要压缩                                      | [tool-history.md](./tool-history.md)（`per-pair` / `per-run` / `none`）                                                                                          |
+| ……配 fence 生命周期（current-turn / persisted / boot-only）  | [context-fences.md §3](./context-fences.md) ⭐                                                                                                                  |
+| ……让 run 跨进程崩溃后恢复                                      | [persistence.md](./persistence.md) + [run-supervisor.md](./run-supervisor.md)（`recoverOnBoot`）                                                                 |
+| ……让用户能取消正在跑的 agent                                    | [run-supervisor.md](./run-supervisor.md)（`RunHandle.cancel`）                                                                                                   |
+| ……agent 里调另一个 agent / 多 agent 协作                      | [child-runs.md](./child-runs.md) + [agent-registration-guide.md](./agent-registration-guide.md) §8 ⭐                                                           |
+| ……做后台异步长任务 / spawn detached run                       | [child-runs.md §2](./child-runs.md)（`spawnDetached`）                                                                                                           |
+| ……把 agent 进度推到前端 / SSE / WebSocket / Electron IPC     | [realtime.md](./realtime.md)                                                                                                                                   |
+| ……前端 import linnkit 报错（`node:async_hooks` / `crypto`） | [README §5](./README.md)（browser rules）+ [realtime.md](./realtime.md)                                                                                          |
+| ……监控 token usage / 时延 / 接 Datadog / Otel              | [telemetry.md](./telemetry.md)                                                                                                                                 |
+| ……做合规审计 / 追溯"agent 为什么这么做"                            | [audit.md](./audit.md)                                                                                                                                         |
+| ……写第一个 agent 单测 / mock LLM                            | [testing.md](./testing.md)                                                                                                                                     |
+| ……mock 自定义 tokenizer 验证 budget                        | [testing.md](./testing.md) + [context-engineering.md §9.4.6](./context-engineering.md)（`createMockTokenizerPort`）                                              |
+| ……review 别人的接入是否符合 linnkit 边界                         | [constraints-and-pitfalls.md](./constraints-and-pitfalls.md) + [glossary.md](./glossary.md)                                                                    |
+| ……同事说"Checkpoint" / "Fence" / "Run" 我搞混了              | [glossary.md](./glossary.md)                                                                                                                                   |
+
+
+> **找不到匹配的问题？** 优先查 [context-engineering.md](./context-engineering.md) ⭐（上下文工程总览） / [agent-registration-guide.md](./agent-registration-guide.md) ⭐（agent 配置入口）；仍找不到，是真正的"linnkit 不直接做"——见 [constraints-and-pitfalls.md](./constraints-and-pitfalls.md) §2。
 
 ---
 
@@ -158,7 +210,7 @@ import type { RuntimeEvent } from '@linnlabs/linnkit/contracts';
 
 - 当前版本：以 `package.json#version` 为准
 - 0.x = pre-release 期：**任何加 export / 改既有签名都 bump minor**，patch 兼容
-- 7 个稳定子入口已在 `package.json#exports` 锁定；任何 deep import 都不在稳定面
+- 8 个稳定子入口已在 `package.json#exports` 锁定；任何 deep import 都不在稳定面
 - 详见 `docs/release/RELEASE.md`
 
 ---
@@ -171,3 +223,4 @@ import type { RuntimeEvent } from '@linnlabs/linnkit/contracts';
 - **本目录**：接入手册（你正在读的）
 
 > ℹ️ **关于内部开发文档**：framework 演进路线图 / ADR 决策档案 / 隐患台账等**不在 npm tarball 里**——它们是 linnkit 维护方的工作档案。如果你想参与 linnkit 开发（不是接入），看仓库 `docs/framework/` + `docs/DEVELOPMENT_GUIDE.md`。
+

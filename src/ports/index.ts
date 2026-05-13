@@ -1,6 +1,7 @@
 export type { AgentInvocationRequest } from './agent-invocation';
 export type { AgentAiEngine, AgentAiEngineStreamContent } from './ai-engine';
 export type { AuditPort } from './audit';
+export type { TokenizerPort } from './tokenizer';
 
 /**
  * AI 引擎协议参数 type（`AgentAiEngine` 的入参形状）。

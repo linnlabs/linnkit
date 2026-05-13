@@ -1,5 +1,11 @@
 # AuditPort · 决策账本
 
+> **What** · `AuditPort` 接入 —— 把 5 类非确定性决策（policy / tool retry / overflow / fence drop / tokenizer fallback）写入审计账本。Telemetry 记录事实，Audit 记录**为什么**。
+> **When to read** · 要追溯"agent 为什么这么做"；做合规 / 多租户审计；调试上下文裁剪 / overflow 决策；企业接入强烈建议。
+> **Prerequisites** · [`02-quickstart.md`](./02-quickstart.md)。
+> **Key exports** · `AuditPort` / `AuditEnvelope` from `@linnlabs/linnkit/ports` · `createFileAudit` / `createCompositeAudit` from `@linnlabs/linnkit/runtime-kernel`。
+> **Related** · [`telemetry.md`](./telemetry.md) · [`persistence.md`](./persistence.md) · [`testing.md`](./testing.md)（`createCollectingAuditPort` for tests）
+
 > 可选，但企业接入强烈建议。
 
 AuditPort 是"决策账本"。Telemetry 记录事实（比如一次 LLM 调用了多久、用了多少 token），Audit 记录**为什么做了这个决定**（比如为什么取消、为什么拒绝工具、为什么 fallback 到另一个模型）。

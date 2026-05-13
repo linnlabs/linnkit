@@ -1,5 +1,11 @@
 # Glossary · 术语对照
 
+> **What** · 术语对照表 —— `Checkpoint` / `Event` / `Fence` / `Run` / `Trace` / `Tokenizer` 等同名异义概念在 linnkit 各处的精确含义。
+> **When to read** · 看文档时被术语搞混；review 接入实现时需要对齐措辞；多人协作 / PR review 前对齐术语。
+> **Prerequisites** · 无。
+> **Key exports** · 无（本文是术语表）。
+> **Related** · [`constraints-and-pitfalls.md`](./constraints-and-pitfalls.md) · 所有 §7.2 单点接入文档
+
 agent 生态有几个名字相同语义不同的概念，第一次踩坑后才会意识到。先记住这几条。
 
 ## 1. "Checkpoint" 的两种含义

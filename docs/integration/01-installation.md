@@ -1,5 +1,11 @@
 # Installation · 装包
 
+> **What** · 把 `@linnlabs/linnkit` 装到自己仓库 + 配置鉴权 + 跑通装包 smoke。
+> **When to read** · 第一次接入 linnkit；新加 CI 环境；遇到 `Missing tiktoken_bg.wasm` 类装包错误想排查。
+> **Prerequisites** · 无（这是接入第 1 篇）。
+> **Key exports** · 无（本文不涉及 import）。
+> **Related** · [`02-quickstart.md`](./02-quickstart.md) · [`constraints-and-pitfalls.md`](./constraints-and-pitfalls.md)
+
 ## 1. 这个包发布在哪
 
 `@linnlabs/linnkit` 发布到 **GitHub Packages 私有 registry**（`https://npm.pkg.github.com/`），scope 是 `@linnlabs`。

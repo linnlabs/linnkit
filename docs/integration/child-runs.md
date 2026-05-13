@@ -1,5 +1,11 @@
 # Child Runs · 同步嵌入 vs 异步后台子 agent
 
+> **What** · 两种子 agent 调用形态 —— `invokeChildRun`（同步嵌入，父 agent 等结果）vs `spawnDetached`（异步后台，立刻返回 `RunHandle`）。
+> **When to read** · 多 agent 协作；要在一个 agent 里调另一个 agent；想做后台调度 / 长任务 / 通知触发。
+> **Prerequisites** · [`run-supervisor.md`](./run-supervisor.md)。
+> **Key exports** · `invokeChildRun` / `spawnDetached` from `@linnlabs/linnkit/runtime-kernel`。
+> **Related** · [`run-supervisor.md`](./run-supervisor.md) · [`agent-registration-guide.md` §6](./agent-registration-guide.md) ⭐
+
 linnkit 提供**两条 API**承载"子 agent"概念。它们不是配置开关，是两种本质不同的调用形态——按需选用。
 
 ## 1. 概念对照

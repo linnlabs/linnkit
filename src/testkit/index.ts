@@ -16,6 +16,7 @@ export {
   createRunSupervisorHarness,
   validateRunInvariants,
 } from './run-harness';
+export { createMockTokenizerPort } from './mocks/tokenizerPort';
 export { createToolContextFixture } from './tool-fixtures/toolContext';
 
 export type {
@@ -58,3 +59,4 @@ export type {
   ToolContextFixture,
   ToolContextFixtureOptions,
 } from './tool-fixtures/toolContext';
+export type { MockTokenizerPortOptions } from './mocks/tokenizerPort';

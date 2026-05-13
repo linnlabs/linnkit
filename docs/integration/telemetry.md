@@ -1,5 +1,11 @@
 # Telemetry · 接 TelemetryPort（可选）
 
+> **What** · `TelemetryPort` 接入 —— LLM 调用耗时 / token usage / tool 时延上报（含 `runId` / `parentRunId` 用于成本聚合）。
+> **When to read** · 接 Datadog / OpenTelemetry / Prometheus；做成本预警；监控 P99 时延；做多租户用量统计。
+> **Prerequisites** · [`02-quickstart.md`](./02-quickstart.md)。
+> **Key exports** · `TelemetryPort` / `telemetry` namespace + `withLLMTelemetryContext` from `@linnlabs/linnkit/runtime-kernel`。
+> **Related** · [`audit.md`](./audit.md) · [`run-supervisor.md`](./run-supervisor.md) · [`testing.md`](./testing.md)（`createMockTelemetryPort`）
+
 ## 1. linnkit 给你的合同
 
 - `TelemetryPort`（来自 `@linnlabs/linnkit/runtime-kernel`，在 `telemetry` namespace 下）：`emit(event)` + 可选 `flush()`。

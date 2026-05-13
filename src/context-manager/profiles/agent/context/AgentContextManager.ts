@@ -28,6 +28,7 @@ import type {
   AiMessage,
   RuntimeEvent,
 } from '../../../../contracts';
+import type { TokenizerPort } from '../../../../ports';
 
 /**
  * Agent 专用的 Provider 上下文
@@ -102,6 +103,8 @@ export class AgentContextManager extends ContextManagerBase<
     debugMode?: boolean;
     customConfig?: Partial<AgentContextBuilderConfig>;
     providerRegistry?: ContextProviderRegistry;
+    tokenizer?: TokenizerPort;
+    tokenizerModelId?: string;
   } = {}) {
     super(options as ContextManagerBaseOptions<
       AgentContextBuilderConfig,

@@ -1,5 +1,6 @@
 import * as contextManager from '../../context-manager';
 import type { AiMessage } from '../../contracts';
+import type { LlmRequestMessage, TokenizerPort } from '../../ports';
 
 type IContextProvider = contextManager.agentContext.IContextProvider;
 type MessageProcessingState = contextManager.agentContext.MessageProcessingState;
@@ -14,6 +15,8 @@ export interface ContextPipelineHarnessOptions {
   totalBudget?: number;
   debugMode?: boolean;
   estimateTokens?: (message: AiMessage) => number;
+  tokenizer?: TokenizerPort;
+  tokenizerModelId?: string;
 }
 
 export interface ContextPipelineHarness {
@@ -29,11 +32,17 @@ function createDefaultProviderContext(
   options: ContextPipelineHarnessOptions,
   contextPatch?: Partial<ProviderContext>
 ): ProviderContext {
+  const estimateTokens =
+    options.estimateTokens ??
+    (options.tokenizer
+      ? (message: AiMessage) => options.tokenizer!.estimateMessage(message as LlmRequestMessage, options.tokenizerModelId)
+      : () => 1);
+
   return {
     totalBudget: options.totalBudget ?? 100_000,
     config: contextManager.agentContext.AGENT_CONTEXT_BUILDER_CONFIG,
     debugMode: options.debugMode ?? false,
-    estimateTokens: options.estimateTokens ?? (() => 1),
+    estimateTokens,
     ...(contextPatch ?? {}),
   };
 }
@@ -79,7 +88,11 @@ export function createContextPipelineHarness(
 
     createStates(coreMessageIds: string[] = [], messages?: AiMessage[]): MessageProcessingState[] {
       const sourceMessages = messages ?? options.messages;
-      const estimateTokens = options.estimateTokens ?? (() => 1);
+      const estimateTokens =
+        options.estimateTokens ??
+        (options.tokenizer
+          ? (message: AiMessage) => options.tokenizer!.estimateMessage(message as LlmRequestMessage, options.tokenizerModelId)
+          : () => 1);
       const coreIds = new Set(coreMessageIds);
       return sourceMessages.map((message, index) => ({
         message,

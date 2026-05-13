@@ -20,7 +20,7 @@ async function readJson(relativePath: string): Promise<Record<string, unknown>> 
 }
 
 /**
- * Smoke test for `@linnlabs/linnkit` 0.7.0 publishable shape.
+ * Smoke test for `@linnlabs/linnkit` 0.8.0 publishable shape.
  *
  * 这个 test 是 docs/release/RELEASE.md §3 工程层不变量的硬性闸门，覆盖：
  *   1. 包元数据（name / version / 不再 private / repository / publishConfig）
@@ -37,11 +37,11 @@ async function readJson(relativePath: string): Promise<Record<string, unknown>> 
  * 任何破坏以上不变量的改动 = break，必须先在 docs/release/RELEASE.md 留一行变更说明。
  */
 describe('packages/linnkit shell manifest', () => {
-  it('declares the publishable @linnlabs/linnkit 0.7.0 shape with dist-only exports', async () => {
+  it('declares the publishable @linnlabs/linnkit 0.8.0 shape with dist-only exports', async () => {
     const manifest = await readJson('package.json');
 
     expect(manifest.name).toBe('@linnlabs/linnkit');
-    expect(manifest.version).toBe('0.7.0');
+    expect(manifest.version).toBe('0.8.0');
     expect(manifest.private).toBeUndefined();
     expect(manifest.type).toBe('module');
     expect(manifest.main).toBe('./dist/index.cjs');
@@ -85,7 +85,7 @@ describe('packages/linnkit shell manifest', () => {
       throw new Error('packages/linnkit/package.json must define an exports object.');
     }
 
-    // Phase 1C 增加 quickstart 子入口后，稳定公开入口为 7 个 + 1 个 ./package.json：
+    // Phase 1C 增加 quickstart 子入口后，稳定公开入口为 8 个 + 1 个 ./package.json：
     // - root + 4 个长期稳定子入口
     // - 1 个 browser-safe slim 子入口（events governance 纯函数）
     // - ./package.json：允许接入方读元数据（如检测 version），不算 6 入口之一
@@ -100,6 +100,8 @@ describe('packages/linnkit shell manifest', () => {
       './runtime-kernel/events',
       './testkit',
     ]);
+    expect(exportsField).not.toHaveProperty('./shared');
+    expect(exportsField).not.toHaveProperty('./shared/defaultTokenizerPort');
 
     const subentryToDistBase: ReadonlyArray<readonly [string, string]> = [
       ['.', 'index'],

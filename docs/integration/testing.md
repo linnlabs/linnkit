@@ -1,5 +1,11 @@
 # Testing · 用 testkit 测接入
 
+> **What** · `@linnlabs/linnkit/testkit` 测试底座 —— scripted AI engine / graph loop harness / tool fixtures / replay harness / 26 条 strict invariants（15 run + 11 contextPolicy + C12 tokenizer）。
+> **When to read** · 写第一个 agent 单测；要校验 `contextPolicy` 决策；要 mock LLM / tokenizer / telemetry / audit；做接入回归。
+> **Prerequisites** · [`02-quickstart.md`](./02-quickstart.md)。
+> **Key exports** · `createGraphLoopHarness` / `createScriptedAiEngine` / `createContextPipelineHarness` / `createRunSupervisorHarness` / `createCollectingAuditPort` / `createMockTelemetryPort` / `createMockTokenizerPort` from `@linnlabs/linnkit/testkit`。
+> **Related** · [`context-engineering.md` §9.4.6](./context-engineering.md) · [`audit.md`](./audit.md) · [`telemetry.md`](./telemetry.md) · [`constraints-and-pitfalls.md`](./constraints-and-pitfalls.md)（`AGENT-GUARD-10-no-testkit-in-production`）
+
 `@linnlabs/linnkit/testkit` 是 **package-neutral** 的测试底座。它**只**给你"linnkit 自己的合同"测试用的 primitive；不替代你的 host-bound testkit。
 
 ## 1. 两层架构

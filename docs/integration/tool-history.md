@@ -1,5 +1,11 @@
 # Tool History · 工具历史压缩策略
 
+> **What** · 工具历史压缩策略配置 —— `per-pair` / `per-run` / `none` 三种策略 + `overflowStrategy` 溢出兜底。
+> **When to read** · 上下文里工具调用反复占满 token；想配置工具调用历史的压缩窗口；做长 run 任务的成本控制。
+> **Prerequisites** · [`tools.md`](./tools.md) · [`context-engineering.md` §5](./context-engineering.md)。
+> **Key exports** · `toolHistory` field in `AgentSpec.contextPolicy` from `@linnlabs/linnkit` · `ToolHistoryCompressor` preprocessor 由 framework 内置自动注入。
+> **Related** · [`context-engineering.md`](./context-engineering.md) ⭐ · [`tools.md`](./tools.md) · [`agent-registration-guide.md`](./agent-registration-guide.md) ⭐
+
 linnkit 的 agent preprocessor 支持三种工具历史压缩策略，host 可在 `AgentDefinition.config.contextPolicy.toolHistory` 中显式声明。
 
 ## 1. 三种策略对比

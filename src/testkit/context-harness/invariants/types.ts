@@ -3,6 +3,7 @@ import type {
   AiMessage,
 } from '../../../contracts';
 import type { ContextTrace } from '../../../context-manager';
+import type { TokenizerPort } from '../../../ports';
 
 export type ContextPolicyInvariantId =
   | 'C1_TRACE_ENABLED_MATCHES_POLICY'
@@ -15,7 +16,8 @@ export type ContextPolicyInvariantId =
   | 'C8_TRACE_DETAIL_OPTIONS'
   | 'C9_MESSAGE_DECISION_REASON'
   | 'C10_TOOL_PAIR_DECISIONS_STAY_TOGETHER'
-  | 'C11_MUST_KEEP_TYPES_KEPT';
+  | 'C11_MUST_KEEP_TYPES_KEPT'
+  | 'C12_HOST_TOKENIZER_DRIVES_BUDGET';
 
 export interface ContextPolicyInvariantFailure {
   id: ContextPolicyInvariantId;
@@ -34,6 +36,8 @@ export interface ContextPolicyInvariantContext {
   trace?: ContextTrace;
   originalMessages?: readonly AiMessage[];
   finalMessages?: readonly AiMessage[];
+  tokenizer?: TokenizerPort;
+  tokenizerModelId?: string;
 }
 
 export type ContextPolicyInvariantValidator = (

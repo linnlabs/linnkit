@@ -1,5 +1,11 @@
 # Constraints & Pitfalls · 硬约束 + 不建议做的事 + FAQ
 
+> **What** · linnkit 接入侧的硬约束 + 不建议做的事 + 常见踩坑 FAQ（含 AST 级 guard 规则、deep import 风险、浏览器 bundle 边界）。
+> **When to read** · 上线前 review；遇到诡异 import 错误；review 别人的接入实现；接入 PR 自检。
+> **Prerequisites** · 起码读完你用到的 §7.2 单点接入篇。
+> **Key exports** · 无（本文是约束清单）。
+> **Related** · [`glossary.md`](./glossary.md) · [`README §5`](./README.md)（browser rules） · [`realtime.md`](./realtime.md)
+
 ## 1. 硬约束（接入方必读）
 
 linnkit 仓库内部的 package-boundary 由 **AST 级 guard**（基于 TypeScript Compiler API）强制 10 条规则。其中**直接影响外部消费者**的：

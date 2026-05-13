@@ -1,5 +1,11 @@
 # Realtime · 实时通道（host 完全自有）
 
+> **What** · 实时通道（SSE / WebSocket / IPC）接入 —— `RuntimeEvent` 映射到 host 自己的 wire 协议；前端用 browser-safe events seam 做事件治理决策。
+> **When to read** · 要把 agent 进度推到前端；做 daemon ↔ renderer IPC；做 Web SSE；想知道"哪些事件该回放给 UI / 哪些只该写 EventStore"。
+> **Prerequisites** · [`02-quickstart.md`](./02-quickstart.md)；浏览器使用规则见 [`README §5`](./README.md)。
+> **Key exports** · `RuntimeEvent` / `EventEnvelope` / `SSEEvent` from `@linnlabs/linnkit/contracts` · `shouldReplayRuntimeEventToUi` / `shouldEmitRuntimeEventToSse` / `getRuntimeEventUiProjectionKind` from `@linnlabs/linnkit/runtime-kernel/events`（**前端唯一可 import 的入口**）。
+> **Related** · [`audit.md`](./audit.md) · [`persistence.md`](./persistence.md) · [`constraints-and-pitfalls.md`](./constraints-and-pitfalls.md)
+
 `@linnlabs/linnkit` **不规定** SSE / WebSocket / MQTT 的接口形状——一个原因是不同部署形态（HTTP server / Electron IPC / 内嵌 RPC）天差地别。
 
 但有两条**铁规**：

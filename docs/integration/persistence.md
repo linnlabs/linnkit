@@ -1,5 +1,11 @@
 # Persistence · 接持久化（3 个 port）
 
+> **What** · 三个持久化适配 port —— `Checkpointer`（断点续推）/ `EventStore`（事件归档）/ `RunRegistryStore`（run 元数据）。
+> **When to read** · 要让 run 跨进程崩溃后恢复；要审计 / 回放 agent 历史；要把 in-memory 默认实现换成真实 DB。
+> **Prerequisites** · [`02-quickstart.md`](./02-quickstart.md)；建议与 [`run-supervisor.md`](./run-supervisor.md) 并读。
+> **Key exports** · `Checkpointer` / `EventStore` / `RunRegistryStore` from `@linnlabs/linnkit/runtime-kernel`。
+> **Related** · [`run-supervisor.md`](./run-supervisor.md) · [`audit.md`](./audit.md) · [`realtime.md`](./realtime.md) · [`glossary.md`](./glossary.md)
+
 > **术语提醒**：这里的 `Checkpointer` 是 **engine-state checkpoint**——保存 graph engine 执行状态（`nodeId / pendingToolCalls / executorLocal.stepCount / local`），用来"中断后从断点继续推理"。它**不是**任何"对话总结/上下文裁剪"语义；后者是上下文工程层面的 RuntimeEvent，应当走你自己的 `EventStore`，跟本接口无关。详见 [glossary.md](./glossary.md)。
 
 ## 1. linnkit 给你的合同

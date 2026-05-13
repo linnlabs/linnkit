@@ -8,6 +8,7 @@ import {
   assertContextPolicyInvariants,
   validateContextPolicyInvariants,
 } from '../invariants';
+import { createMockTokenizerPort } from '../../mocks/tokenizerPort';
 
 function systemMessage(id: string, content: string): AiMessage {
   const result = {
@@ -242,5 +243,74 @@ describe('context policy invariants', () => {
       'C10_TOOL_PAIR_DECISIONS_STAY_TOGETHER',
       'C11_MUST_KEEP_TYPES_KEPT',
     ]));
+  });
+
+  it('C12 校验 host 注入 tokenizer 后预算决策使用 host tokenizer', () => {
+    const policy = defineContextPolicy({
+      contextTrace: {
+        enabled: true,
+        includeTokenBreakdown: true,
+      },
+    });
+    const messages = [
+      systemMessage('system-1', 'system'),
+      userMessage('user-1', 'question'),
+    ];
+    const trace = createHealthyTrace(policy, messages, messages);
+    trace.finalTokens = 2;
+    const providerEvent = trace.events.find((event) => event.kind === 'provider');
+    if (providerEvent?.kind === 'provider') {
+      providerEvent.afterTokens = 2;
+      providerEvent.tokenDelta = 2;
+      providerEvent.tokensUsed = 2;
+      providerEvent.remainingBudget = 98;
+    }
+    const tokenizer = createMockTokenizerPort({ tokensPerMessage: 1 });
+
+    const report = validateContextPolicyInvariants({
+      expectedPolicy: policy,
+      trace,
+      originalMessages: messages,
+      finalMessages: messages,
+      tokenizer,
+      tokenizerModelId: 'mock-model',
+    }, {
+      enabled: ['C12_HOST_TOKENIZER_DRIVES_BUDGET'],
+    });
+
+    expect(report.ok).toBe(true);
+  });
+
+  it('C12 发现 trace token 明细没有使用 host tokenizer', () => {
+    const policy = defineContextPolicy({
+      contextTrace: {
+        enabled: true,
+        includeTokenBreakdown: true,
+      },
+    });
+    const messages = [userMessage('user-1', 'question')];
+    const trace = createHealthyTrace(policy, messages, messages);
+    const tokenizer = createMockTokenizerPort({ tokensPerMessage: 10 });
+
+    const report = validateContextPolicyInvariants({
+      expectedPolicy: policy,
+      trace,
+      originalMessages: messages,
+      finalMessages: messages,
+      tokenizer,
+    }, {
+      enabled: ['C12_HOST_TOKENIZER_DRIVES_BUDGET'],
+    });
+
+    expect(report.failures).toEqual([
+      expect.objectContaining({
+        id: 'C12_HOST_TOKENIZER_DRIVES_BUDGET',
+        title: 'message-decision tokens 未使用 host tokenizer',
+      }),
+      expect.objectContaining({
+        id: 'C12_HOST_TOKENIZER_DRIVES_BUDGET',
+        title: 'finalTokens 未使用 host tokenizer',
+      }),
+    ]);
   });
 });

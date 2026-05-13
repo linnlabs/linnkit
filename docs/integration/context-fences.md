@@ -1,5 +1,11 @@
 # Context Engineering · Fence 注册 + 注入 ⭐
 
+> **What** · 上下文围栏（fence）注册与注入 —— linnkit 一等接入面，host 把"项目状态 / 当前文件 / 引用段落 / 长记忆"等结构化上下文喂给 LLM 都走这里。
+> **When to read** · 要把 host 状态喂给 agent；要 `mustKeep` 关键信息不被裁；要做"按生命周期管理上下文"（current-turn / persisted / boot-only）。
+> **Prerequisites** · [`context-engineering.md`](./context-engineering.md) ⭐（先理解 `contextPolicy` 总体结构）。
+> **Key exports** · `FenceRegistry` / `FenceDescriptor` / `FenceInjection` / `MustKeepPolicy` / `FenceLifetimePreprocessor` from `@linnlabs/linnkit/context-manager`。
+> **Related** · [`context-engineering.md`](./context-engineering.md) ⭐ · [`agent-registration-guide.md`](./agent-registration-guide.md) ⭐
+
 > **第一周必读**。如果你的产品需要把不同来源的上下文注入到 LLM 不同位置（"项目元信息塞 system 之后"、"被引用的段落塞当前用户输入之前"、"长记忆只塞当前轮"），**这是 linnkit 的一等接入面**。
 >
 > **不要**自己在 system prompt 里手工拼 `<my_tag>...</my_tag>`——会被 boundary guard 拦下，且生命周期治理失控。

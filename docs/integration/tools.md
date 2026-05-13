@@ -1,11 +1,18 @@
 # Tools · 注册工具集
 
+> **What** · 把工具注册进 linnkit —— `ToolRuntimePort` 接入面 + `ObservationPreviewPort` 治理超长 observation。
+> **When to read** · 要给 agent 加工具；要治理超长 observation；接 MCP / 远程工具；review 既有工具实现。
+> **Prerequisites** · [`02-quickstart.md`](./02-quickstart.md)；写自定义工具前推荐先读 [`tool-development-guide.md`](./tool-development-guide.md) ⭐。
+> **Key exports** · `BaseTool` / `ToolRuntimePort` / `ObservationPreviewPort` / `ToolExecutionContext` from `@linnlabs/linnkit/runtime-kernel`。
+> **Related** · [`tool-development-guide.md`](./tool-development-guide.md) ⭐ · [`tool-history.md`](./tool-history.md) · [`context-engineering.md` §6](./context-engineering.md)
+
 ## 1. linnkit 给你的合同
 
-- `BaseTool` + `CommonParameterTypes`（来自 `@linnlabs/linnkit/runtime-kernel`）：抽象类，要求实现 `name` / `description` / `parameters` / `execute(args, context)`。
+- `BaseTool` + `CommonParameterTypes`（来自 `@linnlabs/linnkit/runtime-kernel`）：抽象类，要求实现 `name` / `description` / `parameters` / `run(args, context)`。`run` 必须返回 `Promise<string>`（强烈推荐 `JSON.stringify({ data, observation })` 格式）。
 - `ToolExecutionContext` / `ToolSchemaContext`（同上）：执行时 / schema 构建时收到的 context 形状。
 - `ToolRuntimePort` / `ToolCatalogPort` / `ToolExecutionPort` / `ToolPresentationPort`（同上）：把工具集合装成"runtime 可调用"的合同；host 默认 `ToolManager` 实现要满足这些 port。
 - `ObservationPreviewPort`（同上）：工具产出 observation 在 UI 展示前的预览决策点。
+- `TokenizerPort`（来自 `@linnlabs/linnkit/ports`，0.8.0+）：host 可选注入的上下文预算 token 估算合同；它不属于工具执行，但会影响工具 observation / tool_calls 在上下文窗口里能保留多少。
 - `ensureToolContextRuntimeCapability`（同上）：把 runtime 必需的保留字段补进 host 的 patch，避免手抖漏字段。
 
 ## 2. linnkit 自带的 mock primitive
@@ -14,10 +21,11 @@
 
 ## 3. 你必须做的
 
-1. 把每个工具定义为 `BaseTool` 的子类（或满足 `AgentTool` 接口的对象）。
+1. 把每个工具定义为 `BaseTool` 的子类（或满足 `AgentTool` 接口的对象）；详细规范见 [`tool-development-guide.md`](./tool-development-guide.md)。
 2. 决定哪些字段走通用 `ToolExecutionContext`，哪些走 host patch；patch 必须经 `ensureToolContextRuntimeCapability` 补齐保留字段。
 3. 把工具集合装进 host 的 `ToolManager` / `ToolRuntimePort` 实现，让 runtime 在 LLM 决策返回 tool calls 时能 dispatch。
 4. 实现 `ObservationPreviewPort`，决定超长 observation 的完整副本写到哪里；再在 runtime assembly 里传给 `createDefaultGraphExecutor({ observationPreview })` 或你的自定义 `ToolNode` 装配。
+5. 把 AgentSpec 与工具集合装配在一起；详细规范见 [`agent-registration-guide.md`](./agent-registration-guide.md)。
 
 ## 4. 你不要做的
 
@@ -129,38 +137,52 @@ const executor = createDefaultGraphExecutor({
   `<workspaceRoot>/Artifacts/v1/conversations/<conversationId>/instances/<instanceId>/tool_output/blobs/<blobId>.json`。
   其中 `workspaceRoot` 应来自 host 自己的部署配置、环境变量或工作区配置。读取 `tool_output://blobs/<blob_id>` 的工具也必须使用同一个 store，否则模型拿到 `blob_id` 后无法续读。
 
-## 7. 工具示例
+## 7. 工具最小示例
+
+> 完整规范见 [`tool-development-guide.md`](./tool-development-guide.md)。本节只给最小可运行示例。
 
 ```ts
-import { BaseTool, type ToolExecutionContext } from '@linnlabs/linnkit/runtime-kernel';
+import {
+  BaseTool,
+  type ToolArgs,
+  type ToolExecutionContext,
+  type ToolParameterSchema,
+} from '@linnlabs/linnkit/runtime-kernel';
 
-export class EchoTool extends BaseTool {
-  name = 'echo';
-  description = '回声测试，用于验证工具调用链路';
+interface EchoArgs extends ToolArgs {
+  text: string;
+}
 
-  parameters = {
+export class EchoTool extends BaseTool<EchoArgs> {
+  readonly name = 'echo';
+  readonly description = '回声测试，用于验证工具调用链路';
+
+  readonly parameters: ToolParameterSchema = {
     type: 'object',
     properties: {
       text: { type: 'string', description: '要回声的文本' },
     },
     required: ['text'],
-  } as const;
+  };
 
-  async execute(args: { text: string }, context: ToolExecutionContext) {
-    return {
-      kind: 'success' as const,
+  async run(args: EchoArgs, _context: ToolExecutionContext): Promise<string> {
+    const result = {
       data: { echoed: args.text },
+      observation: `Echoed: ${args.text}`,
     };
+    return JSON.stringify(result);
   }
 }
 ```
 
-返回值形态：
+**协议层强制约束**（违反会被运行时拒绝或导致下游解析失败）：
 
-| `kind` | 含义 |
-|--------|------|
-| `'success'` | 工具成功；`data` 字段是结构化结果 |
-| `'failure'` | 工具失败；`error` 字段是失败原因 |
-| `'requireUser'` | 工具要等用户输入（交互式工具）；不返回 `data`，等下一轮 |
+| 约束 | 协议层守门 |
+|------|-----------|
+| `name` / `description` / `parameters` 必填 | `BaseTool` 抽象类强制 |
+| `run` 返回 `Promise<string>`（不是对象，是字符串）| `BaseTool.run` 签名 |
+| 强烈推荐 `run` 返回 `JSON.stringify({ data, observation })` 格式 | 上下游工具卡片解析依赖 |
+| 必填参数走 `parameters.required[]`，**不要**在 `run` 里手写 if-check | `BaseTool.validateArguments` 自动校验 |
+| 失败必须 `throw`，**不能**返回伪装成功的 JSON | tool 配对不变量 C10 + AuditEnvelope |
 
-详见 `@linnlabs/linnkit/runtime-kernel` 中 `ToolCallResult` 类型定义。
+详细的设计思想、错误处理规范、超长 observation 治理、交互工具协议等见 [`tool-development-guide.md`](./tool-development-guide.md)。

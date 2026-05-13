@@ -10,6 +10,7 @@ import {
   validateC9MessageDecisionReason,
   validateC10ToolPairDecisionsStayTogether,
   validateC11MustKeepTypesKept,
+  validateC12HostTokenizerDrivesBudget,
 } from './validators';
 import type {
   ContextPolicyInvariantContext,
@@ -41,6 +42,7 @@ export {
   validateC9MessageDecisionReason,
   validateC10ToolPairDecisionsStayTogether,
   validateC11MustKeepTypesKept,
+  validateC12HostTokenizerDrivesBudget,
 } from './validators';
 
 const VALIDATORS = {
@@ -55,6 +57,7 @@ const VALIDATORS = {
   C9_MESSAGE_DECISION_REASON: validateC9MessageDecisionReason,
   C10_TOOL_PAIR_DECISIONS_STAY_TOGETHER: validateC10ToolPairDecisionsStayTogether,
   C11_MUST_KEEP_TYPES_KEPT: validateC11MustKeepTypesKept,
+  C12_HOST_TOKENIZER_DRIVES_BUDGET: validateC12HostTokenizerDrivesBudget,
 } satisfies Record<ContextPolicyInvariantId, ContextPolicyInvariantValidator>;
 
 export const STRICT_CONTEXT_POLICY_INVARIANT_IDS = Object.keys(VALIDATORS) as ContextPolicyInvariantId[];

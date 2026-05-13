@@ -9,6 +9,7 @@ exports[`src/agent/testkit public exports snapshot > exposes the documented test
   "createDefaultGraphExecutor",
   "createGraphLoopHarness",
   "createMockTelemetryPort",
+  "createMockTokenizerPort",
   "createReplayHarness",
   "createRunSupervisorHarness",
   "createScriptedAiEngineHarness",

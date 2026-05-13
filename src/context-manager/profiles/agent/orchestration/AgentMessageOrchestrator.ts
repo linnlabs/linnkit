@@ -22,6 +22,7 @@ import type { AgentTaskResolver } from '../tasks/base';
 import { convertEventsToAiMessages } from '../utils/eventConverter';
 import type { GenerateRequest, GenerateResponse } from '../../chat/contracts';
 import type { AgentSpecContextPolicy, AiMessage, RuntimeEvent } from '../../../../contracts';
+import type { TokenizerPort } from '../../../../ports';
 import type { FenceRegistry } from '../../../shared/fences';
 import {
   contextPolicyToContextBuilderConfig,
@@ -61,6 +62,7 @@ export interface AgentOrchestratorOptions {
   taskResolver: AgentTaskResolver;
   providerRegistry: ContextProviderRegistry;
   fenceRegistry?: FenceRegistry;
+  tokenizer?: TokenizerPort;
 }
 
 export interface AgentProcessingResult {
@@ -101,6 +103,8 @@ export class AgentMessageOrchestrator {
       debugMode: options.processing.debugMode,
       customConfig: this.baseContextConfig,
       providerRegistry: options.providerRegistry,
+      tokenizer: options.tokenizer,
+      tokenizerModelId: options.model,
     });
   }
 
@@ -148,6 +152,8 @@ export class AgentMessageOrchestrator {
       debugMode: this.options.processing.debugMode,
       customConfig: contextBuilderConfig,
       providerRegistry,
+      tokenizer: this.options.tokenizer,
+      tokenizerModelId: this.resolvePreprocessorModel(request),
     });
   }
 
@@ -336,6 +342,7 @@ export class AgentMessageOrchestrator {
       RESERVED_FOR_RESPONSE: this.options.tokenBudget.reservedForResponse,
     };
     this.agentContextManager.updateConfig(this.baseContextConfig);
+    this.agentContextManager.updateTokenizerModelId(this.options.model);
   }
 
   getContextManager(): AgentContextManager {

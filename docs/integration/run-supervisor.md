@@ -1,5 +1,11 @@
 # RunSupervisor · RunHandle / cost / cancel / observe
 
+> **What** · 每次 agent 调用的"身份证 + 遥控器" —— `RunSupervisor` 注册 + `RunHandle` v2 暴露 `cancel` / `observe` / `cost` + `spawnDetached` 异步后台 run。
+> **When to read** · 要支持用户取消 agent；要做长任务后台运行；要做父子 run 成本聚合；要崩溃恢复 `recoverOnBoot`。
+> **Prerequisites** · [`02-quickstart.md`](./02-quickstart.md)。
+> **Key exports** · `RunSupervisor` / `RunHandle` / `createInMemoryRunRegistry` from `@linnlabs/linnkit/runtime-kernel`。
+> **Related** · [`child-runs.md`](./child-runs.md) · [`persistence.md`](./persistence.md) · [`audit.md`](./audit.md)
+
 RunSupervisor 是每次 agent 调用的"身份证 + 遥控器"。host 应在一次用户请求进入 runner 前注册 run，拿到 `RunHandle` 后再把 `handle.signal` 交给 GraphExecutor / 工具上下文。
 
 ## 1. 5 行骨架
