@@ -477,10 +477,11 @@ describe('DefaultRunSupervisor', () => {
     await expect(supervisor.findActiveByConversation('conv-1')).resolves.toEqual([
       expect.objectContaining({ runId: 'root-active', conversationId: 'conv-1' }),
     ]);
-    await expect(supervisor.findActiveByConversation('conv-1', { includeChildren: true })).resolves.toEqual([
-      expect.objectContaining({ runId: 'root-active', conversationId: 'conv-1' }),
-      expect.objectContaining({ runId: 'child-active', conversationId: 'conv-1' }),
-    ]);
+    const activeRunsWithChildren = await supervisor.findActiveByConversation('conv-1', { includeChildren: true });
+    expect(activeRunsWithChildren.map((run) => run.runId).sort()).toEqual(['child-active', 'root-active']);
+    for (const run of activeRunsWithChildren) {
+      expect(run.conversationId).toBe('conv-1');
+    }
   });
 
   it('recoverOnBoot 把非终态 run 标记为 RUN_ABANDONED', async () => {
