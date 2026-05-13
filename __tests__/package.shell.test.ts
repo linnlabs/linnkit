@@ -48,6 +48,17 @@ describe('packages/linnkit shell manifest', () => {
     expect(manifest.types).toBe('./dist/index.d.ts');
     expect(manifest.bin).toEqual({ linnkit: './dist/cli.cjs' });
 
+    const devDependencies = manifest.devDependencies;
+    if (!isRecord(devDependencies)) {
+      throw new Error('packages/linnkit/package.json must define devDependencies for standalone OSS CI.');
+    }
+    expect(devDependencies).toMatchObject({
+      '@types/node': expect.any(String),
+      tsup: expect.any(String),
+      typescript: expect.any(String),
+      vitest: expect.any(String),
+    });
+
     const repository = manifest.repository;
     if (!isRecord(repository)) {
       throw new Error('packages/linnkit/package.json must define a repository object.');

@@ -98,7 +98,10 @@
     }
   },
   "devDependencies": {
-    "tsup": "^8.0.0"
+    "@types/node": "^24.3.0",
+    "tsup": "^8.0.0",
+    "typescript": "^5.5.4",
+    "vitest": "^3.2.4"
   },
   "linnkit": {
     "phase": "in progress (0.8.0 — TokenizerPort：host 可选注入自定义 tokenizer，默认行为保持 0.7.x)",
