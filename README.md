@@ -15,7 +15,7 @@
 
 - npm scope：`@linnlabs/linnkit`
 - 当前版本：以 [`package.json#version`](./package.json) 与 [`docs/release/RELEASE.md`](./docs/release/RELEASE.md) 为准（GitHub Packages 私有发布）
-- 阶段：**0.x experimental** — 7 个稳定子入口已收口；0.5.0 起 Phase F P0 三件（AgentSpec / RunSupervisor / AuditEnvelope）已落地
+- 阶段：**0.x experimental** — 7 个稳定子入口已收口；0.6.0 起 Context Engineering 配置面进一步开放，外部接入方可通过 `AgentSpec.contextPolicy` 精细控制上下文 token
 - 公开开源 + npmjs.com 路线见 [`docs/release/RELEASE.md §7`](./docs/release/RELEASE.md)
 
 ## 安装
