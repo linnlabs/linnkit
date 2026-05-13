@@ -10,7 +10,7 @@ linnkit is an open-source project licensed under MIT. Contributions of all kinds
 
 **Requirements**
 
-- Node.js `>=18` (see `.nvmrc` or `package.json#engines` for exact version)
+- Node.js `>=20`
 - npm `>=9`
 
 **Getting started**
@@ -21,7 +21,7 @@ git clone https://github.com/linnlabs/linnkit.git
 cd linnkit
 
 # Install dependencies
-npm ci
+npm install --no-audit --no-fund
 
 # Verify the setup
 npm run test:smoke
