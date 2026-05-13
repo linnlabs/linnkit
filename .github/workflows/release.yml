@@ -49,4 +49,21 @@ jobs:
           fi
       - name: Publish to npmjs
         if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run != 'true')
-        run: npm publish --provenance --access public
+        run: |
+          set +e
+          output="$(npm publish --provenance --access public 2>&1)"
+          status="$?"
+          set -e
+          printf '%s\n' "$output"
+          if [ "$status" -eq 0 ]; then
+            exit 0
+          fi
+          if printf '%s\n' "$output" | grep -q 'previously published versions'; then
+            version="$(node -p "require('./package.json').version")"
+            published="$(npm view @linnlabs/linnkit version --registry=https://registry.npmjs.org/)"
+            if [ "$published" = "$version" ]; then
+              echo "npm package @linnlabs/linnkit@$version is already published; treating this release as complete."
+              exit 0
+            fi
+          fi
+          exit "$status"
