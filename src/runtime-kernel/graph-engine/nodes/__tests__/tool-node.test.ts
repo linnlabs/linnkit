@@ -8,6 +8,7 @@ import { ToolNode } from '../toolNode';
 import { EngineState } from '../../types';
 import { setLlmAuditRecorder } from '../../../../shared/llmAuditRecorder';
 import type { ObservationPreviewPort, ToolRuntimePort } from '../../../tools/ports';
+import type { RuntimeEvent } from '../../../../contracts';
 
 const { getToolDefinitionMock, executeToolMock } = vi.hoisted(() => ({
   getToolDefinitionMock: vi.fn(),
@@ -35,8 +36,11 @@ describe('ToolNode - 单元测试', () => {
       getToolDefinition: getToolDefinitionMock,
       executeTool: executeToolMock,
     };
+    const truncateObservationMock = vi.fn<ObservationPreviewPort['truncateObservation']>(
+      async ({ text }) => ({ truncated: false, preview: text }),
+    );
     mockObservationPreview = {
-      truncateObservation: vi.fn(async ({ text }) => ({ truncated: false, preview: text })),
+      truncateObservation: truncateObservationMock,
     };
     toolNode = new ToolNode({
       toolRuntime: mockToolRuntime,
@@ -248,6 +252,106 @@ describe('ToolNode - 单元测试', () => {
       expect(result.kind).toBe('route');
       expect(result.nextNodeId).toBe('llm');
       expect(result.events).toBeDefined();
+    });
+
+    it('批量工具调用中某个工具失败时，也应继续消费剩余工具调用', async () => {
+      executeToolMock
+        .mockResolvedValueOnce({
+          success: false,
+          error: 'Root path is a directory',
+          errorKind: 'execution',
+        })
+        .mockResolvedValueOnce({
+          success: true,
+          result: 'read result',
+        });
+
+      const secondCall = {
+        id: 'call_2',
+        type: 'function' as const,
+        function: { name: 'read_file', arguments: '{"path":"/"}' },
+      };
+      const state: EngineState = {
+        nodeId: 'tool',
+        local: {
+          conversationId: 'conv_1',
+          turnId: 'turn_1',
+          pendingToolCalls: [
+            {
+              id: 'call_1',
+              type: 'function' as const,
+              function: { name: 'list_files', arguments: '{"path":"/"}' },
+            },
+            secondCall,
+          ],
+          toolContext: {},
+        },
+      };
+
+      const result = await toolNode.run(state);
+
+      expect(result.kind).toBe('route');
+      expect(result.nextNodeId).toBe('llm');
+      expect(state.local?.pendingToolCalls).toEqual([]);
+      expect(executeToolMock).toHaveBeenCalledTimes(2);
+      expect(
+        state.local?.history?.filter((event) => event.type === 'tool_output'),
+      ).toHaveLength(2);
+    });
+
+    it('批量工具调用中连续 protocol error 达到熔断阈值时，应先消费剩余工具调用', async () => {
+      executeToolMock.mockResolvedValue({
+        success: true,
+        result: 'OK',
+      });
+
+      const state: EngineState = {
+        nodeId: 'tool',
+        local: {
+          conversationId: 'conv_1',
+          turnId: 'turn_1',
+          pendingToolCalls: [
+            {
+              id: 'call_bad_1',
+              type: 'function' as const,
+              function: { name: 'bad_tool_1', arguments: 'invalid json' },
+            },
+            {
+              id: 'call_bad_2',
+              type: 'function' as const,
+              function: { name: 'bad_tool_2', arguments: 'invalid json' },
+            },
+            {
+              id: 'call_bad_3',
+              type: 'function' as const,
+              function: { name: 'bad_tool_3', arguments: 'invalid json' },
+            },
+            {
+              id: 'call_bad_4',
+              type: 'function' as const,
+              function: { name: 'bad_tool_4', arguments: 'invalid json' },
+            },
+            {
+              id: 'call_ok_5',
+              type: 'function' as const,
+              function: { name: 'ok_tool', arguments: '{}' },
+            },
+          ],
+          toolContext: {},
+        },
+      };
+
+      const result = await toolNode.run(state);
+
+      expect(result.kind).toBe('route');
+      expect(result.nextNodeId).toBe('llm');
+      expect(state.local?.pendingToolCalls).toEqual([]);
+      expect(executeToolMock).toHaveBeenCalledTimes(1);
+      expect(mockRecordToolProtocolError).toHaveBeenCalledTimes(4);
+      expect(
+        state.local?.history?.filter((event) => event.type === 'tool_output'),
+      ).toHaveLength(5);
+      expect('_consecutiveToolProtocolErrors' in (state.local ?? {})).toBe(false);
     });
 
     it('第一次 protocol error 应允许回到 llm 自修正，并记录连续次数', async () => {
@@ -476,7 +580,18 @@ describe('ToolNode - 单元测试', () => {
         result: 'OK',
       });
 
-      const existingHistory = [{ type: 'user_input', id: 'u1' }];
+      const existingHistory: RuntimeEvent[] = [
+        {
+          type: 'user_input',
+          id: 'u1',
+          timestamp: 1,
+          conversation_id: 'conv_1',
+          turn_id: 'turn_1',
+          version: 1,
+          source: 'user',
+          content: 'hello',
+        },
+      ];
       const state: EngineState = {
         nodeId: 'tool',
         local: {

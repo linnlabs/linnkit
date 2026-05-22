@@ -347,6 +347,48 @@ describe('LlmCaller', () => {
       );
     });
 
+    it('应该把流式 reasoning_content 片段归并后返回，避免工具决策 sidecar 碎片化', async () => {
+      mockChatCompletionStream.mockImplementation(
+        async (
+          _modelId: unknown,
+          _messages: unknown,
+          _options: unknown,
+          onContent: (content: string | { reasoning_details?: unknown[]; content?: string }) => void,
+        ) => {
+          onContent({
+            reasoning_details: [
+              { provider: 'example-reasoner', type: 'reasoning_content', reasoning_content: 'Need' },
+            ],
+          });
+          onContent({
+            reasoning_details: [
+              { provider: 'example-reasoner', type: 'reasoning_content', reasoning_content: ' to inspect.' },
+            ],
+          });
+        },
+      );
+
+      const events: Array<{ type?: string; reasoning_details?: unknown[] }> = [];
+      const result = await llmCaller.callStream(
+        testModelId,
+        testMessages,
+        {},
+        (event) => events.push(event as { type?: string; reasoning_details?: unknown[] }),
+      );
+
+      expect(result).toEqual({
+        content: '',
+        tool_calls: [],
+        reasoning_details: [
+          { provider: 'example-reasoner', type: 'reasoning_content', reasoning_content: 'Need to inspect.' },
+        ],
+      });
+      const providerSidecars = events.filter((event) => event.type === 'provider_sidecar');
+      expect(providerSidecars[providerSidecars.length - 1]?.reasoning_details).toEqual([
+        { provider: 'example-reasoner', type: 'reasoning_content', reasoning_content: 'Need to inspect.' },
+      ]);
+    });
+
     it('流式 tool_call arguments 若最终不是合法 JSON，不应返回半截 tool_calls', async () => {
       mockChatCompletionStream.mockImplementation(
         async (_modelId: unknown, _messages: unknown, _options: unknown, onContent: (content: unknown) => void) => {

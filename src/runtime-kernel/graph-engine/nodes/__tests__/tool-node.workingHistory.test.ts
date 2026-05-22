@@ -39,8 +39,11 @@ describe('ToolNode - working history injection', () => {
       displayOptions: {},
       parameters: { type: 'object', properties: {} },
     });
+    const truncateObservationMock = vi.fn<ObservationPreviewPort['truncateObservation']>(
+      async ({ text }) => ({ truncated: false, preview: text }),
+    );
     mockObservationPreview = {
-      truncateObservation: vi.fn(async ({ text }) => ({ truncated: false, preview: text })),
+      truncateObservation: truncateObservationMock,
     };
     node = new ToolNode({
       toolRuntime: mockToolRuntime,

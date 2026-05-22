@@ -16,6 +16,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.9.0] - 2026-05-22
+
+### Added
+
+- `appendStreamingProviderReasoningDetails` / `compactProviderReasoningDetails` / `compactReasoningDetailsInValue` in `@linnlabs/linnkit/runtime-kernel` — provider-agnostic helpers for merging adjacent streaming `reasoning_content` fragments.
+
+### Fixed
+
+- Streaming `reasoning_details` now merges adjacent pure text reasoning fragments before returning the final LLM result and before emitting provider sidecar updates, preventing audit records from storing token-by-token reasoning fragments.
+- `ToolNode` now drains every pending `assistant.tool_calls` item in the current batch before returning to the LLM, even when an earlier tool call fails. This preserves the protocol invariant that each tool call receives a corresponding tool output and avoids incomplete tool-call groups being dropped by downstream context assembly.
+- Tool protocol fuse handling now waits until the current batch has been fully consumed before throwing, so one repeated protocol error cannot strand later tool calls in the same assistant message.
+
+### Compatibility
+
+- Minor bump because `@linnlabs/linnkit/runtime-kernel` has new public exports and ToolNode batch execution behavior is stricter.
+
+---
+
 ## [0.8.0] - 2026-05-13
 
 ### Added

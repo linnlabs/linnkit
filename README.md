@@ -1,6 +1,6 @@
 # linnkit
 
-**A fine-grained context engineering framework for Agent applications — control every token sent to the model, with clear run lifecycle, audit records, and testable protocol boundaries.**
+**A fine-grained context engineering framework for Agent applications — control every token sent to the model, with clear run lifecycle, audit records, and testable protocol boundaries.** It gives a small, auditable runtime for controlling the messages, tool results, summaries, and policies that shape every LLM call.
 
 [中文文档](./README.zh-CN.md) · [Integration Guide](./docs/integration/README.md) · [Changelog](./CHANGELOG.md)
 

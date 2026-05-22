@@ -3,6 +3,11 @@ export { DefaultTokenizerPort, createDefaultTokenizerPort } from './defaultToken
 export { ModelResolver } from './modelResolver';
 export { defaultPolicyEngine } from './policies/defaultPolicyEngine';
 export { LLMPolicyEngine } from './policies/policyEngine';
+export {
+  appendStreamingProviderReasoningDetails,
+  compactProviderReasoningDetails,
+  compactReasoningDetailsInValue,
+} from './reasoning-details';
 export type { DefaultTokenizerPortConfig } from './defaultTokenizerPort';
 
 export type {

@@ -4,7 +4,7 @@ import type { TelemetryPort } from '../../telemetry/telemetryPort';
 import { noopAudit } from '../../audit/noopAudit';
 import { emitAuditEnvelope } from '../../audit/emitAudit';
 import type { AuditPort } from '../../../ports';
-import type { AgentSpecToolObservationGovernancePolicy } from '../../../contracts';
+import type { AgentSpecToolObservationGovernancePolicy, RuntimeEvent } from '../../../contracts';
 import type { ToolControlInfo } from '../../tools/ui-types';
 import type {
   ObservationPreviewPort,
@@ -193,6 +193,26 @@ export class ToolNode implements GraphNode {
   }
 
   async run(state: EngineState): Promise<NodeResult> {
+    const events: RuntimeEvent[] = [];
+
+    while (true) {
+      const result = await this.runNextPendingToolCall(state);
+      if (Array.isArray(result.events) && result.events.length > 0) {
+        events.push(...result.events);
+      }
+
+      if (result.kind === 'route' && result.nextNodeId === 'tool') {
+        continue;
+      }
+
+      return {
+        ...result,
+        events,
+      };
+    }
+  }
+
+  private async runNextPendingToolCall(state: EngineState): Promise<NodeResult> {
     const calls = (state.local?.pendingToolCalls as StandardToolCall[] | undefined) ?? [];
     const signalRaw = state.local?.signal;
     if (isAbortSignal(signalRaw) && signalRaw.aborted) {
@@ -425,20 +445,27 @@ export class ToolNode implements GraphNode {
       rawArguments: context.call.function?.arguments,
       parsedArguments: context.toolArgs,
     });
+    const remainingCalls = context.calls.slice(1);
 
     context.state.local = buildErrorLocalState({
       local: context.local,
-      remainingCalls: context.calls.slice(1),
+      remainingCalls,
       conversationId: context.conversationId,
       turnId: context.turnId,
       runtimeEvents: context.bridge.getRuntimeEvents(),
       nextProtocolErrorCount: fuse.nextCount,
     });
 
-    if (fuse.shouldFuse) {
+    if (fuse.shouldFuse && remainingCalls.length === 0) {
       throw createToolProtocolFuseError(fuse.nextCount, context.exec.error);
     }
 
-    return { kind: 'route', nextNodeId: 'llm', events: context.bridge.getRuntimeEvents() };
+    return {
+      kind: 'route',
+      // 同一个 assistant.tool_calls batch 必须为每个 call 产出 tool_output。
+      // 出错时也继续消费剩余 call，ToolNode.run 会在本节点内 drain 完 batch 再回 LLM。
+      nextNodeId: remainingCalls.length > 0 ? 'tool' : 'llm',
+      events: context.bridge.getRuntimeEvents(),
+    };
   }
 }

@@ -6,6 +6,7 @@ import { ToolCallStreamAccumulator } from './streaming/toolCallStreamAccumulator
 import { ThoughtStreamSegmenter } from './streaming/thoughtStreamSegmenter';
 import { assertToolCallsHaveValidJsonArguments, isRecord } from './sidecar-replay';
 import type { LlmCallResult } from './usage-telemetry';
+import { appendStreamingProviderReasoningDetails } from './reasoning-details';
 
 export interface CallLlmStreamParams {
   aiEngine: AgentAiEngine;
@@ -28,7 +29,7 @@ export async function callLlmStream(params: CallLlmStreamParams): Promise<LlmCal
 
   let fullResponse = '';
   let streamError: Error | null = null;
-  const reasoningDetails: unknown[] = [];
+  let reasoningDetails: unknown[] = [];
   const streamAnswerId = generateMessageId();
   let streamChunkSeq = 0;
   let capturedUsage: unknown | undefined = undefined;
@@ -106,13 +107,22 @@ export async function callLlmStream(params: CallLlmStreamParams): Promise<LlmCal
     const reasoning = isRecord(chunk) ? chunk['reasoning_details'] : undefined;
     if (reasoning !== undefined) {
       const newReasoningDetails = Array.isArray(reasoning) ? reasoning : [reasoning];
-      reasoningDetails.push(...newReasoningDetails);
-      eventHandler({
-        type: 'provider_sidecar',
-        id: generateMessageId(),
-        timestamp: Date.now(),
-        reasoning_details: newReasoningDetails,
-      });
+      const previousReasoningDetails = reasoningDetails;
+      const previousLength = previousReasoningDetails.length;
+      const compactedReasoningDetails = appendStreamingProviderReasoningDetails(reasoningDetails, newReasoningDetails);
+      reasoningDetails = compactedReasoningDetails;
+      const previousLastChanged =
+        previousLength > 0 && compactedReasoningDetails[previousLength - 1] !== previousReasoningDetails[previousLength - 1];
+      const emitFromIndex = previousLastChanged ? previousLength - 1 : previousLength;
+      const emittedReasoningDetails = compactedReasoningDetails.slice(Math.max(0, emitFromIndex));
+      if (emittedReasoningDetails.length > 0) {
+        eventHandler({
+          type: 'provider_sidecar',
+          id: generateMessageId(),
+          timestamp: Date.now(),
+          reasoning_details: emittedReasoningDetails,
+        });
+      }
     }
 
     if (chunk.tool_calls) {
