@@ -16,7 +16,7 @@ on:
           - 'false'
 
 permissions:
-  contents: read
+  contents: write
   id-token: write
 
 jobs:
@@ -67,3 +67,50 @@ jobs:
             fi
           fi
           exit "$status"
+      - name: Write GitHub release notes
+        if: github.event_name == 'push'
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+
+          const version = process.env.GITHUB_REF_NAME.replace(/^v/, '');
+          const changelog = fs.readFileSync('CHANGELOG.md', 'utf8');
+          const heading = `## [${version}]`;
+          const start = changelog.indexOf(heading);
+
+          if (start === -1) {
+            throw new Error(`CHANGELOG.md does not contain ${heading}`);
+          }
+
+          const next = changelog.indexOf('\n## [', start + heading.length);
+          const section = changelog
+            .slice(start, next === -1 ? undefined : next)
+            .replace(/^## \[[^\]]+\][^\n]*\n?/, '')
+            .trim();
+
+          if (!section) {
+            throw new Error(`CHANGELOG.md section for ${heading} is empty`);
+          }
+
+          fs.writeFileSync('github-release-notes.md', section);
+          NODE
+      - name: Create or update GitHub Release
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          TITLE="@linnlabs/linnkit ${TAG}"
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" \
+              --title "$TITLE" \
+              --notes-file github-release-notes.md \
+              --latest
+          else
+            gh release create "$TAG" \
+              --title "$TITLE" \
+              --notes-file github-release-notes.md \
+              --verify-tag \
+              --latest
+          fi
