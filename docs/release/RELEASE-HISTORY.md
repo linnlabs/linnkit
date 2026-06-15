@@ -17,6 +17,20 @@
 
 **实质内容**：`AgentSpec.contextPolicy` 从 budget/toolHistory/summarization 扩展到 mustKeep、workingMemory、checkpoint、reasoningRetention、tokenEstimation、systemReminder、contextTrace、toolOutput、providerReplay；摘要通过 host 注册的 summarization agent 执行；tool observation preview 通过 host `ObservationPreviewPort` 落完整副本；provider replay policy 可按 agent 覆盖；新增 host-neutral `ContextCheckpointTool` / `createContextCheckpointTool()`；framework 对比与现状评估文档按 0.6.0 候选线重评。
 
+### A.13 v15 — 2026-05-13 0.8.0 minor release（TokenizerPort）
+
+**实质内容**：新增 host-injectable `TokenizerPort`、默认实现 `DefaultTokenizerPort` / `createDefaultTokenizerPort()`、context-manager / orchestrator 注入点、`createMockTokenizerPort()` 与 C12 context-harness invariant。发布口径切到 npmjs public registry 后，外部接入方可以继续无 `.npmrc` 安装。
+
+### A.14 v17 — 2026-05-22 0.9.0 minor release（stream reasoning_details + ToolNode batch）
+
+**实质内容**：新增 streaming `reasoning_details` 归并 helper，最终 LLM result 和 provider sidecar event 都先压缩相邻纯文本 reasoning 片段；`ToolNode` 在返回 LLM 前完整消费当前 assistant message 的所有 `tool_calls`，即使某个工具失败也不丢同批后续工具调用。
+
+### A.15 v18 — 2026-06-15 0.10.0 minor release（checkpointKey contract）
+
+**实质内容**：`GraphExecutor` / `Checkpointer` host adapter 合同统一使用 `checkpointKey` 表达 engine-state snapshot identity；runtime `conversationId` 作为 host 会话身份从 graph local / child-run request 显式传递；同步 child-run 的 RuntimeEvent / Audit / Telemetry scope 与 host 注册 run 对齐；detached run 使用 `spawnDetached()` 捕获时的 `AgentSpec` / request / metadata snapshot，避免后续对象 mutation 改写后台 run 上下文。
+
+**版本判定**：0.x 期间改既有公开合同语义按 minor 发版。本次不是防御性补丁，而是把 `checkpointKey` 与 host `conversationId` 的职责边界拆清楚，修复 EventStore-backed audit 写入时把 child `runId` 和内部 checkpoint key 混用为不存在 run session 的根因。
+
 ### A.1 v0 — 2026-04-23 立项 + 规格草稿
 
 拍板表初稿 + 草拟 `customConditions` 双入口方案。
@@ -442,6 +456,38 @@ DeepSeek V4 thinking/tool follow-up 暴露出 provider sidecar 不能只挂在 t
 - `framework/01` / `framework/02` / `99-research-notes/topic-agent-framework-comparison-2026.md` 按 0.6.0 候选线重评。
 
 **版本判定**：新增公开类型、公开工具与 context policy 字段，符合 0.x minor bump。
+
+### C.11 0.8.0 minor release（2026-05-13 — TokenizerPort）
+
+**实质内容**：
+
+- `TokenizerPort` 进入 `@linnlabs/linnkit/ports`，host 可以用 Claude / Gemini / 私有模型 tokenizer 替换默认 token 估算。
+- `DefaultTokenizerPort` / `createDefaultTokenizerPort()` 进入 `runtime-kernel`，继续包装现有 `TokenCalculator`。
+- `ContextManagerBaseOptions.tokenizer` / `tokenizerModelId` 与 `updateTokenizerModelId()` 支持同一个 context manager 跑多模型时刷新估算模型。
+- testkit 新增 `createMockTokenizerPort()` 与 C12 invariant，证明 host 注入 tokenizer 后预算 trace 真正由它驱动。
+
+**版本判定**：新增公开 port、runtime helper、testkit helper 与 context-manager 注入点，符合 0.x minor bump。
+
+### C.12 0.9.0 minor release（2026-05-22 — stream reasoning_details + ToolNode batch）
+
+**实质内容**：
+
+- 新增 `appendStreamingProviderReasoningDetails` / `compactProviderReasoningDetails` / `compactReasoningDetailsInValue`。
+- streaming `reasoning_details` 在最终 LLM result 与 provider sidecar event 前归并相邻纯文本片段，避免 audit 存 token-by-token 片段。
+- `ToolNode` 完整消费当前 assistant message 内所有 `tool_calls`，即使较早工具调用失败，也保证同 batch 每个 tool call 都有对应 tool output。
+
+**版本判定**：新增 runtime-kernel public exports，且 ToolNode batch 执行行为更严格，符合 0.x minor bump。
+
+### C.13 0.10.0 minor release（2026-06-15 — checkpointKey contract）
+
+**实质内容**：
+
+- `GraphExecutor` / `Checkpointer` 参数命名从含混的 conversation/key 语义收敛为 `checkpointKey`，只表达 engine-state snapshot identity。
+- graph telemetry 从 runtime local state 读取 host `conversationId`，不再把 checkpoint key 当 host conversation。
+- 同步 child-run 可以接收显式 host `conversationId`，同时继续使用内部 checkpoint key 隔离 GraphExecutor state。
+- detached run 运行时使用 `spawnDetached()` 注册时捕获的 `AgentSpec` / request / metadata snapshot，避免后台 run 被 caller 后续对象 mutation 影响。
+
+**版本判定**：`Checkpointer` / `CheckpointMeta` host adapter contract 有公开语义变化，按 §4 走 0.x minor。这里的修复边界是“身份职责拆分”，不是在 EventStore adapter 外层加 fallback。
 
 ---
 

@@ -14,6 +14,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-06-15
+
+### Changed
+
+- `GraphExecutor` / `Checkpointer` now name engine-state snapshot keys as `checkpointKey`, and graph telemetry reads the runtime `conversationId` from graph local state instead of treating the checkpoint key as a host conversation.
+- Synchronous child runs can now receive an explicit host `conversationId` while still using an internal checkpoint key for GraphExecutor state isolation. This keeps RuntimeEvent / Audit / Telemetry scope aligned with the child run registered by the host and prevents EventStore-backed audit writes from mixing a child `runId` with an internal conversation key.
+- `copyToolContextRuntimeCapability` is now exported from `@linnlabs/linnkit/runtime-kernel` so child-run tool contexts can preserve the parent tool runtime binding without manually copying reserved fields.
+- Detached runs now execute against the `AgentSpec`, request, and metadata snapshots captured during `spawnDetached()` registration, so later caller-side object mutations cannot change the background run context.
+
+### Compatibility
+
+- Minor bump because `Checkpointer` / `CheckpointMeta` host adapter contracts now use `checkpointKey` for graph persistence identity. Host adapters that previously treated the graph checkpoint key as a user conversation id should pass host `conversationId` explicitly and reserve `checkpointKey` for engine snapshots.
+
 ---
 
 ## [0.9.0] - 2026-05-22

@@ -1,6 +1,6 @@
 {
   "name": "@linnlabs/linnkit",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "type": "module",
   "description": "A fine-grained context engineering framework for Agent applications — control every token sent to the model, with clear run lifecycle, audit records, and testable protocol boundaries.",
   "license": "MIT",
@@ -104,7 +104,7 @@
     "vitest": "^3.2.4"
   },
   "linnkit": {
-    "phase": "released (0.9.0 — stream reasoning_details 归并 + ToolNode 完整消费 tool_calls batch)",
+    "phase": "released (0.10.0 — checkpointKey contract + child-run conversation alignment)",
     "sourceOfTruth": "CHANGELOG.md",
     "notes": [
       "子入口 ./runtime-kernel/events 是 browser-safe slim seam：仅暴露 events governance 纯函数，禁止扩展任何 Node-only 依赖（如 node:async_hooks / crypto / fs）",
