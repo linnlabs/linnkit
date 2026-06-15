@@ -450,6 +450,7 @@ npm view @linnlabs/linnkit version dist-tags.latest --registry https://registry.
 说明：
 
 - npmjs package settings 必须配置 Trusted Publisher：GitHub Actions，Organization/User=`linnlabs`，Repository=`linnkit`，Workflow filename=`release.yml`，允许 `npm publish`。
+- 如果 `npm publish --provenance` 已经打印 Signed provenance / transparency log，但随后报 `E404 Not Found ... or you do not have permission`，这不是源码仓或 tag 问题，而是 npm 包设置尚未信任这条 GitHub workflow。0.8.0 / 0.9.0 的 Release workflow 成功记录只是"版本已提前存在"的幂等成功，不能当成首次 OIDC publish 已验证通过。
 - `package.json#repository.url` 必须保持 `git+https://github.com/linnlabs/linnkit.git`。npm Trusted Publishing 会校验这个值和实际发布仓一致。
 - npm 官方要求 Trusted Publishing 使用 Node >= 22.14.0 和 npm >= 11.5.1；release workflow 固定 Node 24，并安装 npm 11.17.0。
 - `npm whoami` 不能验证 OIDC 发布权限，因为 OIDC 只在 `npm publish` 时生效。不要把 `whoami` token 预检加回 release workflow。

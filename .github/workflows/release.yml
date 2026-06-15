@@ -63,6 +63,12 @@ jobs:
           if [ "$status" -eq 0 ]; then
             exit 0
           fi
+          if printf '%s\n' "$output" | grep -Eq 'E404|you do not have permission|could not be found'; then
+            {
+              echo "::error::npm publish was rejected by npmjs. Verify @linnlabs/linnkit Trusted Publisher settings: GitHub Actions; Organization/User=linnlabs; Repository=linnkit; Workflow filename=release.yml; allowed action includes npm publish."
+              echo "::error::Do not fix this by adding a long-lived npm token to this workflow; OIDC publishing only works after npm package settings trust this exact workflow."
+            } >&2
+          fi
           if printf '%s\n' "$output" | grep -q 'previously published versions'; then
             version="$(node -p "require('./package.json').version")"
             published="$(npm view @linnlabs/linnkit version --registry=https://registry.npmjs.org/)"
