@@ -31,6 +31,8 @@
 
 **版本判定**：0.x 期间改既有公开合同语义按 minor 发版。本次不是防御性补丁，而是把 `checkpointKey` 与 host `conversationId` 的职责边界拆清楚，修复 EventStore-backed audit 写入时把 child `runId` 和内部 checkpoint key 混用为不存在 run session 的根因。
 
+**发布结果**：`v0.10.0` release run 首次到 npm publish 时被 npmjs 以 `E404 / you do not have permission` 拒绝。工程验证、dist smoke、`npm pack --dry-run` 均已通过，根因不是源码或 tarball，而是 npm package settings 还没有信任 `linnlabs/linnkit` 的 GitHub Actions workflow。配置 Trusted Publisher（provider=GitHub Actions，repo=`linnlabs/linnkit`，workflow=`release.yml`，permission=`npm publish`）后 rerun 同一个 workflow 成功，npm `latest` 更新为 `0.10.0`，GitHub Release 创建成功。
+
 ### A.1 v0 — 2026-04-23 立项 + 规格草稿
 
 拍板表初稿 + 草拟 `customConditions` 双入口方案。
@@ -488,6 +490,15 @@ DeepSeek V4 thinking/tool follow-up 暴露出 provider sidecar 不能只挂在 t
 - detached run 运行时使用 `spawnDetached()` 注册时捕获的 `AgentSpec` / request / metadata snapshot，避免后台 run 被 caller 后续对象 mutation 影响。
 
 **版本判定**：`Checkpointer` / `CheckpointMeta` host adapter contract 有公开语义变化，按 §4 走 0.x minor。这里的修复边界是“身份职责拆分”，不是在 EventStore adapter 外层加 fallback。
+
+**发版结果**：
+
+- tag：`v0.10.0`
+- release run：`27521712528`
+- 第一次 publish 失败：npmjs 返回 `E404 / The requested resource '@linnlabs/linnkit@0.10.0' could not be found or you do not have permission to access it.`
+- 失败定位：typecheck / build / smoke / dist smoke / pack 全绿，tarball 包含 `bin/linnkit.cjs`；问题只在 npm package settings 未配置 Trusted Publisher。
+- 修复动作：在 npm `@linnlabs/linnkit` 包设置中添加 GitHub Actions Trusted Publisher，repo=`linnlabs/linnkit`，workflow=`release.yml`，permission=`npm publish`。
+- 最终结果：rerun failed job 成功；npm `latest` 更新为 `0.10.0`；GitHub Release `@linnlabs/linnkit v0.10.0` 创建成功。
 
 ---
 
