@@ -1,10 +1,14 @@
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { describe, expect, it } from 'vitest';
 import { parseCliArgs } from '../args';
 import { runCli } from '../index';
 import { runInitCommand } from '../init';
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
 
 async function createTempDir(): Promise<string> {
   return mkdtemp(join(tmpdir(), 'linnkit-cli-'));
@@ -60,6 +64,11 @@ describe('linnkit cli', () => {
     expect(files).toContain('package.json');
     expect(files).toContain('linnkit.config.mjs');
     expect(files).not.toContain('.npmrc.example');
+    const generatedPackageJson: unknown = JSON.parse(await readFile(join(cwd, 'demo', 'package.json'), 'utf8'));
+    if (!isRecord(generatedPackageJson) || !isRecord(generatedPackageJson.dependencies)) {
+      throw new Error('generated quickstart package.json must define dependencies.');
+    }
+    expect(generatedPackageJson.dependencies['@linnlabs/linnkit']).toBe('^0.10.0');
     await expect(runInitCommand({ cwd, name: 'demo' })).rejects.toThrow(/not empty/);
   });
 

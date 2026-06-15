@@ -24,13 +24,18 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: '24'
           registry-url: 'https://registry.npmjs.org/'
           scope: '@linnlabs'
-      - run: npm install -g npm@latest
+          package-manager-cache: false
+      - name: Verify npm trusted publishing toolchain
+        run: |
+          npm install -g npm@11.17.0
+          node --version
+          npm --version
       - run: npm install --no-audit --no-fund
       - run: npm run typecheck
       - run: npm run build

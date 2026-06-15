@@ -17,7 +17,7 @@ export function createQuickstartTemplateFiles(projectName: string): TemplateFile
           start: 'linnkit run hello --input "你好，介绍一下你自己"',
         },
         dependencies: {
-          '@linnlabs/linnkit': '^0.8.0',
+          '@linnlabs/linnkit': '^0.10.0',
           zod: '^3.22.0',
         },
         devDependencies: {},

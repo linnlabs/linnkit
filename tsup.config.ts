@@ -3,7 +3,7 @@ import { defineConfig } from 'tsup';
 /**
  * tsup build config for `@linnlabs/linnkit`.
  *
- * 6 个稳定公开子入口（与 package.json#exports 1:1）：
+ * 8 个稳定公开子入口（与 package.json#exports 1:1；CLI 另走 bin）：
  *   .                       → dist/index.{js,cjs,d.ts}
  *   ./ports                 → dist/ports.{js,cjs,d.ts}
  *   ./contracts             → dist/contracts.{js,cjs,d.ts}
