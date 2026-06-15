@@ -37,7 +37,7 @@
 
 ### A.2 v1 — 2026-04-23 工程层全部落地
 
-**关键修订**：dev 体验改用 **paths/alias 平行别名**（`linnkit*` + `@linnya/linnkit*` 两组同时登记），而非 `customConditions: ["linnya-dev"]` —— 因为 linnya 主仓本就不通过 `node_modules` 解析 linnkit，而是靠 `tsconfig.paths` + `vite.alias` + `vitest.alias` 直读 src，`customConditions` 在这条路径上不会生效。详见 RELEASE.md §1.3。
+**关键修订**：dev 体验改用 **paths/alias 平行别名**（`linnkit*` + `@linnya/linnkit*` 两组同时登记），而非 `customConditions: ["linnya-dev"]` —— 因为 linnya 主仓本就不通过 `node_modules` 解析 linnkit，而是靠 `tsconfig.paths` + `vite.alias` + `vitest.alias` 直读 src，`customConditions` 在这条路径上不会生效。
 
 ### A.3 v2 — 2026-04-23 架构归位（消除循环依赖）
 
@@ -88,7 +88,7 @@
 **与 0.1.1 的对比**：
 - 运行时 dist 字节级一致（exports / 类型签名 / 实现 0 变化）
 - 仅 npm tarball 内容变化（结构 + 包根 README）
-- 完美符合 RELEASE.md §4 patch 定义（"实现优化 / 不改 exports / 不改既有签名"）
+- 按当时版本号策略判定为 patch：实现优化 / 不改 exports / 不改既有签名。
 
 **为什么不继续等更大改动一起发？** linnsy daemon 即将在 S0 T0.9 切到 registry 装包；先把包结构整理干净再让 daemon 装是最 clean 的路径，避免出现"daemon 装到 0.1.1 旧 src/*.md 结构、几天后再升 0.1.2"的中间态。
 
@@ -156,7 +156,7 @@ zod 的修复策略与 tiktoken **不同**——zod 标 `peerDependencies@^3.22.
 - ➕ 新增 `dependencies.tiktoken@^1.0.22`（消费者多装一个 transitive dep）
 - ➕ 新增 `peerDependencies.vitest@^2||^3` (optional)（消费者主动装才生效）
 
-**判定为 patch 的依据**：完美符合 [`RELEASE.md §4`](./RELEASE.md#4-版本号策略0x-期间) "bug fix / 实现优化 / 不改 exports / 不改既有签名 → patch"。本质是**修复 bug**（0.1.0~0.1.2 三个版本所有 Node 全展开入口外部消费者都装不动是 bug），不是新功能。
+**判定为 patch 的依据**：按当时版本号策略，bug fix / 实现优化 / 不改 exports / 不改既有签名走 patch。本质是**修复 bug**（0.1.0~0.1.2 三个版本所有 Node 全展开入口外部消费者都装不动是 bug），不是新功能。
 
 详见下方 [§C.5 0.1.3 发版历程](#c5-013-2026-04-24--packaging-fix-tiktoken-external--declared-dep)。
 
@@ -241,7 +241,7 @@ DeepSeek V4 thinking/tool follow-up 暴露出 provider sidecar 不能只挂在 t
 
 **第 3 次 CI（2m10s）成功**，`@linnlabs/linnkit@0.1.1` 上线。
 
-**Release-time 机械检查清单**（已沉淀进 `RELEASE.md` **§5.1**，避免再踩）：
+**Release-time 机械检查清单**（当前口径见 [`RELEASE.md`](./RELEASE.md) 的发版前检查）：
 - (a) bump version commit 后 `git diff HEAD~1 -- packages/linnkit/package.json` 必须看到 version 行变化
 - (b) `git status --short` 必须**完全为空**才允许打 release tag（任何 untracked / modified 都先解决）
 - (c) 本地先跑 `npm --prefix packages/linnkit run build` 验通过再 push tag
@@ -299,7 +299,7 @@ DeepSeek V4 thinking/tool follow-up 暴露出 provider sidecar 不能只挂在 t
 - 类型签名、运行时行为、tree-shaking 形态全部不变
 - linnya host 侧 `import from 'linnkit'` / `import from '@linnlabs/linnkit'` 抽样无回归
 
-**判定为 patch 的依据**：完美符合 [`RELEASE.md §4`](./RELEASE.md#4-版本号策略0x-期间) "bug fix / 实现优化 / 不改 exports / 不改既有签名 → patch"。运行时 0 变化，仅包元数据 + 文档结构刷新。
+**判定为 patch 的依据**：按当时版本号策略，bug fix / 实现优化 / 不改 exports / 不改既有签名走 patch。运行时 0 变化，仅包元数据 + 文档结构刷新。
 
 **机械检查清单兑现**（从 0.1.1 D-5 教训沉淀，本次预先跑全）：
 - (a) bump version commit 后 `git diff HEAD~1 -- packages/linnkit/package.json` 看到 `"version": "0.1.1" → "0.1.2"` ✅
@@ -491,12 +491,13 @@ DeepSeek V4 thinking/tool follow-up 暴露出 provider sidecar 不能只挂在 t
 
 ---
 
-## D. 与主文档章节号的映射
+## D. 与发布手册的分工
 
-便于在 RELEASE.md 和本文之间穿梭：
+`RELEASE.md` 现在只保留当前发布步骤、发布边界和失败处理；本文只保留历史背景、踩坑和复盘。不要再维护“主文档章节号映射”，否则每次精简 runbook 都会制造失效引用。
 
-| RELEASE.md | RELEASE-HISTORY.md |
+| 想查什么 | 读哪里 |
 |---|---|
-| §0 拍板表（修订记录摘要 v0~v9） | §A 修订记录全文（含 §A.7 v6 = 0.1.3、§A.8 v7 = 0.2.0、§A.9 v8 = 0.2.1、§A.10 v9 = 0.2.2 docs） |
-| §5.5b PAT 路径 | §B.1 PAT rotate runbook |
-| §5.7 0.1.x / 0.2.x release 一行结论 | §C.1~C.5（0.1.x）+ §C.6（0.2.0）+ §C.7（0.2.1）+ §C.8（0.2.2） |
+| 现在怎么发版 | [`RELEASE.md`](./RELEASE.md) |
+| 某次发版为什么这样做 | 本文 §A / §C |
+| 历史 PAT / token 路线 | 本文 §B |
+| 对外版本变化 | [`CHANGELOG.md`](../../CHANGELOG.md) |
