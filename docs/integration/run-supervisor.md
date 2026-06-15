@@ -32,10 +32,12 @@ const handle = await supervisor.registerRun({
 ## 2. 接入规则
 
 - `runId` 建议由 host 显式传入。如果 host 已有稳定的 `turnId` / request id，可以直接用 `runId = turnId`，这样 `RunHandle.observe({ includePersisted: true })` 能复用 EventStore 里的 runId 索引。
+- `conversationId` 是 host 的审计/事件归属；`runId` 是本次 run 身份；`parentRunId` 只表达父子成本与审计关联。不要把 GraphExecutor 的 checkpoint key 当成这三个字段之一。
 - `RunHandle.signal` 是 runner 内部唯一信号来源；不要再给 GraphExecutor 另起一根 ad-hoc `AbortController`。
 - `AgentRunnerService.run()` 一类 host runner 应同步返回 `{ handle, result }`：UI 可以立刻拿 handle 做 cancel/observe/cost，执行结果继续等 `result`。
 - runner 生命周期必须显式写：启动前 `markRunning()`，正常结束 `markCompleted()`，异常结束 `markFailed()`，取消由 `handle.cancel({ reason })` 写 `cancelled`。
 - `WaitUserNode` 触发的 `requires_user_interaction` 是正式 pause 事实事件。事件必须带 `metadata.run_context.runId`，host runner 要把 `runUntilYield().events` 中的这类事件发布/持久化，并调用 `markAwaitingUser()`；`DefaultRunSupervisor` 也会订阅该事件作为兜底联动。这样 `supervisor.peek(runId).status` 才会从 `running` 变成 `awaiting_user`。
+- `registerRun()` / `spawnDetached()` 会把 `AgentSpec` 与 request 作为注册时快照保存；`spawnDetached()` 的 executor 也读取这份快照。调用方后续修改原始对象不会改变已经注册的后台 run。
 - `pause/resume/runTree/handleFailure` 仍是冷暂停/树管理/故障策略占位，调用时应抛 `NotImplementedError`，不要给假实现。
 
 ## 3. RunHandle 完整 API（截至 0.5.0）
@@ -66,4 +68,5 @@ const handle = await supervisor.registerRun({
 - 单测：显式 `runId` 注册后，`handle.runId` 和 `registryStore.load(runId)` 对齐。
 - 单测：同一个 `runId` 注册两次抛 `RunAlreadyRegisteredError`。
 - 单测：`parentSignal.abort('reason')` 后 `handle.signal.aborted === true`。
+- 单测：`spawnDetached()` executor 收到的 `runId / parentRunId / conversationId / AgentSpec / request / metadata` 与注册时一致。
 - 集成测：取消时 `RunRecord.errorIfAny.message` 能透传到你的 `stream_end.reason_message`。

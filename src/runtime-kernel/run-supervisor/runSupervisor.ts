@@ -184,7 +184,7 @@ function isActiveStatus(status: RunRecord['status']): boolean {
 }
 
 function cloneMetadata(metadata: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
-  return metadata ? { ...metadata } : undefined;
+  return metadata ? structuredClone(metadata) : undefined;
 }
 
 function recordToSnapshot(record: RunRecord): RunSnapshot {
@@ -281,7 +281,7 @@ export class DefaultRunSupervisor<TRequest extends RunRequestSnapshot = RunReque
       startedAt,
       updatedAt: startedAt,
       iterationBudget: spec.iterationBudget ? { ...spec.iterationBudget } : undefined,
-      metadata: spec.metadata ? { ...spec.metadata } : undefined,
+      metadata: cloneMetadata(spec.metadata),
     };
 
     await this.registryStore.save(record);
@@ -486,12 +486,13 @@ export class DefaultRunSupervisor<TRequest extends RunRequestSnapshot = RunReque
 
     try {
       await handle.markRunning({ currentNode: 'detached' });
+      const registeredRecord = await this.registryStore.load(handle.runId);
       const executorOutcome = await this.executor.execute({
         runId: handle.runId,
-        parentRunId: spec.parentRunId,
-        conversationId: spec.conversationId,
-        agentSpec: spec.agentSpec,
-        request: spec.request,
+        parentRunId: handle.parentRunId,
+        conversationId: registeredRecord?.conversationId ?? spec.conversationId,
+        agentSpec: await handle.spec(),
+        request: await handle.request(),
         signal: handle.signal,
         eventBus: spec.eventBus,
         eventStore: spec.eventStore,
@@ -500,7 +501,7 @@ export class DefaultRunSupervisor<TRequest extends RunRequestSnapshot = RunReque
         contextFences: spec.contextFences,
         wakeSource: spec.wakeSource,
         ephemeral: spec.ephemeral,
-        metadata: spec.metadata,
+        metadata: cloneMetadata(registeredRecord?.metadata ?? spec.metadata),
       });
       const outcome = await this.persistExecutorOutcome(handle, executorOutcome);
       this.notifyTerminalWaiters(outcome);
@@ -571,12 +572,14 @@ export class DefaultRunSupervisor<TRequest extends RunRequestSnapshot = RunReque
       await this.registryStore.save(record);
     }
     const completedAt = executorOutcome?.completedAt ?? this.now();
+    const fallbackMeta = record ? undefined : await handle.meta();
     const outcome = recordToTerminalOutcome(record ?? {
       runId: handle.runId,
       parentRunId: handle.parentRunId,
-      conversationId: '',
+      conversationId: fallbackMeta?.conversationId ?? '',
+      agentSpecId: fallbackMeta?.agentSpecId,
       status: executorOutcome?.status ?? 'completed',
-      startedAt: completedAt,
+      startedAt: fallbackMeta?.startedAt ?? completedAt,
       updatedAt: completedAt,
     }, completedAt);
     const nextOutcome: RunOutcome = {

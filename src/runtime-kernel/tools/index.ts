@@ -14,6 +14,7 @@ export {
   readToolContextUserQuery,
 } from './toolContextCompatibility';
 export {
+  copyToolContextRuntimeCapability,
   ensureToolContextRuntimeCapability,
   getToolContextRuntimeBinding,
   readToolContextPersistedHistory,

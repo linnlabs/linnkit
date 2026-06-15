@@ -28,11 +28,11 @@ function readCheckpointHistory(checkpoint: EngineState | null): RuntimeEvent[] {
 
 export async function recoverChildRunEventsFromCheckpoint(params: {
   checkpointer: Checkpointer;
-  conversationId: string;
-  internalConversationId: string;
+  checkpointKey: string;
+  childConversationId: string;
   seedHistory: ReadonlyArray<RuntimeEvent>;
 }): Promise<RuntimeEvent[]> {
-  const checkpoint = await params.checkpointer.load(params.conversationId);
+  const checkpoint = await params.checkpointer.load(params.checkpointKey);
   const history = readCheckpointHistory(checkpoint);
   if (history.length === 0) {
     return [];
@@ -42,5 +42,5 @@ export async function recoverChildRunEventsFromCheckpoint(params: {
     return history.slice(params.seedHistory.length);
   }
 
-  return history.filter((event) => event.conversation_id === params.internalConversationId);
+  return history.filter((event) => event.conversation_id === params.childConversationId);
 }

@@ -21,30 +21,30 @@ export class MemoryCheckpointer implements Checkpointer {
     };
   }
 
-  async load(conversationId: string): Promise<EngineState | null> {
-    const entry = this.store.get(conversationId);
+  async load(checkpointKey: string): Promise<EngineState | null> {
+    const entry = this.store.get(checkpointKey);
     return entry ? this.cloneState(entry.state) : null;
   }
 
-  async save(conversationId: string, state: EngineState): Promise<void> {
-    this.store.set(conversationId, {
+  async save(checkpointKey: string, state: EngineState): Promise<void> {
+    this.store.set(checkpointKey, {
       state: this.cloneState(state),
       savedAt: Date.now(),
     });
   }
 
-  async clear(conversationId: string): Promise<void> {
-    this.store.delete(conversationId);
+  async clear(checkpointKey: string): Promise<void> {
+    this.store.delete(checkpointKey);
   }
 
-  async peekMeta(conversationId: string): Promise<CheckpointMeta | null> {
-    const entry = this.store.get(conversationId);
-    return entry ? summarizeCheckpoint(conversationId, entry.state, entry.savedAt) : null;
+  async peekMeta(checkpointKey: string): Promise<CheckpointMeta | null> {
+    const entry = this.store.get(checkpointKey);
+    return entry ? summarizeCheckpoint(checkpointKey, entry.state, entry.savedAt) : null;
   }
 
   async list(filter: CheckpointListFilter = {}): Promise<CheckpointSummary[]> {
     const summaries = Array.from(this.store.entries())
-      .map(([conversationId, entry]) => summarizeCheckpoint(conversationId, entry.state, entry.savedAt))
+      .map(([checkpointKey, entry]) => summarizeCheckpoint(checkpointKey, entry.state, entry.savedAt))
       .filter((summary) => (filter.savedAfter === undefined ? true : summary.savedAt > filter.savedAfter))
       .sort((left, right) => right.savedAt - left.savedAt);
 

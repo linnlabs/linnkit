@@ -41,7 +41,7 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 }
 
 export type CheckpointMeta = {
-  conversationId: string;
+  checkpointKey: string;
   schemaVersion: number;
   savedAt: number;
   currentNode?: string;
@@ -58,15 +58,15 @@ export type CheckpointListFilter = {
 export type CheckpointSummary = CheckpointMeta;
 
 export interface Checkpointer {
-  load(conversationId: string): Promise<EngineState | null>;
-  save(conversationId: string, state: EngineState): Promise<void>;
-  clear(conversationId: string): Promise<void>;
-  peekMeta?(conversationId: string): Promise<CheckpointMeta | null>;
+  load(checkpointKey: string): Promise<EngineState | null>;
+  save(checkpointKey: string, state: EngineState): Promise<void>;
+  clear(checkpointKey: string): Promise<void>;
+  peekMeta?(checkpointKey: string): Promise<CheckpointMeta | null>;
   list?(filter?: CheckpointListFilter): Promise<CheckpointSummary[]>;
 }
 
 export function summarizeCheckpoint(
-  conversationId: string,
+  checkpointKey: string,
   state: EngineState,
   savedAt: number,
 ): CheckpointSummary {
@@ -75,7 +75,7 @@ export function summarizeCheckpoint(
   const pendingToolCalls = local?.pendingToolCalls;
 
   return {
-    conversationId,
+    checkpointKey,
     schemaVersion: state.schemaVersion ?? 1,
     savedAt,
     currentNode: state.nodeId,

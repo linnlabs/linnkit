@@ -96,7 +96,9 @@ packages/linnkit/src/runtime-kernel/graph-engine/
 
 ### 5.1 GraphExecutor 主循环详解
 
-`GraphExecutor.runUntilYield(conversationId)` 是整个 graph run 的入口：
+`GraphExecutor.runUntilYield(checkpointKey)` 是整个 graph run 的入口。
+
+`checkpointKey` 是 `Checkpointer` 读写 `EngineState` 的索引，不等同于 RuntimeEvent / Audit / Telemetry 里的 `conversationId`。顶层 host run 可以选择 `checkpointKey = conversationId`；同步 child-run 则必须使用内部隔离的 checkpoint key，同时把真实宿主会话放在 `local.conversationId` / `toolContext.conversationId` 里。
 
 ```
 加载 checkpoint + ephemeral locals

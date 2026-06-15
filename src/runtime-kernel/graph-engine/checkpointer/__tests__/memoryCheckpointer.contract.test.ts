@@ -59,7 +59,7 @@ describe('MemoryCheckpointer contract', () => {
     }
 
     await expect(peekMeta.call(checkpointer, 'conv-1')).resolves.toEqual({
-      conversationId: 'conv-1',
+      checkpointKey: 'conv-1',
       schemaVersion: 7,
       savedAt: Date.parse('2026-04-22T09:30:00.000Z'),
       currentNode: 'answer',
@@ -93,7 +93,7 @@ describe('MemoryCheckpointer contract', () => {
 
     expect(summaries).toEqual<CheckpointSummary[]>([
       {
-        conversationId: 'conv-3',
+        checkpointKey: 'conv-3',
         schemaVersion: 3,
         savedAt: Date.parse('2026-04-22T11:00:00.000Z'),
         currentNode: 'answer',
@@ -101,7 +101,7 @@ describe('MemoryCheckpointer contract', () => {
         hasPendingToolCalls: false,
       },
       {
-        conversationId: 'conv-2',
+        checkpointKey: 'conv-2',
         schemaVersion: 2,
         savedAt: Date.parse('2026-04-22T10:00:00.000Z'),
         currentNode: 'llm',

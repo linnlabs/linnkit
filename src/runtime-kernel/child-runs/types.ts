@@ -47,6 +47,15 @@ export interface ChildRunExecutionPolicy {
    */
   runId?: string;
   /**
+   * child-run 的宿主会话归属。
+   *
+   * 中文备注：
+   * - 同步 child-run 通常复用父 conversationId，方便 EventStore / Audit / Telemetry
+   *   在同一条会话链路下写入 child run；
+   * - 框架内部仍可使用独立 checkpoint key 隔离 GraphExecutor 状态。
+   */
+  conversationId?: string;
+  /**
    * 父 runId。默认从 parentToolContext.runId 继承。
    */
   parentRunId?: string;

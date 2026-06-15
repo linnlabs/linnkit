@@ -79,9 +79,12 @@ const outcome = await supervisor.waitForTerminal(handle.runId);
 - **不要**把 `invokeChildRun` 当成"小一号的 run"——它本质上是父 run 内部的一个嵌入式调用，与父 run 共享 abort signal、cost 聚合、enrichment registry。
 - **不要**把 `spawnDetached` 用于工具调用流（HTTP 端到端响应里不应该等 spawnDetached 完成）——那是 invokeChildRun 的场景。
 - 父子 run 的 cost 通过 `scope.parentRunId` 关联；如果你的 telemetry adapter 没把 `parentRunId` 透传到 sink，那 `childrenTotal` 字段就是 0。
+- 同步 child-run 的 `conversationId` 是宿主审计/事件归属，不是内部 checkpoint key。host 如果先用 `RunSupervisor.registerRun({ runId: childRunId, conversationId })` 注册 child run，随后调用 `ChildRunInvoker` / `invokeChildRun` 时也必须传入同一个 `conversationId`。框架内部会继续使用独立 checkpoint key 隔离子图状态，但 RuntimeEvent / Audit / Telemetry 会落在这个 host conversation 下。
+- 异步 `spawnDetached` 不创建同步 child-run 的内部 checkpoint key；它注册的就是一个真实 run，`RunExecutionContext.conversationId/runId/parentRunId` 必须与 `RunRecord` 对齐。executor 读取的是注册时的 `AgentSpec` / request / metadata 快照，不应依赖调用方之后继续修改对象。
 
 ## 6. 最小验证
 
 - 单测：父 agent 工具内 `invokeChildRun` → 父 run 的 `cost().childrenTotal.llmCost > 0`
-- 单测：`spawnDetached` 立刻返回；`waitForTerminal` 在执行结束后 resolve 出最终 status
+- 集成测：child run 内部调用工具时，`model.select` / `tool.allow` audit envelope 的 `scope.conversationId` 与注册 child run 的 conversationId 一致，`scope.runId` 是 child runId。
+- 单测：`spawnDetached` 立刻返回；executor 收到注册时的 `conversationId/runId/parentRunId` 与 request 快照；`waitForTerminal` 在执行结束后 resolve 出最终 status
 - 单测：`spawnDetached` 中的 run 被 `cancel()` 后，executor 收到的 `ctx.signal.aborted === true`

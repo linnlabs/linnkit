@@ -11,6 +11,24 @@ function asLocalRecord(local: EngineState['local']): Record<string, unknown> {
   return local && typeof local === 'object' ? { ...local } : {};
 }
 
+function readNonEmptyString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim().length > 0 ? value : undefined;
+}
+
+function readRuntimeConversationId(state: EngineState | null): string | undefined {
+  const local = state?.local && typeof state.local === 'object'
+    ? state.local as Record<string, unknown>
+    : undefined;
+  return readNonEmptyString(local?.conversationId);
+}
+
+function readRuntimeTurnId(state: EngineState | null): string | undefined {
+  const local = state?.local && typeof state.local === 'object'
+    ? state.local as Record<string, unknown>
+    : undefined;
+  return readNonEmptyString(local?.turnId);
+}
+
 export interface GraphExecutorConfig {
   maxSteps?: number;
   maxCheckpoints?: number;
@@ -42,8 +60,8 @@ export class GraphExecutor {
     this.nodes.set(node.id, node);
   }
 
-  async peekCheckpoint(conversationId: string): Promise<EngineState | null> {
-    return await this.checkpointer.load(conversationId);
+  async peekCheckpoint(checkpointKey: string): Promise<EngineState | null> {
+    return await this.checkpointer.load(checkpointKey);
   }
 
   private sanitize(state: EngineState): EngineState {
@@ -57,8 +75,8 @@ export class GraphExecutor {
     };
   }
 
-  async prime(conversationId: string, local: Record<string, unknown>, nodeId: string = 'user'): Promise<void> {
-    this.ephemeralLocals.set(conversationId, { ...(local || {}) });
+  async prime(checkpointKey: string, local: Record<string, unknown>, nodeId: string = 'user'): Promise<void> {
+    this.ephemeralLocals.set(checkpointKey, { ...(local || {}) });
     const localSansMemory = { ...(local || {}) };
     if ('memory' in localSansMemory) delete localSansMemory.memory;
     const state: EngineState = {
@@ -66,11 +84,11 @@ export class GraphExecutor {
       schemaVersion: ENGINE_STATE_SCHEMA_VERSION,
       local: localSansMemory,
     };
-    await this.checkpointer.save(conversationId, state);
+    await this.checkpointer.save(checkpointKey, state);
   }
 
-  async setNode(conversationId: string, nodeId: string, localPatch?: Record<string, unknown>): Promise<void> {
-    const current = (await this.checkpointer.load(conversationId)) || {
+  async setNode(checkpointKey: string, nodeId: string, localPatch?: Record<string, unknown>): Promise<void> {
+    const current = (await this.checkpointer.load(checkpointKey)) || {
       nodeId: 'user',
       schemaVersion: ENGINE_STATE_SCHEMA_VERSION,
       local: {},
@@ -82,24 +100,52 @@ export class GraphExecutor {
       schemaVersion: current.schemaVersion ?? ENGINE_STATE_SCHEMA_VERSION,
       local: mergedLocal,
     };
-    await this.checkpointer.save(conversationId, next);
+    await this.checkpointer.save(checkpointKey, next);
   }
 
-  async runUntilYield(conversationId: string): Promise<{ events: RuntimeEvent[]; checkpoint: EngineState; stepCount: number }> {
+  async runUntilYield(checkpointKey: string): Promise<{ events: RuntimeEvent[]; checkpoint: EngineState; stepCount: number }> {
     // B2-engine Batch 4: run_lifecycle 埋点
     // - 一次 runUntilYield 调用 = 一次 "run"
     // - 进入即 emit 'spawned'，退出走 try/finally 决定 'completed' | 'failed' | 'cancelled'
     const runId = `run_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     let lifecyclePhase: 'completed' | 'failed' | 'cancelled' = 'completed';
+    let initialState: EngineState | null = null;
+    try {
+      initialState = await this.loadInitialState(checkpointKey);
+    } catch (err) {
+      lifecyclePhase = 'failed';
+      this.telemetryPort.emit({
+        kind: 'run_lifecycle',
+        runId,
+        phase: 'spawned',
+        scope: {},
+      });
+      this.telemetryPort.emit({
+        kind: 'run_lifecycle',
+        runId,
+        phase: lifecyclePhase,
+        scope: {},
+      });
+      throw err;
+    }
+
+    let lifecycleConversationId = readRuntimeConversationId(initialState);
+    let lifecycleTurnId = readRuntimeTurnId(initialState);
     this.telemetryPort.emit({
       kind: 'run_lifecycle',
       runId,
       phase: 'spawned',
-      scope: { conversationId: conversationId || undefined },
+      scope: {
+        conversationId: lifecycleConversationId,
+        turnId: lifecycleTurnId,
+      },
     });
 
     try {
-      return await this.runUntilYieldInternal(conversationId);
+      const result = await this.runUntilYieldInternal(checkpointKey, initialState);
+      lifecycleConversationId = readRuntimeConversationId(result.checkpoint);
+      lifecycleTurnId = readRuntimeTurnId(result.checkpoint);
+      return result;
     } catch (err) {
       lifecyclePhase = (err as Error | undefined)?.name === 'AbortError' ? 'cancelled' : 'failed';
       throw err;
@@ -108,18 +154,28 @@ export class GraphExecutor {
         kind: 'run_lifecycle',
         runId,
         phase: lifecyclePhase,
-        scope: { conversationId: conversationId || undefined },
+        scope: {
+          conversationId: lifecycleConversationId,
+          turnId: lifecycleTurnId,
+        },
       });
     }
   }
 
-  private async runUntilYieldInternal(conversationId: string): Promise<{ events: RuntimeEvent[]; checkpoint: EngineState; stepCount: number }> {
-    let state: EngineState = (await this.checkpointer.load(conversationId)) || {
+  private async loadInitialState(checkpointKey: string): Promise<EngineState> {
+    return (await this.checkpointer.load(checkpointKey)) || {
       nodeId: 'user',
       schemaVersion: ENGINE_STATE_SCHEMA_VERSION,
       local: {},
     };
-    const ephemeral = this.ephemeralLocals.get(conversationId) || {};
+  }
+
+  private async runUntilYieldInternal(
+    checkpointKey: string,
+    initialState: EngineState,
+  ): Promise<{ events: RuntimeEvent[]; checkpoint: EngineState; stepCount: number }> {
+    let state: EngineState = initialState;
+    const ephemeral = this.ephemeralLocals.get(checkpointKey) || {};
     state = {
       ...state,
       schemaVersion: state.schemaVersion ?? ENGINE_STATE_SCHEMA_VERSION,
@@ -152,7 +208,7 @@ export class GraphExecutor {
       const signalRaw = (state.local as Record<string, unknown> | undefined)?.signal;
       if (isAbortSignal(signalRaw) && signalRaw.aborted) {
         logger.warn('[GraphExecutor] 收到 AbortSignal，立即停止推理循环');
-        this.ephemeralLocals.delete(conversationId);
+        this.ephemeralLocals.delete(checkpointKey);
         throwAbortError();
       }
 
@@ -221,8 +277,8 @@ export class GraphExecutor {
           checkpointCount,
         });
         const cp = this.sanitize(state);
-        await this.checkpointer.save(conversationId, cp);
-        this.ephemeralLocals.delete(conversationId);
+        await this.checkpointer.save(checkpointKey, cp);
+        this.ephemeralLocals.delete(checkpointKey);
         return { events: allEvents, checkpoint: cp, stepCount };
       }
 
@@ -236,21 +292,18 @@ export class GraphExecutor {
       // B2-engine Batch 3: 计时 graph_node 事件
       const nodeRunStartedAt = Date.now();
       const nodeIdForTelemetry = state.nodeId;
+      const conversationIdForTelemetry = readRuntimeConversationId(state);
       let result: NodeResult;
       try {
         result = await node.run(state);
       } finally {
-        const turnIdForTelemetry =
-          typeof (state.local as Record<string, unknown> | undefined)?.turnId === 'string'
-            ? ((state.local as Record<string, unknown>).turnId as string)
-            : undefined;
         this.telemetryPort.emit({
           kind: 'graph_node',
           nodeId: nodeIdForTelemetry,
           durationMs: Date.now() - nodeRunStartedAt,
           scope: {
-            conversationId: conversationId || undefined,
-            turnId: turnIdForTelemetry,
+            conversationId: conversationIdForTelemetry,
+            turnId: readRuntimeTurnId(state),
           },
         });
       }
@@ -294,7 +347,7 @@ export class GraphExecutor {
         });
         state = { ...state, nodeId: nextNodeId };
         const cp = this.sanitize(state);
-        await this.checkpointer.save(conversationId, cp);
+        await this.checkpointer.save(checkpointKey, cp);
         continue;
       }
 
@@ -306,7 +359,7 @@ export class GraphExecutor {
           checkpointCount,
         });
         const cp = this.sanitize(state);
-        await this.checkpointer.save(conversationId, cp);
+        await this.checkpointer.save(checkpointKey, cp);
         return { events: allEvents, checkpoint: cp, stepCount };
       }
 
@@ -318,7 +371,7 @@ export class GraphExecutor {
           checkpointCount,
         });
         const cp = this.sanitize(state);
-        await this.checkpointer.save(conversationId, cp);
+        await this.checkpointer.save(checkpointKey, cp);
         return { events: allEvents, checkpoint: cp, stepCount };
       }
     }
@@ -330,8 +383,8 @@ export class GraphExecutor {
       checkpointCount,
     });
     const cp = this.sanitize(state);
-    await this.checkpointer.save(conversationId, cp);
-    this.ephemeralLocals.delete(conversationId);
+    await this.checkpointer.save(checkpointKey, cp);
+    this.ephemeralLocals.delete(checkpointKey);
     return { events: allEvents, checkpoint: cp, stepCount };
   }
 }

@@ -45,6 +45,7 @@ packages/linnkit/src/testkit/
 - `packages/linnkit/src/testkit/tool-fixtures/toolContext.test.ts`
 - `packages/linnkit/src/testkit/context-harness/__tests__/contextPolicyInvariants.test.ts`
 - `packages/linnkit/src/testkit/run-harness/__tests__/runHarness.test.ts`
+- `src/app-hosts/linnya/adapters/child-runs/__tests__/registeredSubagentInvoker.test.ts`
 - `src/app-hosts/linnya/testkit/agent-harness/__tests__/graphLoop.integration.test.ts`
 - `src/app-hosts/linnya/testkit/agent-harness/__tests__/graphLoop.stepPolicy.test.ts`
 - `src/tools/subagent/__tests__/subagentRunner.integration.test.ts`

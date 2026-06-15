@@ -14,9 +14,10 @@ describe('GraphExecutor - 核心单元测试', () => {
 
   beforeEach(() => {
     mockCheckpointer = {
-      save: vi.fn().mockResolvedValue(undefined),
-      load: vi.fn().mockResolvedValue(null),
-    } as any;
+      save: vi.fn<Checkpointer['save']>().mockResolvedValue(undefined),
+      load: vi.fn<Checkpointer['load']>().mockResolvedValue(null),
+      clear: vi.fn<Checkpointer['clear']>().mockResolvedValue(undefined),
+    };
 
     executor = new GraphExecutor(mockCheckpointer, { maxSteps: 10 });
   });
@@ -294,7 +295,7 @@ describe('GraphExecutor - 核心单元测试', () => {
         id: 'saved',
         run: vi.fn((state) => {
           expect(state.local?.count).toBe(5);
-          return Promise.resolve({ kind: 'yield', events: [] });
+          return Promise.resolve({ kind: 'yield', events: [] } satisfies NodeResult);
         }),
       };
 
@@ -318,7 +319,7 @@ describe('GraphExecutor - 核心单元测试', () => {
           expect(state.local?.count).toBe(2); // ephemeral 覆盖
           expect(state.local?.persistent).toBe('data'); // persistent 保留
           expect(state.local?.memory).toBeDefined(); // memory 存在
-          return Promise.resolve({ kind: 'yield', events: [] });
+          return Promise.resolve({ kind: 'yield', events: [] } satisfies NodeResult);
         }),
       };
 
@@ -445,10 +446,10 @@ describe('GraphExecutor - 核心单元测试', () => {
 
       vi.mocked(mockCheckpointer.load).mockResolvedValue({
         nodeId: 'test',
-        local: { turnId: 'turn_x' },
+        local: { conversationId: 'runtime_conversation', turnId: 'turn_x' },
       } as EngineState);
 
-      await telemetryExecutor.runUntilYield('conv_telemetry');
+      await telemetryExecutor.runUntilYield('checkpoint_telemetry');
 
       const graphNodeEvents = emit.mock.calls
         .map((c) => c[0])
@@ -459,7 +460,7 @@ describe('GraphExecutor - 核心单元测试', () => {
       expect(typeof event.durationMs).toBe('number');
       expect(event.durationMs).toBeGreaterThanOrEqual(0);
       expect(event.scope).toEqual({
-        conversationId: 'conv_telemetry',
+        conversationId: 'runtime_conversation',
         turnId: 'turn_x',
       });
     });
@@ -545,9 +546,12 @@ describe('GraphExecutor - 核心单元测试', () => {
         run: vi.fn().mockResolvedValue({ kind: 'yield', events: [] }),
       };
       exec.registerNode(node);
-      vi.mocked(mockCheckpointer.load).mockResolvedValue({ nodeId: 'test', local: {} } as EngineState);
+      vi.mocked(mockCheckpointer.load).mockResolvedValue({
+        nodeId: 'test',
+        local: { conversationId: 'runtime_lifecycle', turnId: 'turn_lifecycle' },
+      } as EngineState);
 
-      await exec.runUntilYield('conv_lifecycle');
+      await exec.runUntilYield('checkpoint_lifecycle');
 
       const lifecycle = emit.mock.calls
         .map((c) => c[0])
@@ -557,7 +561,14 @@ describe('GraphExecutor - 核心单元测试', () => {
       expect(lifecycle[1].phase).toBe('completed');
       expect(lifecycle[0].runId).toBe(lifecycle[1].runId);
       expect(lifecycle[0].runId).toMatch(/^run_/);
-      expect(lifecycle[0].scope.conversationId).toBe('conv_lifecycle');
+      expect(lifecycle[0].scope).toEqual({
+        conversationId: 'runtime_lifecycle',
+        turnId: 'turn_lifecycle',
+      });
+      expect(lifecycle[1].scope).toEqual({
+        conversationId: 'runtime_lifecycle',
+        turnId: 'turn_lifecycle',
+      });
     });
 
     it('node 抛非 AbortError：phase=failed', async () => {

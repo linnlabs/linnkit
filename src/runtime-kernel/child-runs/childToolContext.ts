@@ -7,17 +7,13 @@ import type { ChildRunParentContext, ChildRunToolContext } from './types';
 
 export function createChildRunToolContext(params: {
   parentToolContext: ChildRunParentContext;
-  internalConversationId: string;
+  conversationId: string;
   turnId: string;
   runId: string;
   parentRunId?: string;
   seedHistory: ReadonlyArray<RuntimeEvent>;
   abortSignal?: AbortSignal;
 }): ChildRunToolContext {
-  const inheritedConversationId =
-    typeof params.parentToolContext.conversationId === 'string' && params.parentToolContext.conversationId.trim().length > 0
-      ? params.parentToolContext.conversationId.trim()
-      : undefined;
   const inheritedContext = stripRuntimeReservedToolContextPatch(params.parentToolContext);
   const childToolContext: ChildRunToolContext = {
     ...inheritedContext,
@@ -31,7 +27,7 @@ export function createChildRunToolContext(params: {
     persistedHistory: params.seedHistory,
     workingHistory: params.seedHistory,
     executionMeta: {
-      conversationId: inheritedConversationId ?? params.internalConversationId,
+      conversationId: params.conversationId,
       turnId: params.turnId,
       runId: params.runId,
       parentRunId: params.parentRunId,

@@ -8,6 +8,14 @@ import type { Checkpointer } from '../checkpointer/base';
 import type { EngineState, GraphNode, NodeResult } from '../types';
 import type { RuntimeEvent } from '../../../contracts';
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function readContent(value: unknown): string {
+  return isRecord(value) && typeof value.content === 'string' ? value.content : '';
+}
+
 /**
  * 创建 Mock Checkpointer
  */
@@ -15,14 +23,17 @@ export function createMockCheckpointer() {
   const states = new Map<string, EngineState>();
 
   return {
-    save: vi.fn(async (conversationId: string, state: EngineState) => {
-      states.set(conversationId, state);
+    save: vi.fn<Checkpointer['save']>(async (checkpointKey, state) => {
+      states.set(checkpointKey, state);
     }),
-    load: vi.fn(async (conversationId: string) => {
-      return states.get(conversationId) || null;
+    load: vi.fn<Checkpointer['load']>(async (checkpointKey) => {
+      return states.get(checkpointKey) || null;
+    }),
+    clear: vi.fn<Checkpointer['clear']>(async (checkpointKey) => {
+      states.delete(checkpointKey);
     }),
     _states: states, // 测试辅助：访问内部状态
-  } as any as Checkpointer;
+  } satisfies Checkpointer & { _states: Map<string, EngineState> };
 }
 
 /**
@@ -87,16 +98,45 @@ export function createMockEngineState(
 /**
  * 创建测试用的 RuntimeEvent
  */
-export function createMockEvent(type: string, overrides: Partial<RuntimeEvent> = {}): RuntimeEvent {
-  return {
-    type: type as any,
+export function createMockEvent(
+  type: 'thought' | 'user_input' | 'final_answer',
+  overrides: Partial<RuntimeEvent> = {},
+): RuntimeEvent {
+  const content = readContent(overrides);
+  const base = {
     id: `test_${Date.now()}`,
     conversation_id: 'conv_test',
     turn_id: 'turn_test',
     timestamp: Date.now(),
-    version: 1,
+    version: 1 as const,
     ...overrides,
-  } as RuntimeEvent;
+  };
+
+  if (type === 'user_input') {
+    return {
+      ...base,
+      type: 'user_input',
+      content,
+      source: 'user',
+    };
+  }
+
+  if (type === 'final_answer') {
+    return {
+      ...base,
+      type: 'final_answer',
+      answer_id: 'answer_test',
+      content,
+      is_complete: true,
+    };
+  }
+
+  return {
+    ...base,
+    type: 'thought',
+    content,
+    is_complete: false,
+  };
 }
 
 /**
@@ -140,4 +180,3 @@ export function createDynamicNode(id: string) {
     },
   };
 }
-

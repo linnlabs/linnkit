@@ -54,6 +54,15 @@ export interface ChildRunInvokeConfig {
   agentConfig: ChildRunAgentConfig;
   userMessage: string;
   parentToolContext: ChildRunParentContext;
+  /**
+   * child-run 的宿主会话归属，用于 RuntimeEvent / Audit / Telemetry。
+   *
+   * 中文备注：
+   * - 同步 child-run 需要独立 checkpoint key 隔离图状态，但审计与 run registry
+   *   必须落在 host 注册 child run 时使用的 conversationId 下；
+   * - 不传时优先继承 parentToolContext.conversationId，最后才退回内部 checkpoint key。
+   */
+  conversationId?: string;
   runId?: string;
   parentRunId?: string;
   abortSignal?: AbortSignal;
@@ -109,6 +118,7 @@ export class ChildRunInvoker {
       agentConfig,
       userMessage,
       parentToolContext,
+      conversationId,
       runId,
       parentRunId,
       subrunTracePublisher,
@@ -118,11 +128,16 @@ export class ChildRunInvoker {
       abortSignal,
     } = config;
 
-    const internalConversationId = `internal_${generateMessageId()}`;
+    const internalCheckpointKey = `internal_${generateMessageId()}`;
+    const runtimeConversationId = resolveChildRunConversationId({
+      explicitConversationId: conversationId,
+      parentToolContext,
+      fallbackConversationId: internalCheckpointKey,
+    });
     const turnId = `turn_${Date.now()}`;
     const childRunId = typeof runId === 'string' && runId.trim().length > 0
       ? runId.trim()
-      : internalConversationId;
+      : internalCheckpointKey;
     const resolvedParentRunId = typeof parentRunId === 'string' && parentRunId.trim().length > 0
       ? parentRunId.trim()
       : typeof parentToolContext.runId === 'string' && parentToolContext.runId.trim().length > 0
@@ -130,7 +145,8 @@ export class ChildRunInvoker {
         : undefined;
 
     logger.info(`启动 child-run: ${agentConfig.id}`, {
-      conversationId: internalConversationId,
+      conversationId: runtimeConversationId,
+      checkpointKey: internalCheckpointKey,
       maxSteps,
       userMessage: userMessage.slice(0, 100) + (userMessage.length > 100 ? '...' : ''),
     });
@@ -210,7 +226,7 @@ export class ChildRunInvoker {
 
     const childToolContext = createChildRunToolContext({
       parentToolContext,
-      internalConversationId,
+      conversationId: runtimeConversationId,
       turnId,
       runId: childRunId,
       parentRunId: resolvedParentRunId,
@@ -221,7 +237,7 @@ export class ChildRunInvoker {
     const subrunSseSink: ChildRunTraceSink | undefined = subrunTracePublisher
       ? createChildRunTraceSink({
           publisher: subrunTracePublisher,
-          conversationId: internalConversationId,
+          conversationId: runtimeConversationId,
           turnId,
         })
       : undefined;
@@ -229,7 +245,7 @@ export class ChildRunInvoker {
     const initialLocal: Record<string, unknown> = {
       request,
       history: seedHistory,
-      conversationId: internalConversationId,
+      conversationId: runtimeConversationId,
       turnId,
       toolContext: childToolContext,
       ...(abortSignal ? { signal: abortSignal } : {}),
@@ -238,7 +254,7 @@ export class ChildRunInvoker {
       systemPrompt,
     };
 
-    await graphExecutor.prime(internalConversationId, initialLocal, 'llm');
+    await graphExecutor.prime(internalCheckpointKey, initialLocal, 'llm');
 
     const allEvents: RuntimeEvent[] = [];
     let stepCount = 0;
@@ -253,7 +269,7 @@ export class ChildRunInvoker {
         throw err;
       }
 
-      const result = await graphExecutor.runUntilYield(internalConversationId);
+      const result = await graphExecutor.runUntilYield(internalCheckpointKey);
       appendUniqueEvents(allEvents, result.events);
       stepCount = result.stepCount;
 
@@ -293,8 +309,8 @@ export class ChildRunInvoker {
 
       const recoveredEvents = await recoverChildRunEventsFromCheckpoint({
         checkpointer,
-        conversationId: internalConversationId,
-        internalConversationId,
+        checkpointKey: internalCheckpointKey,
+        childConversationId: runtimeConversationId,
         seedHistory,
       });
       appendUniqueEvents(allEvents, recoveredEvents);
@@ -316,7 +332,7 @@ export class ChildRunInvoker {
         : { error: String(err) });
     }
 
-    await checkpointer.clear(internalConversationId);
+    await checkpointer.clear(internalCheckpointKey);
 
     return {
       success: !error,
@@ -329,6 +345,26 @@ export class ChildRunInvoker {
       error,
     };
   }
+}
+
+function readNonEmptyString(value: unknown): string | undefined {
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function resolveChildRunConversationId(params: {
+  explicitConversationId?: string;
+  parentToolContext: ChildRunParentContext;
+  fallbackConversationId: string;
+}): string {
+  return (
+    readNonEmptyString(params.explicitConversationId) ??
+    readNonEmptyString(params.parentToolContext.conversationId) ??
+    params.fallbackConversationId
+  );
 }
 
 function resolveChildRunSystemReminderPolicy(

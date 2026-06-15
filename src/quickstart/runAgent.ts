@@ -136,6 +136,7 @@ export async function runAgent(
 ): Promise<RunAgentResult> {
   const modelId = resolveModelId(agent, options);
   const conversationId = options.conversationId ?? `conv_${Date.now()}`;
+  const checkpointKey = conversationId;
   const runId = options.runId ?? generateRunId();
   const turnId = runId;
   const costCollector = new QuickstartRunCostCollector();
@@ -194,7 +195,7 @@ export async function runAgent(
 
   await handle.markRunning({ currentNode: 'user' });
   try {
-    await executor.prime(conversationId, {
+    await executor.prime(checkpointKey, {
       conversationId,
       turnId,
       request: {
@@ -219,7 +220,7 @@ export async function runAgent(
         return undefined;
       },
     });
-    const result = await executor.runUntilYield(conversationId);
+    const result = await executor.runUntilYield(checkpointKey);
     runtimeEvents.push(...result.events);
     for (const event of result.events) {
       if (event.type === 'final_answer_chunk') continue;

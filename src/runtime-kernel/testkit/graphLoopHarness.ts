@@ -66,6 +66,7 @@ export function createGraphLoopHarness(options: GraphLoopHarnessOptions): GraphL
 
   return {
     async run(): Promise<GraphLoopHarnessRunResult> {
+      const checkpointKey = options.conversationId;
       const executor = createDefaultGraphExecutor({
         llmNode: options.createLlmNode({
           llmCaller: options.llmCaller,
@@ -96,8 +97,8 @@ export function createGraphLoopHarness(options: GraphLoopHarnessOptions): GraphL
         executorLocal,
       };
 
-      await executor.prime(options.conversationId, local, 'user');
-      const result = await executor.runUntilYield(options.conversationId);
+      await executor.prime(checkpointKey, local, 'user');
+      const result = await executor.runUntilYield(checkpointKey);
 
       return {
         checkpointNodeId: result.checkpoint.nodeId,

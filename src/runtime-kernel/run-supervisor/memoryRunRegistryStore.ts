@@ -5,7 +5,7 @@ function cloneRunRecord(record: RunRecord): RunRecord {
     ...record,
     iterationBudget: record.iterationBudget ? { ...record.iterationBudget } : undefined,
     errorIfAny: record.errorIfAny ? { ...record.errorIfAny } : undefined,
-    metadata: record.metadata ? { ...record.metadata } : undefined,
+    metadata: record.metadata ? structuredClone(record.metadata) : undefined,
   };
 }
 

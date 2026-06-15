@@ -10,6 +10,8 @@ export interface ToolParameterProperty {
   description: string;
   default?: unknown;
   enum?: string[];
+  minimum?: number;
+  maximum?: number;
   properties?: Record<string, ToolParameterProperty>;
   items?: ToolParameterProperty;
   required?: string[];

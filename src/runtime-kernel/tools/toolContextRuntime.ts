@@ -199,6 +199,41 @@ export function getToolContextRuntimeBinding(context: ToolExecutionContext): Too
   return readBinding(context);
 }
 
+export function copyToolContextRuntimeCapability(
+  source: ToolExecutionContext,
+  target: ToolExecutionContext,
+): ToolContextRuntimeBinding | undefined {
+  const sourceBinding = readBinding(source);
+  if (!sourceBinding) {
+    return undefined;
+  }
+
+  const existingTargetBinding = readBinding(target);
+  if (existingTargetBinding) {
+    exposeCompatibilitySurface(target, existingTargetBinding);
+    return existingTargetBinding;
+  }
+
+  // 中文说明：派生 ToolContext 时不能复用同一个 binding 对象；
+  // 原 binding 的 execution meta 同步闭包绑定在 source 上，复用会把后续 meta 写回旧 context。
+  const targetBinding = createRuntimeBinding({
+    context: target,
+    persistedHistory: () => sourceBinding.getPersistedHistoryEvents(),
+    workingHistory: () => sourceBinding.getWorkingHistoryEvents(),
+    executionMeta: sourceBinding.readExecutionMeta(),
+  });
+
+  Object.defineProperty(target, TOOL_CONTEXT_RUNTIME_BINDING_KEY, {
+    value: targetBinding,
+    enumerable: false,
+    configurable: true,
+    writable: false,
+  });
+
+  exposeCompatibilitySurface(target, targetBinding);
+  return targetBinding;
+}
+
 export function readToolContextWorkingHistory(context: ToolExecutionContext): ReadonlyArray<RuntimeEvent> {
   if (context.conversationView) {
     return context.conversationView.getWorkingHistoryEvents();

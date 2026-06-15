@@ -11,6 +11,7 @@
 ## 1. linnkit 给你的合同
 
 - `Checkpointer`（来自 `@linnlabs/linnkit/runtime-kernel`，在 `graph` namespace 下）：`load` / `save` / `clear` 三个必需方法 + `peekMeta` / `list` 两个可选。
+- `Checkpointer` 的 key 参数叫 `checkpointKey`：它只是 EngineState 快照索引。普通顶层 run 可以让它等于 `conversationId`，但不要在 adapter 里假设两者永远同义；同步 child-run 会使用内部 checkpoint key 隔离执行状态。
 - `EventStore`（来自 `@linnlabs/linnkit/runtime-kernel`，在 `graph` namespace 下）：`append` / `range` / `latestEventId` 三个必需 + `truncate` 可选。配套 `createMonotonicEventIdFactory()` 帮你生成单调 id。
 - `RunRegistryStore`（来自 `@linnlabs/linnkit/runtime-kernel`，在 `runSupervisor` namespace 下）：run lifecycle 元数据落库。
 - `RuntimeEvent` / `EventEnvelope` / `PersistedEvent` 类型来自 `@linnlabs/linnkit/contracts` 与 `runtime-kernel`。

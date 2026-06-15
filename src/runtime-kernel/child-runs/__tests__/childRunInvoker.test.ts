@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { AgentInvocationRequest } from '../../../ports/agent-invocation';
-import type { GraphNode } from '../../graph-engine/types';
+import type { EngineState, GraphNode, NodeResult } from '../../graph-engine/types';
 import { ChildRunInvoker } from '../childRunInvoker';
 import {
   ensureToolContextRuntimeCapability,
@@ -8,11 +8,22 @@ import {
   readToolContextPersistedHistory,
   readToolContextWorkingHistory,
 } from '../../tools/toolContextRuntime';
-import type { ObservationPreviewPort } from '../../tools/ports';
+import type { ObservationPreviewPort, ToolRuntimeDefinition, ToolRuntimePort } from '../../tools/ports';
+import type { ToolExecutionContext } from '../../tools/toolExecutionContext';
+import type { AuditEnvelope } from '../../../contracts/audit';
 import type { RuntimeEvent, UserInputEvent } from '../../../contracts';
 
 const noopObservationPreview: ObservationPreviewPort = {
-  truncateObservation: vi.fn(async ({ text }) => ({ truncated: false, preview: text })),
+  async truncateObservation({ text }) {
+    return { truncated: false, preview: text };
+  },
+};
+
+const noopToolRuntime: Pick<ToolRuntimePort, 'getToolDefinition' | 'executeTool'> = {
+  getToolDefinition: () => undefined,
+  async executeTool() {
+    return { success: false, error: 'tool runtime not configured', durationMs: 0 };
+  },
 };
 
 describe('ChildRunInvoker', () => {
@@ -24,18 +35,21 @@ describe('ChildRunInvoker', () => {
 
     const llmNode: GraphNode = {
       id: 'llm',
-      run: vi.fn(async (state) => {
-        const request = state.local?.request as AgentInvocationRequest | undefined;
+      async run(state: EngineState): Promise<NodeResult> {
+        const request = isAgentInvocationRequest(state.local?.request)
+          ? state.local.request
+          : undefined;
         if (request) {
           capturedRequests.push(request);
         }
         return { kind: 'yield', events: [] };
-      }),
+      },
     };
 
     const invoker = new ChildRunInvoker({
       modelResolver,
       createLlmNode: () => llmNode,
+      toolRuntime: noopToolRuntime,
       observationPreview: noopObservationPreview,
       eventToMessageConverter: vi.fn(() => []),
     });
@@ -61,18 +75,24 @@ describe('ChildRunInvoker', () => {
         type: 'user_input',
         conversation_id: 'parent-conversation',
         turn_id: 'parent-turn',
+        timestamp: Date.now(),
+        version: 1,
+        source: 'user',
         content: 'parent history',
       } satisfies UserInputEvent,
-    ] as RuntimeEvent[];
+    ];
     const seedHistory = [
       {
         id: 'seed-user',
         type: 'user_input',
         conversation_id: 'child-conversation',
         turn_id: 'child-turn',
+        timestamp: Date.now(),
+        version: 1,
+        source: 'user',
         content: 'seed history',
       } satisfies UserInputEvent,
-    ] as RuntimeEvent[];
+    ];
     const parentToolContext: Record<string, unknown> = {
       deepSearchDepth: 2,
       customService: { ok: true },
@@ -93,15 +113,18 @@ describe('ChildRunInvoker', () => {
 
     const llmNode: GraphNode = {
       id: 'llm',
-      run: vi.fn(async (state) => {
-        capturedToolContext = (state.local?.toolContext as Record<string, unknown> | undefined) ?? undefined;
+      async run(state: EngineState): Promise<NodeResult> {
+        capturedToolContext = isRecord(state.local?.toolContext)
+          ? state.local.toolContext
+          : undefined;
         return { kind: 'yield', events: [] };
-      }),
+      },
     };
 
     const invoker = new ChildRunInvoker({
       modelResolver: { resolveModelId: vi.fn(() => 'default-model-from-resolver') },
       createLlmNode: () => llmNode,
+      toolRuntime: noopToolRuntime,
       observationPreview: noopObservationPreview,
       eventToMessageConverter: vi.fn(() => []),
     });
@@ -145,4 +168,124 @@ describe('ChildRunInvoker', () => {
     expect(parentToolContext.parentToolCallId).toBe('parent-tool-call');
     expect(parentToolContext.citationOffset).toBe(9);
   });
+
+  it('应允许 host 显式指定 child-run 审计会话，同时继续用内部 checkpoint key 隔离执行状态', async () => {
+    let capturedLlmConversationId: string | undefined;
+    let capturedToolContext: ToolExecutionContext | undefined;
+    const emittedAudit: AuditEnvelope[] = [];
+    const emittedTelemetry: unknown[] = [];
+    const childToolDefinition: ToolRuntimeDefinition = {
+      parameters: { type: 'object', properties: {} },
+    };
+    const toolRuntime: Pick<ToolRuntimePort, 'getToolDefinition' | 'executeTool'> = {
+      getToolDefinition: vi.fn(() => childToolDefinition),
+      executeTool: vi.fn(async (_toolName, _args, context) => {
+        capturedToolContext = context;
+        return {
+          success: true,
+          result: 'tool ok',
+          durationMs: 1,
+        };
+      }),
+    };
+
+    const llmNode: GraphNode = {
+      id: 'llm',
+      async run(state: EngineState): Promise<NodeResult> {
+        capturedLlmConversationId = typeof state.local?.conversationId === 'string'
+          ? state.local.conversationId
+          : undefined;
+        state.local = {
+          ...(state.local ?? {}),
+          pendingToolCalls: [
+            {
+              id: 'call_child_tool',
+              type: 'function',
+              function: {
+                name: 'child_tool',
+                arguments: '{"value":"hello"}',
+              },
+            },
+          ],
+        };
+        return { kind: 'route', nextNodeId: 'tool', events: [] };
+      },
+    };
+
+    const invoker = new ChildRunInvoker({
+      modelResolver: { resolveModelId: vi.fn(() => 'default-model-from-resolver') },
+      createLlmNode: () => llmNode,
+      toolRuntime,
+      observationPreview: noopObservationPreview,
+      eventToMessageConverter: vi.fn(() => []),
+      telemetryPort: {
+        emit: vi.fn((event) => {
+          emittedTelemetry.push(event);
+        }),
+      },
+      auditPort: {
+        emit: vi.fn(async (envelope: AuditEnvelope) => {
+          emittedAudit.push(envelope);
+        }),
+      },
+    });
+
+    const result = await invoker.invoke({
+      agentConfig: {
+        id: 'internal-agent',
+        promptKey: 'default',
+        availableTools: ['child_tool'],
+      },
+      userMessage: '调用子工具',
+      parentToolContext: {
+        conversationId: 'parent-conversation',
+        runId: 'parent-run',
+      },
+      conversationId: 'registered-conversation',
+      runId: 'child-run-1',
+      parentRunId: 'parent-run',
+      maxSteps: 3,
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.events.some((event) => event.type === 'tool_output')).toBe(true);
+    expect(capturedLlmConversationId).toBe('registered-conversation');
+    expect(capturedToolContext?.conversationId).toBe('registered-conversation');
+    expect(capturedToolContext?.runId).toBe('child-run-1');
+    expect(capturedToolContext?.parentRunId).toBe('parent-run');
+    expect(
+      emittedTelemetry
+        .filter(isTelemetryWithScope)
+        .filter((event) => event.kind === 'run_lifecycle' || event.kind === 'graph_node')
+        .every((event) => event.scope.conversationId === 'registered-conversation'),
+    ).toBe(true);
+    expect(emittedAudit).toEqual([
+      expect.objectContaining({
+        action: 'tool.allow',
+        runId: 'child-run-1',
+        parentRunId: 'parent-run',
+        scope: expect.objectContaining({
+          conversationId: 'registered-conversation',
+          runId: 'child-run-1',
+          parentRunId: 'parent-run',
+          toolName: 'child_tool',
+        }),
+      }),
+    ]);
+  });
 });
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isAgentInvocationRequest(value: unknown): value is AgentInvocationRequest {
+  return isRecord(value) && typeof value.query === 'string' && typeof value.promptKey === 'string';
+}
+
+function isTelemetryWithScope(value: unknown): value is {
+  kind: string;
+  scope: { conversationId?: string };
+} {
+  return isRecord(value) && typeof value.kind === 'string' && isRecord(value.scope);
+}

@@ -378,7 +378,10 @@ describe('DefaultRunSupervisor', () => {
     expect(handle.runId).toBe('detached-1');
     expect(execute).toHaveBeenCalledWith(expect.objectContaining({
       runId: 'detached-1',
+      parentRunId: undefined,
       conversationId: 'conv-1',
+      agentSpec,
+      request,
       query: '后台跑',
       wakeSource: 'test',
       metadata: { traceId: 'trace-1' },
@@ -402,6 +405,105 @@ describe('DefaultRunSupervisor', () => {
         traceId: 'trace-1',
         source: 'executor',
       },
+    });
+  });
+
+  it('spawnDetached executor 使用注册时快照，避免调用方后续修改请求对象影响后台 run', async () => {
+    const registryStore = new MemoryRunRegistryStore();
+    const mutableSpec: AgentSpec = {
+      ...agentSpec,
+      tools: [{ toolId: 'search' }],
+    };
+    const mutableRequest = {
+      query: '原始后台任务',
+      promptKey: 'default',
+      nested: { phase: 'registered' },
+    };
+    const metadata = {
+      traceId: 'trace-original',
+      nested: { phase: 'registered' },
+    };
+    let releaseExecutor!: () => void;
+    const executorCanFinish = new Promise<void>((resolve) => {
+      releaseExecutor = resolve;
+    });
+    const execute = vi.fn<RunExecutorPort<typeof mutableRequest>['execute']>(async (context) => {
+      await executorCanFinish;
+      return {
+        runId: context.runId,
+        status: 'completed',
+        completedAt: 30,
+        metadata: {
+          observedRequest: context.request,
+          observedAgentSpec: context.agentSpec,
+          observedMetadata: context.metadata,
+          observedConversationId: context.conversationId,
+          observedParentRunId: context.parentRunId,
+        },
+      };
+    });
+    const supervisor = new DefaultRunSupervisor<typeof mutableRequest>({
+      registryStore,
+      executor: { execute },
+      runIdFactory: () => 'detached-snapshot',
+      now: () => 20,
+    });
+
+    const handle = await supervisor.spawnDetached({
+      conversationId: 'conv-snapshot',
+      parentRunId: 'parent-snapshot',
+      agentSpec: mutableSpec,
+      request: mutableRequest,
+      eventBus: new EventBus('exec-snapshot'),
+      eventStore: new MemoryEventStore(),
+      costCollector: createCostCollector(),
+      metadata,
+    });
+
+    mutableSpec.id = 'mutated-agent';
+    mutableSpec.tools.push({ toolId: 'mutated-tool' });
+    mutableRequest.query = '被调用方后续修改';
+    mutableRequest.nested.phase = 'mutated';
+    metadata.traceId = 'trace-mutated';
+    metadata.nested.phase = 'mutated';
+
+    releaseExecutor();
+    const outcome = await supervisor.waitForTerminal(handle.runId);
+
+    expect(execute).toHaveBeenCalledWith(expect.objectContaining({
+      runId: 'detached-snapshot',
+      parentRunId: 'parent-snapshot',
+      conversationId: 'conv-snapshot',
+      agentSpec: expect.objectContaining({
+        id: 'default_agent',
+        tools: [{ toolId: 'search' }],
+      }),
+      request: {
+        query: '原始后台任务',
+        promptKey: 'default',
+        nested: { phase: 'registered' },
+      },
+      metadata: {
+        traceId: 'trace-original',
+        nested: { phase: 'registered' },
+      },
+    }));
+    expect(outcome.metadata).toMatchObject({
+      observedConversationId: 'conv-snapshot',
+      observedParentRunId: 'parent-snapshot',
+      observedMetadata: {
+        traceId: 'trace-original',
+        nested: { phase: 'registered' },
+      },
+      observedRequest: {
+        query: '原始后台任务',
+        promptKey: 'default',
+        nested: { phase: 'registered' },
+      },
+      observedAgentSpec: expect.objectContaining({
+        id: 'default_agent',
+        tools: [{ toolId: 'search' }],
+      }),
     });
   });
 
