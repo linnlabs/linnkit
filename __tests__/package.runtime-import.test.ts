@@ -142,6 +142,15 @@ describe('package.runtime-import — dist 子入口隔离 import 烟雾测试', 
       expect(result.stdout).toContain('linnkit v0 CLI');
       expect(result.stdout).toContain('linnkit init <name>');
     });
+
+    it('node bin/linnkit.cjs --help 应该通过 npm bin wrapper 调到 dist CLI', async () => {
+      const result = await nodeRun(['bin/linnkit.cjs', '--help']);
+      if (!result.ok) {
+        throw new Error(`Failed to run CLI bin wrapper:\nstdout: ${result.stdout}\nstderr: ${result.stderr}`);
+      }
+      expect(result.stdout).toContain('linnkit v0 CLI');
+      expect(result.stdout).toContain('linnkit init <name>');
+    });
   });
 
   describe('testkit 入口（AGENT-GUARD-10：只能在 vitest run 上下文 import）', () => {

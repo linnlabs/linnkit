@@ -52,7 +52,7 @@ describe('packages/linnkit shell manifest', () => {
     expect(manifest.main).toBe('./dist/index.cjs');
     expect(manifest.module).toBe('./dist/index.js');
     expect(manifest.types).toBe('./dist/index.d.ts');
-    expect(manifest.bin).toEqual({ linnkit: './dist/cli.cjs' });
+    expect(manifest.bin).toEqual({ linnkit: 'bin/linnkit.cjs' });
 
     const devDependencies = manifest.devDependencies;
     if (!isRecord(devDependencies)) {
@@ -87,6 +87,7 @@ describe('packages/linnkit shell manifest', () => {
       throw new Error('packages/linnkit/package.json must define a files array (do NOT publish raw src).');
     }
     expect(files).toContain('dist');
+    expect(files).toContain('bin');
     expect(files).not.toContain('src');
     expect(files).toContain('LICENSE');
     expect(files).toContain('CHANGELOG.md');
