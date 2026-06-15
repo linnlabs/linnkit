@@ -85,7 +85,11 @@ describe('multi tool follow-up integration', () => {
     });
 
     const compressedResult = await pipelineHarness.runPreprocessors([
-      new ToolHistoryCompressorPreprocessor({ strategy: 'per-pair', keepLatestToolPairs: 0 }),
+      new ToolHistoryCompressorPreprocessor({
+        strategy: 'per-pair',
+        retentionMode: 'compress',
+        keepLatestToolPairs: 0,
+      }),
     ]);
     const compressedSummary = compressedResult.messages.find(
       (message) => message.metadata?.isCompressedToolHistory === true,

@@ -82,6 +82,12 @@ export interface AgentProcessingResult {
   };
 }
 
+interface EffectiveContextBudget {
+  maxTokens: number;
+  reservedForResponse: number;
+  totalBudget: number;
+}
+
 export class AgentMessageOrchestrator {
   private agentContextManager: AgentContextManager;
   private options: AgentOrchestratorOptions;
@@ -137,7 +143,7 @@ export class AgentMessageOrchestrator {
   private applyContextPolicy(
     request: AgentProfileRequest,
     contextPolicy: AgentSpecContextPolicy | undefined,
-  ): void {
+  ): Partial<AgentContextBuilderConfig> {
     const contextBuilderConfig = {
       ...this.baseContextConfig,
       ...(contextPolicy ? contextPolicyToContextBuilderConfig(contextPolicy) : {}),
@@ -155,6 +161,24 @@ export class AgentMessageOrchestrator {
       tokenizer: this.options.tokenizer,
       tokenizerModelId: this.resolvePreprocessorModel(request),
     });
+
+    return contextBuilderConfig;
+  }
+
+  private resolveEffectiveContextBudget(
+    contextBuilderConfig: Partial<AgentContextBuilderConfig>,
+  ): EffectiveContextBudget {
+    const maxTokens = contextBuilderConfig.DEFAULT_MAX_TOKENS ?? this.options.tokenBudget.maxTokens;
+    const reservedForResponse =
+      contextBuilderConfig.RESERVED_FOR_RESPONSE ?? this.options.tokenBudget.reservedForResponse;
+
+    return {
+      maxTokens,
+      reservedForResponse,
+      // 中文备注：ContextManager 接收的是“可放入上下文的输入预算”，不是模型完整窗口。
+      // 因此单个 agent 通过 contextPolicy.budget 覆盖预算时，这里必须同步使用覆盖后的值。
+      totalBudget: maxTokens - reservedForResponse,
+    };
   }
 
   async processAgentConversation(
@@ -187,7 +211,8 @@ export class AgentMessageOrchestrator {
       this.debug('Built complete message list', { totalCount: allMessages.length });
 
       const contextPolicy = this.resolveContextPolicy(request);
-      this.applyContextPolicy(request, contextPolicy);
+      const contextBuilderConfig = this.applyContextPolicy(request, contextPolicy);
+      const effectiveContextBudget = this.resolveEffectiveContextBudget(contextBuilderConfig);
 
       const preprocessorPipeline = this.buildPreprocessorPipelineForRequest(toolManager, request, contextPolicy);
       const modelId = this.resolvePreprocessorModel(request);
@@ -220,6 +245,7 @@ export class AgentMessageOrchestrator {
         undefined,
         extraOptions?.generate,
         contextPolicy,
+        effectiveContextBudget.totalBudget,
       );
       this.debug('Context built', { afterContextCount: contextResult.messages.length });
 
@@ -256,7 +282,7 @@ export class AgentMessageOrchestrator {
           processedCount: contextResult.messages.length,
           tokenUsage: {
             estimated: contextResult.tokenUsage.used,
-            budget: this.options.tokenBudget.maxTokens,
+            budget: effectiveContextBudget.totalBudget,
             remaining: contextResult.tokenUsage.remaining,
           },
           processingStats: contextResult.processingStats,
@@ -290,15 +316,16 @@ export class AgentMessageOrchestrator {
     phaseOverride?: AgentBuildPhase,
     generate?: (request: GenerateRequest) => Promise<GenerateResponse>,
     contextPolicy?: AgentSpecContextPolicy,
+    totalBudget?: number,
   ): Promise<ContextBuildResult> {
-    const totalBudget =
-      this.options.tokenBudget.maxTokens - this.options.tokenBudget.reservedForResponse;
+    const resolvedTotalBudget =
+      totalBudget ?? this.options.tokenBudget.maxTokens - this.options.tokenBudget.reservedForResponse;
 
     const contextResult = await this.agentContextManager.buildContextFromPreprocessedMessages(
       request,
       conversationSession,
       messages,
-      totalBudget,
+      resolvedTotalBudget,
       callbacks,
       phaseOverride,
       generate,

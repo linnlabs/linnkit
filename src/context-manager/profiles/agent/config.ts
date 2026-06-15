@@ -14,6 +14,11 @@ export interface AgentConfig {
   defaultTools: string[];
   timeoutMs: number;
   debug: boolean;
+  /**
+   * @deprecated 不再参与上下文裁剪。
+   * 中文备注：Agent 历史保留现在由 `contextPolicy.budget` 与 `contextPolicy.toolHistory`
+   * 共同决定；保留这个字段只是为了兼容可能读取 `DEFAULT_AGENT_CONFIG` 的旧接入方。
+   */
   maxHistoryLength: number;
   tokenBudget: {
     maxTokens: number;

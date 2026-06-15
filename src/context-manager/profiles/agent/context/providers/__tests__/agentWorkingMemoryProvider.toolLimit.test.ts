@@ -141,6 +141,35 @@ function buildStates(messages: AiMessage[]): MessageProcessingState[] {
 }
 
 describe('AgentWorkingMemoryProvider tool limits', () => {
+  it('uses total input budget for working memory percentage after core messages are kept', async () => {
+    const provider = new AgentWorkingMemoryProvider();
+    const coreMessage = makeTextMessage('core_user', 'user', 'user_input', '当前用户输入');
+    const followupMessage = makeTextMessage('assistant_text', 'assistant', 'final_answer', '可保留的历史回答');
+    const states: MessageProcessingState[] = [
+      {
+        message: coreMessage,
+        originalIndex: 0,
+        action: 'keep_core',
+        tokens: 600,
+      },
+      {
+        message: followupMessage,
+        originalIndex: 1,
+        action: 'skip',
+        tokens: 50,
+      },
+    ];
+
+    const result = await provider.provide(states, 400, {
+      ...makeProviderContext(),
+      totalBudget: 1000,
+    });
+
+    expect(result.states.find((state) => state.message.id === 'assistant_text')?.action).toBe(
+      'keep_working_memory',
+    );
+  });
+
   it('keeps current-turn raw tool pairs and caps historical compressed groups at config limit', async () => {
     const provider = new AgentWorkingMemoryProvider();
     const compressed = Array.from(

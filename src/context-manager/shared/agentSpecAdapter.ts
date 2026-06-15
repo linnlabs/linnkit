@@ -35,6 +35,7 @@ export interface AgentContextBuilderConfigOverrides {
 export interface AgentSpecPreprocessorOptions {
   toolHistory?: {
     strategy?: 'per-pair' | 'per-run' | 'none';
+    retentionMode?: 'drop' | 'compress';
     keepLatestToolPairs?: number;
     keepLatestRuns?: number;
     maxInteractionGroups?: number;

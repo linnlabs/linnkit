@@ -104,7 +104,7 @@ Agent profile 支持通用的 `context_injection` 消息类型，用来承载 ho
 
 本架构将上下文构建分为两大步骤，实现职责分离：
 
-1. 预处理管道：先规整、压缩和净化消息
+1. 预处理管道：先规整、保留/删除旧工具组并净化消息
 2. 三阶段智能填充：在 token 预算内智能保留、截断和摘要
 
 ### 事件进入上下文的不变量（2026-03 权威口径）
@@ -156,18 +156,18 @@ Agent Context 已经不再接受“按 SDK 分叉消息协议”的做法。
 
 原因很直接：
 
-- 这里验证的是 Linnya 当前的消息编排、工具组压缩、摘要净化、working memory 策略
+- 这里验证的是 Linnya 当前的消息编排、工具组保留、摘要净化、working memory 策略
 - 它们属于 product context orchestration，而不是 runtime kernel 本体
 
 当前代表性回归：
 
 - `profiles/agent/context/providers/__tests__/multiToolFollowup.integration.test.ts`
-  - 锁多工具 follow-up 在压缩、working memory、history purification 之间的产品语义闭环
+  - 锁多工具 follow-up 在工具历史保留、working memory、history purification 之间的产品语义闭环
   - 同时锁真实 `reasoning_details` 穿过三阶段后仍挂在同一条 `assistant(tool_calls)` 上
 - `profiles/agent/preprocessors/__tests__/toolReplayProtocolGuard.test.ts`
   - 锁 DeepSeek 这类 provider 的历史工具组协议守卫：缺真实 sidecar 只能降级为文本，不能从 thought 伪造
 - `profiles/agent/preprocessors/__tests__/toolHistoryCompressor.test.ts`
-  - 锁工具组原子压缩与 `replacementSourceIds` 语义
+  - 锁工具组原子保留/删除；兼容压缩模式下锁 `replacementSourceIds` 语义
 - `profiles/agent/context/providers/__tests__/agentWorkingMemoryProvider.toolLimit.test.ts`
   - 锁当前产品 working memory 的工具组预算策略
 
@@ -184,17 +184,19 @@ Agent Context 已经不再接受“按 SDK 分叉消息协议”的做法。
 
 ### 1. `ToolHistoryCompressor`
 
-**先执行**。负责将**历史段**中的完整**工具交互组**压缩为单条 `final_answer` 消息。
+**先执行**。负责处理**历史段**中的完整**工具交互组**：保留窗口内原样保留，窗口外默认整组删除；当 `toolHistory.retentionMode: 'compress'` 时，才把窗口外工具组压缩为单条 `final_answer` 摘要消息。
+
+这里的“压缩”只完成第一步替换：raw `tool_calls/tool_output` 被移除，留下带 `metadata.isCompressedToolHistory` 的摘要消息。摘要消息之后仍要进入 working memory 的 P3 历史工具交互阶段竞争预算，因此不会因为已经压缩就永久保留。
 
 #### 工具交互组定义
 
 - 一条 `assistant.type === 'tool_calls'` 是组锚点
 - 该消息中的全部 `tool_call.id` 与其全部 sibling `tool_output` 共同构成一个原子组
-- 压缩决策只能是“整组保留”或“整组压缩”，禁止按单个 `tool_output` 做部分替换
+- 保留决策只能按整组操作：整组保留、整组删除或整组压缩，禁止按单个 `tool_output` 做部分替换
 
 #### 关键实现
 
-- 新消息通过 `metadata.replacementSourceIds` 记录整组被替换掉的原始消息 ID
+- 仅在 `retentionMode: 'compress'` 时，新摘要消息通过 `metadata.replacementSourceIds` 记录整组被替换掉的原始消息 ID
 - 同时补充：
   - `compressedToolCallIds`
   - `compressedToolNames`
@@ -216,20 +218,20 @@ Agent Context 已经不再接受“按 SDK 分叉消息协议”的做法。
 
 因此：
 
-- 用户发起新请求那一次：最后一条 `user_input` 是本轮新问题，其之前的旧工具交互落在“历史段”，会被压缩
-- 同一个 run 内多次工具调用循环：通常不会产生新的 user 消息，最后一条 `user_input` 仍是本轮起点；run 内新产生的 `tool_calls/tool_output` 都位于该 `user_input` 之后，属于当前轮次段，被刻意保护不压缩
+- 用户发起新请求那一次：最后一条 `user_input` 是本轮新问题，其之前的旧工具交互落在“历史段”，会按 `toolHistory` 保留窗口处理
+- 同一个 run 内多次工具调用循环：通常不会产生新的 user 消息，最后一条 `user_input` 仍是本轮起点；run 内新产生的 `tool_calls/tool_output` 都位于该 `user_input` 之后，属于当前轮次段，被刻意保护不处理
 
 #### Checkpoint 特殊保护
 
-- 当历史段中存在 checkpoint 工具组时，压缩器会额外保留最近一组 checkpoint 工具组
+- 当历史段中存在 checkpoint 工具组时，处理器会额外保留最近一组 checkpoint 工具组
 - 同时仍保留最近 2 组非-checkpoint 原始工具交互
-- 其余更旧工具组继续压缩
+- 其余更旧工具组默认删除；显式 `retentionMode: 'compress'` 时压缩为摘要
 
-目的：既保证 `CheckpointSummarizationProvider` 可识别 checkpoint，又不破坏常态工具历史压缩策略。
+目的：既保证 `CheckpointSummarizationProvider` 可识别 checkpoint，又不破坏常态工具历史保留策略。
 
 ### 2. `ToolReplayProtocolGuard`
 
-**压缩后、净化前执行**。它不是根因修复，而是协议保险：
+**工具历史处理后、净化前执行**。它不是根因修复，而是协议保险：
 
 - 正向链路必须先保证真实 `reasoning_details` 从 LLM 响应进入 assistant 产出事件：
   - 工具决策：`tool_call_decision.payload.reasoning_details`
@@ -329,7 +331,8 @@ checkpoint 仍是**正常工具调用**，不会生成 system 摘要，也不会
 处理第 3 组及以前的较老工具交互记录。
 
 - 硬上限：对最后一条 `user_input` 之前的历史工具交互，最多只保留 12 组
-- 压缩工具摘要识别：
+- `retentionMode: 'drop'`：窗口外旧工具组在预处理阶段已经删除，P3 看不到这些旧组
+- 压缩工具摘要识别（仅 `toolHistory.retentionMode: 'compress'` 时出现）：
   - 预处理阶段被压缩成 `role: 'assistant'`
   - 且 `metadata.isCompressedToolHistory === true`
   - 这类消息在 working memory 中也算一组工具交互，同样受 12 组上限约束
@@ -398,7 +401,7 @@ ID 范围锚点：
 
 ## 核心数据流与 `replacementSourceIds`
 
-我们最终实现的核心是 `metadata.replacementSourceIds` 这一数据契约。它贯穿整个上下文构建流程，解决因消息合并/压缩导致原始 ID 丢失的问题。
+兼容压缩模式下的核心是 `metadata.replacementSourceIds` 这一数据契约。它贯穿摘要替换后的上下文构建流程，解决因消息合并/压缩导致原始 ID 丢失的问题。
 
 这里有一个重要边界更新：
 
@@ -414,7 +417,7 @@ graph TD
     end
 
     subgraph "预处理管道"
-        B["ToolHistoryCompressor"] --> C{"生成压缩消息 C<br/>metadata:<br/>replacementSourceIds:<br/>['A', 'B', 'C', ...]"}
+        B["ToolHistoryCompressor(retentionMode=compress)"] --> C{"生成压缩消息 C<br/>metadata:<br/>replacementSourceIds:<br/>['A', 'B', 'C', ...]"}
         C --> D["HistoryPurification"]
     end
 
@@ -681,6 +684,8 @@ host 常见输入字段仍然可以存在，例如：
 
 标签、中文前缀、属性名、生命周期都由 host 注册表决定；linnkit 只负责预算、排序、生命周期和最终格式化调度。
 
+当前轮用户侧上下文采用“同一 user request block”模型：`before-current-user` / `after-current-user` 的 user-side fence 不会作为多条独立 `role=user` wire message 发给模型，而是按实际注入内容组装到当前 `user_input` 中。未注入的 fence 不会产生空 XML 或占位符。
+
 ### MessageFormatter：`context_injection` → registry formatter
 
 最终在调用 LLM 前，所有 `AiMessage` 会经过 `shared/MessageFormatter.ts` 统一“出关”。
@@ -699,6 +704,7 @@ return {
 
 - framework 不硬编码 `document_fragment`
 - framework 不硬编码 `<additional_context>` 或任何 host 标签
+- framework 不输出 `<formatter(before-current-user fence)>` 这类概念占位符；只有真实注入的 fence 会调用 host formatter 产生实际 XML
 - `task_request` / `task_completion` 等 framework 协议消息只做纯透传
 
 设计意图：
@@ -711,7 +717,7 @@ return {
 
 ## 协议治理与不变量
 
-这部分是当前 `agent` context manager 的权威协议说明。以后修改 `eventConverter`、`AgentWorkingMemoryProvider`、摘要链路或工具历史压缩逻辑时，以这里为准。
+这部分是当前 `agent` context manager 的权威协议说明。以后修改 `eventConverter`、`AgentWorkingMemoryProvider`、摘要链路或工具历史保留逻辑时，以这里为准。
 
 ### 一、回放协议不变量
 
@@ -732,7 +738,7 @@ return {
 
 - 如果 `tool_output` 被保留，但缺失对应 `tool_calls`，视为协议损坏
 - 如果 `tool_calls` 被保留，但 `tool_call_id` 无法在同组 `tool_output` 中闭合，也视为协议损坏
-- 压缩和 working memory 选择只能按组操作，不能拆出单个 sibling `tool_output`
+- 工具历史保留、压缩和 working memory 选择只能按组操作，不能拆出单个 sibling `tool_output`
 
 #### 3. `payload.tool_calls` 是回放权威载荷
 
@@ -747,7 +753,7 @@ return {
 - `reasoning_details`
 - `raw_output`
 
-这些字段不是调试信息，而是回放、压缩和 provider 兼容链路的一部分。
+这些字段不是调试信息，而是回放、可选压缩和 provider 兼容链路的一部分。
 
 字段落点约定：
 
@@ -762,7 +768,7 @@ return {
 
 - `raw_output` 留在 metadata 层，供 checkpoint 解析、审计和截断输入使用；LLM 请求体中的 `tool` 消息只会看到 `content`。
 - `subrun_trace` 是 UI / 子过程侧车，不进入主 Agent 上下文，不能和 provider replay sidecar 混用。
-- 被 `ToolHistoryCompressor` 压缩或被 `history_summary` 替换的旧工具组不再具备结构化 replay 能力，只保留摘要文本；最近保留的原始工具组必须完整保留这些字段。
+- 被 `ToolHistoryCompressor` 删除的旧工具组不再进入上下文；在 `retentionMode: 'compress'` 下被压缩、或被 `history_summary` 替换的旧工具组不再具备结构化 replay 能力，只保留摘要文本；最近保留的原始工具组必须完整保留这些字段。
 - 如果 provider 要求 sidecar 且历史工具组缺失 sidecar，应由 host 注入策略决定：保守降级为文本历史，或打 `provider_empty_replay_field` 标记交给 provider codec 做空字段 legacy replay。
 
 #### 5. `final_answer_chunk` 只属于流式过程，不属于历史事实

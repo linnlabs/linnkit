@@ -270,7 +270,7 @@ await executor.run({
 | 修改 | 版本号 | 配套动作 |
 |------|--------|----------|
 | 加工具 / 加 capability | minor | audit log 记"能力扩展" |
-| 改 `contextPolicy.budget` / `toolHistory.strategy` | minor | audit log；考虑 replay 验证 |
+| 改 `contextPolicy.budget` / `toolHistory.strategy` / `toolHistory.retentionMode` | minor | audit log；考虑 replay 验证 |
 | 删工具 / 删 capability | **major** | audit log；既有 run 进 deprecated 路径 |
 | 改 `metadata` / `role` / `description` 文案 | patch | 一般不需要 audit |
 

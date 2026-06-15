@@ -2,8 +2,8 @@
  * @file src/agent/context/providers/AgentWorkingMemoryProvider.ts
  * @description Agent专用工作记忆填充层Provider - 第二阶段上下文构建
  *
- * 🎯 职责: 实现Agent的P1-P4优先级填充策略
- * 📖 策略: P1(工具交互) > P2(纯文本对话) > P3(历史工具交互) > P4(循环填充)
+ * 🎯 职责: 实现Agent的P1-P3优先级填充策略
+ * 📖 策略: P1(工具交互) > P2(纯文本对话) > P3(历史工具交互)
  * ✨ Agent特性: 工具调用优先级、配对保留策略
  * 🔧 核心逻辑: 保留工具调用时，必须确保其对应的另一半也被保留
  */
@@ -104,8 +104,9 @@ export class AgentWorkingMemoryProvider extends BaseContextProvider {
     let processedCount = 0;
     const strategiesApplied: string[] = [];
 
-    // 计算工作记忆预算（使用配置中的百分比）
-    const workingMemoryBudget = Math.floor(availableBudget * config.WORKING_MEMORY_BUDGET_PERCENTAGE);
+    // 中文备注：工作记忆比例以本次“输入总预算”为基准。availableBudget 已经被 pipeline
+    // 扣过核心层 token；如果再用它乘比例，会把核心消息重复扣一次，导致上下文过早收缩。
+    const workingMemoryBudget = Math.floor(context.totalBudget * config.WORKING_MEMORY_BUDGET_PERCENTAGE);
     const remainingBudget = workingMemoryBudget - coreTokens;
 
     if (remainingBudget <= 0 && config.MIN_TOOL_INTERACTIONS_TO_KEEP <= 0) {

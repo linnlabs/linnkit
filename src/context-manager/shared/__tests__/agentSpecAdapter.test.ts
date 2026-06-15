@@ -67,6 +67,7 @@ describe('agentSpecAdapter', () => {
     const policy = defineContextPolicy({
       toolHistory: {
         strategy: 'per-pair',
+        retentionMode: 'compress',
         keepLatestToolPairs: 0,
         overflowStrategy: 'fail-fast',
       },
@@ -83,6 +84,7 @@ describe('agentSpecAdapter', () => {
     expect(contextPolicyToPreprocessorOptions(policy)).toEqual({
       toolHistory: expect.objectContaining({
         strategy: 'per-pair',
+        retentionMode: 'compress',
         keepLatestToolPairs: 0,
         overflowStrategy: 'fail-fast',
       }),
@@ -164,8 +166,9 @@ describe('agentSpecAdapter', () => {
       }),
     });
 
-    expect(runtimeOptions.contextBuilderConfig.DEFAULT_MAX_TOKENS).toBe(120000);
+    expect(runtimeOptions.contextBuilderConfig.DEFAULT_MAX_TOKENS).toBe(232000);
     expect(runtimeOptions.preprocessorOptions.toolHistory?.strategy).toBe('per-run');
+    expect(runtimeOptions.preprocessorOptions.toolHistory?.retentionMode).toBe('drop');
     expect(runtimeOptions.providerOptions.contextTrace?.enabled).toBe(true);
     expect(runtimeOptions.executionOptions.toolOutput?.observationGovernance?.maxChars).toBe(48000);
     expect(runtimeOptions.systemReminder?.thresholds?.toolCallStreak).toBe(10);

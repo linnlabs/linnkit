@@ -105,7 +105,35 @@ describe('ToolHistoryCompressorPreprocessor strategy options', () => {
     expect(resultIds).toContain('t_r1_2');
     expect(resultIds).toContain('a_r1_3');
     expect(resultIds).toContain('t_r1_3');
+    expect(compressedCount(result.messages)).toBe(0);
+    expect(result.appliedStrategies).toContain('tool_history_drop');
+  });
+
+  it("retentionMode: 'compress' keeps the previous summary replacement behavior", async () => {
+    const preprocessor = new ToolHistoryCompressorPreprocessor({
+      strategy: 'per-pair',
+      retentionMode: 'compress',
+      keepLatestToolPairs: 2,
+    });
+    const messages: AiMessage[] = [
+      createUserInput('u_1', 1),
+      ...createToolGroup('r1', 1),
+      ...createToolGroup('r1', 2),
+      ...createToolGroup('r1', 3),
+      createUserInput('u_current', 999),
+    ];
+
+    const result = await preprocessor.process(messages, { debugMode: false });
+    const resultIds = ids(result.messages);
+
+    expect(resultIds).not.toContain('a_r1_1');
+    expect(resultIds).not.toContain('t_r1_1');
+    expect(resultIds).toContain('a_r1_2');
+    expect(resultIds).toContain('t_r1_2');
+    expect(resultIds).toContain('a_r1_3');
+    expect(resultIds).toContain('t_r1_3');
     expect(compressedCount(result.messages)).toBe(1);
+    expect(result.appliedStrategies).toContain('tool_history_compression');
   });
 
   it("strategy: 'per-run' with keepLatestRuns: 1 keeps every group in the latest historical run", async () => {
@@ -202,7 +230,8 @@ describe('ToolHistoryCompressorPreprocessor strategy options', () => {
     for (const id of ['a_r1_3', 't_r1_3', 'a_r1_4', 't_r1_4', 'a_r1_5', 't_r1_5']) {
       expect(resultIds).toContain(id);
     }
-    expect(compressedCount(result.messages)).toBe(2);
+    expect(compressedCount(result.messages)).toBe(0);
+    expect(result.appliedStrategies).toContain('tool_history_drop');
   });
 
   it("overflowStrategy: 'fail-fast' throws a typed ContextProviderError", async () => {

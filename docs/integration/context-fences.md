@@ -18,7 +18,7 @@ linnkit 设计原则：
 - **任意 host 都能注册自己的围栏家族**——例如 `<additional_context>`、`<memory-context>`、`<system-event>`、`<file_context>`，都通过同一套机制插入，不需要任何 host 改 framework 源码
 - **注入消息有稳定协议载体**——`AiMessage.type = 'context_injection'` 是唯一通用类型，`metadata.fenceKind` 表达开放的 host kind
 
-正确的做法：把每类上下文声明成一个"围栏家族"（fence kind），通过 `FenceRegistry` 注册，运行时由 `BaseAgentTask` 把 host 请求里的 `fences[]` 自动展开成 `context_injection` 消息，按 `placement` 落到正确位置；旧轮 `lifetime: 'turn-only'` 的注入由 `FenceLifetimePreprocessor` 自动剥离。
+正确的做法：把每类上下文声明成一个"围栏家族"（fence kind），通过 `FenceRegistry` 注册，运行时由 `BaseAgentTask` 把 host 请求里的 `fences[]` 自动展开成 `context_injection` 消息，按 `placement` 落到正确位置；当前轮 prompt block 由 `CurrentTurnMessageAssembler` 先组装，旧轮 `lifetime: 'turn-only'` 的注入再由 `FenceLifetimePreprocessor` 自动剥离。
 
 ## 2. 概念三元组
 
@@ -74,6 +74,32 @@ export const myFenceRegistry = createMyFenceRegistry();
 - `placement` 当前枚举：`'after-system'` / `'before-current-user'` / `'after-current-user'` / `'after-last-tool-result'`
 - 同一个 `kind` 在同一个 registry 不能重复 register
 - `maxBudgetFraction` 必须落在 `(0, 1]`
+
+当前轮 user-side fence 会按实际注入内容组装到同一条 user request。比如 host 注册了 `document-fragment`：
+
+```ts
+{
+  kind: 'document-fragment',
+  llmRole: 'user',
+  placement: 'before-current-user',
+  lifetime: 'turn-only',
+  formatter: content => `<document_fragment>\n${content}\n</document_fragment>`,
+}
+```
+
+本轮只注入这一类 fence 时，最终给 LLM 的 user 内容是：
+
+```xml
+<document_fragment>
+...
+</document_fragment>
+
+<user_request>
+用户原始请求
+</user_request>
+```
+
+没有注入的 fence 不会产生空 XML，也不会出现 `<formatter(before-current-user fence)>` 这类概念占位符。
 
 ## 4. 写一个 host 适配器：把请求字段转成 `FenceInjection[]`
 
@@ -175,6 +201,8 @@ const llmMessages = formatAgentLlmMessages(processingResult.messages, {
 
 如果你完全自定义了 preprocessor pipeline，那 `FenceLifetimePreprocessor` 要从 `@linnlabs/linnkit/context-manager` 导入并手动加进去（构造参数：`{ fenceRegistry }`）。
 
+如果你完全自定义 pipeline，也要保留 `CurrentTurnMessageAssembler`，并让它在 `FenceLifetimePreprocessor` 之前执行。否则当前轮 `before-current-user` 的 turn-only fence 仍可能被后续生命周期清理误判为旧轮上下文。
+
 ## 6. 配 MustKeepPolicy（控制 working memory 裁剪）
 
 `AgentCoreContextProvider` 通过 `contextPolicy.mustKeep` 决定哪些消息一律不被裁。它有两类输入：
@@ -225,12 +253,13 @@ withMyFenceInjections()      ← 你写的适配
   ▼
 AgentMessageOrchestrator     ← linnkit
   │  · BaseAgentTask 展开为 AiMessage(type='context_injection', metadata.fenceKind=...)
+  │  · CurrentTurnMessageAssembler 把当前轮 user/system fence 组装进唯一 user_input / system_prompt
   │  · FenceLifetimePreprocessor 剥离旧轮 turn-only 注入
   │  · AgentCoreContextProvider 按 MustKeepPolicy 决定 working memory 是否裁掉
   ▼
 formatAgentLlmMessages(..., { fenceRegistry })
-  │  · 找到 metadata.fenceKind → registry.get(kind).formatter(content, attrs)
-  │  · 出关成具体 LLM messages（system / user 各按 llmRole）
+  │  · 对尚未组装的 context_injection，找到 metadata.fenceKind → registry.get(kind).formatter(content, attrs)
+  │  · 出关成具体 LLM messages（system / user 各按 llmRole）；不盲目合并相邻 user 消息
   ▼
 AgentAiEngine.chatCompletionStream(llmMessages, ...)
 ```

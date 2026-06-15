@@ -86,6 +86,39 @@ describe('BaseAgentTask fence messages', () => {
     expect(messages[3].metadata?.fenceKind).toBe('user-quote');
   });
 
+  it('places request fences around the matching current user input from history', () => {
+    const registry = createFenceRegistry([
+      {
+        kind: 'document-context',
+        llmRole: 'user',
+        placement: 'before-current-user',
+        lifetime: 'turn-only',
+        formatter: content => content,
+      },
+    ]);
+    const task = new TestAgentTask({ fenceRegistry: registry });
+
+    const messages = task.buildMessages({
+      query: 'current query',
+      promptKey: 'default',
+      fences: [{ kind: 'document-context', content: 'selected source' }],
+    }, [
+      { id: 'old-user', role: 'user', type: 'user_input', content: 'old query', timestamp: 1 },
+      { id: 'old-answer', role: 'assistant', type: 'final_answer', content: 'old answer', timestamp: 2 },
+      { id: 'current-user', role: 'user', type: 'user_input', content: 'current query', timestamp: 3 },
+    ]);
+
+    expect(messages.map(message => message.id)).toEqual([
+      expect.any(String),
+      'old-user',
+      'old-answer',
+      expect.any(String),
+      'current-user',
+    ]);
+    expect(messages[3].metadata?.fenceKind).toBe('document-context');
+    expect(messages[4].content).toBe('current query');
+  });
+
   it('throws a clear error when a fence kind is not registered', () => {
     const task = new TestAgentTask({ fenceRegistry: createFenceRegistry() });
 

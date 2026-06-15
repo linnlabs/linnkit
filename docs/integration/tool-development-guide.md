@@ -161,7 +161,7 @@ Returns top-K documents ranked by relevance, each with id / title / snippet.`;
 `tool_output.status` 是协议层契约，**驱动**三个下游消费者：
 
 1. **UI 渲染**：失败应该红色卡片 + 错误信息；伪装成功 → UI 显示绿色，但内容是错误，用户困惑
-2. **`toolHistoryCompressor`**：失败的工具可以被压缩成 "tool X failed"，伪装成功会被当成成功结果保留正文
+2. **工具历史可选压缩**：当 agent 显式使用 `toolHistory.retentionMode: 'compress'` 时，失败的工具可以被压缩成 "tool X failed"，伪装成功会被当成成功结果保留正文
 3. **`AuditEnvelope`**：tool retry / tool deny 等审计决策依赖 `tool_output.status` 准确
 
 **违反这一条的 bug 是最难排查的一类**。`throw` 一次，三处一致；伪装一次，三处全错。
@@ -195,9 +195,11 @@ for (const field of required) {
 
 ---
 
-## 5. `getExecutionSummary` —— 把工具产出压成历史摘要
+## 5. `getExecutionSummary` —— 可选压缩模式下的工具历史摘要
 
-`toolHistoryCompressor` 在 `strategy: 'per-run'` / `'per-pair'` 下，会用 `getExecutionSummary(output)` 把历史轮次的工具产出**压缩成一行摘要**——这是 linnkit 上下文工程的核心机制之一。
+默认情况下，未进入保留窗口的旧工具组会被直接删除，不会生成摘要。只有当 agent 显式设置 `toolHistory.retentionMode: 'compress'` 时，`toolHistoryCompressor` 才会用 `getExecutionSummary(output)` 把历史轮次的工具产出**压缩成一行摘要**。
+
+这条摘要只是进入后续 working memory 的候选历史工具交互，仍会受到工具组数量上限和 token budget 约束；不要把 `getExecutionSummary` 理解成“永久保留旧工具结果”的存储机制。
 
 **默认实现**（`BaseTool.getExecutionSummary` 已提供）：
 
@@ -223,7 +225,7 @@ getExecutionSummary(output: string): string {
 }
 ```
 
-**对 token 的影响**：在 `strategy: 'per-run'` 下，一次 run 的 N-1 历史轮次工具产出都会被压成 `getExecutionSummary` 一行摘要——一个高质量的 summary 能把工具历史的 token 占用从几万压到几百。这是 linnkit "对每一个发给 AI 的 token 进行精细化管理" 的真实落地点。
+**对 token 的影响**：在 `retentionMode: 'compress'` 下，未进入保留窗口的历史轮次工具产出会被压成 `getExecutionSummary` 一行摘要；一个高质量的 summary 能把单组候选历史工具交互的 token 占用从几万压到几百，但摘要是否进入最终 prompt 仍取决于 working memory 预算。默认 `retentionMode: 'drop'` 则直接删除这些旧工具组，不调用 `getExecutionSummary`。
 
 ---
 
@@ -326,7 +328,7 @@ const toolRuntime = new QuickstartMemoryToolRuntime([
 | 错误处理（throw vs 返回）| host（遵守 §3）| runtime 接住 throw → `tool_output.status = 'error'` |
 | 必填参数校验 | linnkit 协议层 | `BaseTool.validateArguments()` |
 | 超长 observation 治理 | linnkit 协议层 + host | `contextPolicy.toolOutput.observationGovernance` + `ObservationPreviewPort` |
-| 工具历史压缩 | linnkit 协议层 | `contextPolicy.toolHistory.strategy` + `getExecutionSummary` |
+| 工具历史保留 / 可选压缩 | linnkit 协议层 | `contextPolicy.toolHistory.strategy` + `contextPolicy.toolHistory.retentionMode` + `getExecutionSummary` |
 | 工具配对一致性 | linnkit 协议层 | tool 配对不变量 C10 + `ToolReplayProtocolGuard` |
 | 交互工具的 wait_user 路由 | linnkit 协议层 | `WaitUserNode` + `requires_user_interaction` 事件 |
 | `data` 字段名约定 / 前端 registry 注册 | host（工具作者 + 前端工程师）| linnkit 不规定 |

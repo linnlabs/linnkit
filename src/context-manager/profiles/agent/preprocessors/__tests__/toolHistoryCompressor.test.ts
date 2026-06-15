@@ -79,7 +79,7 @@ function createUserInput(id: string, timestamp: number, content: string): AiMess
 }
 
 describe('ToolHistoryCompressorPreprocessor', () => {
-  it('compresses only older tool groups and keeps the latest two raw groups', async () => {
+  it('drops older tool groups by default and keeps the latest two raw groups', async () => {
     const preprocessor = new ToolHistoryCompressorPreprocessor({ strategy: 'per-pair', keepLatestToolPairs: 2 });
 
     const messages: AiMessage[] = [
@@ -152,6 +152,72 @@ describe('ToolHistoryCompressorPreprocessor', () => {
         message.metadata?.isCompressedToolHistory === true,
     );
 
+    expect(compressed).toBeUndefined();
+    expect(result.appliedStrategies).toContain('tool_history_drop');
+  });
+
+  it('compresses only older tool groups when retentionMode is compress', async () => {
+    const preprocessor = new ToolHistoryCompressorPreprocessor({
+      strategy: 'per-pair',
+      retentionMode: 'compress',
+      keepLatestToolPairs: 2,
+    });
+
+    const messages: AiMessage[] = [
+      createUserInput('u_old', 1000, '旧问题'),
+      createToolCallsMessage({
+        id: 'a_tc_1',
+        timestamp: 1100,
+        toolCallId: 'tc_1',
+        toolName: 'workspace_read',
+        args: { document_id: 'doc-1' },
+      }),
+      createToolOutputMessage({
+        id: 't_out_1',
+        timestamp: 1200,
+        toolCallId: 'tc_1',
+        toolName: 'workspace_read',
+        content: '{"observation":"已读取文档 doc-1，主题是代码质量"}',
+      }),
+      createToolCallsMessage({
+        id: 'a_tc_2',
+        timestamp: 1300,
+        toolCallId: 'tc_2',
+        toolName: 'workspace_read',
+        args: { document_id: 'doc-2' },
+      }),
+      createToolOutputMessage({
+        id: 't_out_2',
+        timestamp: 1400,
+        toolCallId: 'tc_2',
+        toolName: 'workspace_read',
+        content: '{"observation":"已读取文档 doc-2，主题是重构"}',
+      }),
+      createToolCallsMessage({
+        id: 'a_tc_3',
+        timestamp: 1500,
+        toolCallId: 'tc_3',
+        toolName: 'workspace_read',
+        args: { document_id: 'doc-3' },
+      }),
+      createToolOutputMessage({
+        id: 't_out_3',
+        timestamp: 1600,
+        toolCallId: 'tc_3',
+        toolName: 'workspace_read',
+        content: '{"observation":"已读取文档 doc-3，主题是技术债务"}',
+      }),
+      createUserInput('u_current', 9999, '新问题（本轮开始）'),
+    ];
+
+    const result = await preprocessor.process(messages, { debugMode: false });
+    const compressed = result.messages.find(
+      (message) =>
+        message.role === 'assistant' &&
+        message.type === 'final_answer' &&
+        message.metadata?.isCompressedToolHistory === true,
+    );
+
     expect(compressed).toBeDefined();
     expect(compressed?.metadata?.replacementSourceIds).toEqual(
       expect.arrayContaining(['a_tc_1', 't_out_1']),
@@ -162,7 +228,11 @@ describe('ToolHistoryCompressorPreprocessor', () => {
   });
 
   it('keeps the latest checkpoint group while still compressing older non-checkpoint groups', async () => {
-    const preprocessor = new ToolHistoryCompressorPreprocessor({ strategy: 'per-pair', keepLatestToolPairs: 2 });
+    const preprocessor = new ToolHistoryCompressorPreprocessor({
+      strategy: 'per-pair',
+      retentionMode: 'compress',
+      keepLatestToolPairs: 2,
+    });
 
     const checkpointRawOutput = JSON.stringify({
       data: { _type: 'context_checkpoint', summary: 'phase done' },
@@ -252,7 +322,11 @@ describe('ToolHistoryCompressorPreprocessor', () => {
   });
 
   it('compresses a multi-tool assistant group as one atomic replacement and summarizes long outputs', async () => {
-    const preprocessor = new ToolHistoryCompressorPreprocessor({ strategy: 'per-pair', keepLatestToolPairs: 1 });
+    const preprocessor = new ToolHistoryCompressorPreprocessor({
+      strategy: 'per-pair',
+      retentionMode: 'compress',
+      keepLatestToolPairs: 1,
+    });
     const veryLongObservation = JSON.stringify({
       observation: 'A'.repeat(520),
     });
@@ -329,7 +403,11 @@ describe('ToolHistoryCompressorPreprocessor', () => {
   });
 
   it('keeps provider sidecar on retained tool groups and drops structured sidecar from compressed groups', async () => {
-    const preprocessor = new ToolHistoryCompressorPreprocessor({ strategy: 'per-pair', keepLatestToolPairs: 1 });
+    const preprocessor = new ToolHistoryCompressorPreprocessor({
+      strategy: 'per-pair',
+      retentionMode: 'compress',
+      keepLatestToolPairs: 1,
+    });
     const oldReasoning = [
       { provider: 'deepseek', type: 'reasoning_content', reasoning_content: 'Old reason.' },
     ];

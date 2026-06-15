@@ -5,6 +5,7 @@ import {
   type ToolReplayProtocolPolicy,
 } from './base';
 import {
+  CurrentTurnMessageAssembler,
   FenceLifetimePreprocessor,
   HistoryPurificationPreprocessor,
 } from '../../../shared/preprocessors';
@@ -19,7 +20,11 @@ import { isContextProviderError } from '../../../shared/providers/base';
 
 // 重新导出公共接口
 export * from './base';
-export { FenceLifetimePreprocessor, HistoryPurificationPreprocessor } from '../../../shared/preprocessors';
+export {
+  CurrentTurnMessageAssembler,
+  FenceLifetimePreprocessor,
+  HistoryPurificationPreprocessor,
+} from '../../../shared/preprocessors';
 export * from './toolHistoryCompressor';
 export * from './toolReplayProtocolGuard';
 
@@ -243,7 +248,7 @@ export interface PreprocessorPipelineResult {
  * 创建默认的Agent预处理器注册表
  * 
  * 🔥 这里定义了Agent预处理管道的默认配置：
- * 1. ToolHistoryCompressorPreprocessor (priority: 0) - 工具历史压缩，最先执行
+ * 1. ToolHistoryCompressorPreprocessor (priority: 0) - 工具历史保留/删除，最先执行
  * 2. ToolReplayProtocolGuardPreprocessor (priority: 0.5) - 工具回放协议守卫，仅治理历史轮次
  * 3. HistoryPurificationPreprocessor (priority: 1) - Agent历史净化，在压缩后执行
  * 
@@ -256,7 +261,7 @@ export function createDefaultAgentPreprocessorRegistry(
 ): PreprocessorRegistry {
   const registry = new PreprocessorRegistry();
   
-  // 注册工具历史压缩预处理器 - 优先级0，最先执行
+  // 注册工具历史保留预处理器 - 优先级0，最先执行
   registry.register(new ToolHistoryCompressorPreprocessor(options.toolHistory));
 
   // 注册工具回放协议守卫 - 压缩后、净化前执行，避免旧工具组伪装为结构化 replay
@@ -267,6 +272,7 @@ export function createDefaultAgentPreprocessorRegistry(
   registry.register(new HistoryPurificationPreprocessor({ logPrefix: 'Agent-HistoryPurification' }));
 
   if (options.fenceRegistry) {
+    registry.register(new CurrentTurnMessageAssembler({ fenceRegistry: options.fenceRegistry }));
     registry.register(new FenceLifetimePreprocessor({ fenceRegistry: options.fenceRegistry }));
   }
   

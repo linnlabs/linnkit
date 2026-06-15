@@ -23,9 +23,11 @@ const DEFAULT_MAX_INTERACTION_GROUPS = 12;
 
 export type ToolHistoryCompressionStrategy = 'per-pair' | 'per-run' | 'none';
 export type ToolHistoryOverflowStrategy = 'keep-latest' | 'fail-fast';
+export type ToolHistoryRetentionMode = 'drop' | 'compress';
 
 export interface ToolHistoryCompressorOptions {
   strategy?: ToolHistoryCompressionStrategy;
+  retentionMode?: ToolHistoryRetentionMode;
   keepLatestToolPairs?: number;
   keepLatestRuns?: number;
   maxInteractionGroups?: number;
@@ -36,6 +38,7 @@ export interface ToolHistoryCompressorOptions {
 
 type NormalizedToolHistoryCompressorOptions = {
   strategy: ToolHistoryCompressionStrategy;
+  retentionMode: ToolHistoryRetentionMode;
   keepLatestToolPairs: number;
   keepLatestRuns: number;
   maxInteractionGroups: number;
@@ -43,19 +46,23 @@ type NormalizedToolHistoryCompressorOptions = {
 };
 
 /**
- * 工具历史压缩预处理器。
+ * 工具历史保留预处理器。
  *
  * 三种策略边界：
- * - per-pair：旧行为，按全局最近 N 组完整工具交互保留，其余压成自然语言记录。
+ * - per-pair：按全局最近 N 组完整工具交互保留，其余按 retentionMode 处理。
  * - per-run：按 user_input 划分 run，完整保留最近 K 个历史 run 内的工具组，避免腰斩同一轮工具链。
  * - none：不做常规压缩，仅在 maxInteractionGroups 显式触发时执行安全阀。
  *
+ * retentionMode 边界：
+ * - drop：默认行为。旧工具组超过保留窗口后直接移除，避免改写历史前缀和制造伪 final_answer。
+ * - compress：兼容旧行为。把旧工具组替换为自然语言摘要，用于小上下文或审计友好的历史线索保留。
+ *
  * 注意：单个 tool_output 的 token 截断不在这里做，那是 WorkingMemory 阶段
- * ToolPairTruncator 的职责；本处理器只决定“工具组是原样保留还是压缩为摘要消息”。
+ * ToolPairTruncator 的职责；本处理器只决定“工具组是原样保留、删除，还是压缩为摘要消息”。
  */
 export class ToolHistoryCompressorPreprocessor extends BasePreprocessor {
   readonly name = 'ToolHistoryCompressorPreprocessor';
-  readonly description = '工具历史压缩处理器 - 将较早的历史工具调用对压缩为自然语言记录消息';
+  readonly description = '工具历史保留处理器 - 按策略保留、删除或压缩较早的历史工具调用对';
   readonly priority = 0;
 
   private summarizer = createDefaultToolOutputSummarizer();
@@ -65,6 +72,7 @@ export class ToolHistoryCompressorPreprocessor extends BasePreprocessor {
     super();
     this.options = {
       strategy: options.strategy ?? 'per-run',
+      retentionMode: options.retentionMode ?? 'drop',
       keepLatestToolPairs: normalizeNonNegativeInteger(
         options.keepLatestToolPairs,
         DEFAULT_KEEP_LATEST_TOOL_PAIRS,
@@ -85,7 +93,7 @@ export class ToolHistoryCompressorPreprocessor extends BasePreprocessor {
     messages: AiMessage[],
     context: PreprocessorContext,
   ): Promise<PreprocessorResult> {
-    this.debug('🔧 开始工具历史压缩处理', {
+    this.debug('🔧 开始工具历史保留处理', {
       原始消息数: messages.length,
     }, context);
 
@@ -97,20 +105,23 @@ export class ToolHistoryCompressorPreprocessor extends BasePreprocessor {
       历史消息数: historyMessages.length,
       当前轮次消息数: currentRunMessages.length,
       当前轮次起点索引: currentRunStartIndex,
-      工具压缩策略: this.options.strategy,
+      工具保留策略: this.options.strategy,
+      历史工具保留模式: this.options.retentionMode,
     }, context);
 
-    const compressedHistory = this.compressToolCallPairsInHistory(historyMessages, context);
+    const processedHistory = this.processToolCallPairsInHistory(historyMessages, context);
 
-    const finalMessages = [...compressedHistory, ...currentRunMessages];
+    const finalMessages = [...processedHistory, ...currentRunMessages];
     const originalCount = messages.length;
-    const compressedCount = finalMessages.length;
-    const removedCount = originalCount - compressedCount;
-    const appliedStrategies = removedCount > 0 ? ['tool_history_compression'] : [];
+    const processedCount = finalMessages.length;
+    const removedCount = originalCount - processedCount;
+    const appliedStrategies = removedCount > 0
+      ? [this.options.retentionMode === 'compress' ? 'tool_history_compression' : 'tool_history_drop']
+      : [];
 
-    this.debug('✅ 工具历史压缩完成', {
+    this.debug('✅ 工具历史保留处理完成', {
       原始消息: originalCount,
-      压缩后消息: compressedCount,
+      处理后消息: processedCount,
       减少消息: removedCount,
       Token节省估计: `约${removedCount * 50}个Token`,
     }, context);
@@ -137,7 +148,7 @@ export class ToolHistoryCompressorPreprocessor extends BasePreprocessor {
     return false;
   }
 
-  private compressToolCallPairsInHistory(
+  private processToolCallPairsInHistory(
     historyMessages: AiMessage[],
     context: PreprocessorContext,
   ): AiMessage[] {
@@ -165,8 +176,10 @@ export class ToolHistoryCompressorPreprocessor extends BasePreprocessor {
       if (!group.isComplete || keepAnchorIds.has(group.anchorId)) {
         continue;
       }
-      const compressedMessage = this.compressToolInteractionGroup(group, context);
-      replacementMap.set(group.assistantIndex, compressedMessage);
+      if (this.options.retentionMode === 'compress') {
+        const compressedMessage = this.compressToolInteractionGroup(group, context);
+        replacementMap.set(group.assistantIndex, compressedMessage);
+      }
       for (const messageIndex of group.messageIndexes) {
         messagesToRemove.add(messageIndex);
       }

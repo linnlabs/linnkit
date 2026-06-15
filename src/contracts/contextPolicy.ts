@@ -49,6 +49,7 @@ export type AgentSpecBudgetPolicy = z.infer<typeof AgentSpecBudgetPolicy>;
 
 export const AgentSpecToolHistoryPolicy = z.object({
   strategy: z.enum(['per-pair', 'per-run', 'none']).optional(),
+  retentionMode: z.enum(['drop', 'compress']).optional(),
   keepLatestToolPairs: z.number().int().nonnegative().optional(),
   keepLatestRuns: z.number().int().nonnegative().optional(),
   maxInteractionGroups: z.number().int().nonnegative().optional(),
@@ -208,12 +209,13 @@ export type AgentSpecContextPolicyInput = Omit<z.input<typeof AgentSpecContextPo
 const DEFAULT_CONTEXT_POLICY: Required<AgentSpecContextPolicy> = {
   profileId: 'agent',
   budget: {
-    maxTokens: 120000,
+    maxTokens: 232000,
     reservedForResponse: 2400,
     workingMemoryBudgetPercentage: 0.7,
   },
   toolHistory: {
     strategy: 'per-run',
+    retentionMode: 'drop',
     keepLatestToolPairs: 2,
     keepLatestRuns: 1,
     maxInteractionGroups: 12,

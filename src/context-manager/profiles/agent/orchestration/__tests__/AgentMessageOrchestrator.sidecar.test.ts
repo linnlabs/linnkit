@@ -388,4 +388,42 @@ describe('AgentMessageOrchestrator contextPolicy provider registry', () => {
     expect(ids).not.toContain('tool_output_1');
     expect(ids).toEqual(expect.arrayContaining(['tool_calls_2', 'tool_output_2']));
   });
+
+  it('使用 contextPolicy.budget 作为本次上下文构建的有效预算', async () => {
+    const providerRegistry = new ContextProviderRegistry();
+    providerRegistry.register(keepAllProvider);
+    const orchestrator = new AgentMessageOrchestrator({
+      tokenBudget: {
+        maxTokens: 10_000,
+        reservedForResponse: 1000,
+      },
+      processing: {
+        debugMode: false,
+      },
+      taskResolver: () => passThroughTask,
+      providerRegistry,
+      resolveContextPolicy: () => defineContextPolicy({
+        budget: {
+          maxTokens: 20_000,
+          reservedForResponse: 3000,
+        },
+        contextTrace: {
+          enabled: true,
+        },
+      }),
+    });
+
+    const result = await orchestrator.processAgentConversation(
+      {
+        query: '测试预算覆盖',
+        promptKey: 'default',
+      },
+      [],
+      new ToolManager(testToolRegistry),
+    );
+
+    expect(result.metadata.tokenUsage.budget).toBe(17_000);
+    expect(result.contextBuildResult.contextTrace?.totalBudget).toBe(17_000);
+    expect(result.contextBuildResult.contextTrace?.effectivePolicy?.budget?.maxTokens).toBe(20_000);
+  });
 });

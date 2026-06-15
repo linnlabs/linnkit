@@ -17,7 +17,7 @@ export const AGENT_CONTEXT_BUILDER_CONFIG = {
   // === 绝对Token限制设置 ===
   
   /** 默认最大Token预算上限 */
-  DEFAULT_MAX_TOKENS: 120000,
+  DEFAULT_MAX_TOKENS: 232000,
   
   /** 响应预留Token数 */
   RESERVED_FOR_RESPONSE: 2400,

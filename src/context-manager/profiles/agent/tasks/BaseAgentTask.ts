@@ -64,25 +64,40 @@ export abstract class BaseAgentTask implements IAgentTask {
 
     messages.push(...fenceMessages['after-system']);
 
+    const currentUserIndex = findCurrentUserInputIndex(history, request.query);
+    const historyBeforeCurrentUser = currentUserIndex === -1 ? history : history.slice(0, currentUserIndex);
+    const currentUserMessage = currentUserIndex === -1
+      ? this.createCurrentUserMessage(request.query)
+      : history[currentUserIndex];
+    const historyAfterCurrentUser = currentUserIndex === -1 ? [] : history.slice(currentUserIndex + 1);
+
+    messages.push(...historyBeforeCurrentUser);
     messages.push(...fenceMessages['before-current-user']);
 
-    const hasUserMessageInHistory = history.some((m) => m.role === 'user');
-
-    if (!hasUserMessageInHistory && request.query && request.query.trim()) {
-      messages.push({
-        id: generateMessageId(),
-        role: 'user',
-        type: 'user_input',
-        content: request.query.trim(),
-        timestamp: Date.now(),
-      });
+    if (currentUserMessage) {
+      messages.push(currentUserMessage);
     }
 
     messages.push(...fenceMessages['after-current-user']);
-    messages.push(...history);
+    messages.push(...historyAfterCurrentUser);
     this.insertAfterLastToolResult(messages, fenceMessages['after-last-tool-result']);
 
     return messages;
+  }
+
+  private createCurrentUserMessage(query: string): AiMessage | null {
+    const content = query.trim();
+    if (!content) {
+      return null;
+    }
+
+    return {
+      id: generateMessageId(),
+      role: 'user',
+      type: 'user_input',
+      content,
+      timestamp: Date.now(),
+    };
   }
 
   private createFenceMessages(fences: FenceInjection[]): Record<FencePlacement, AiMessage[]> {
@@ -157,5 +172,25 @@ function findLastIndex<T>(items: T[], predicate: (item: T) => boolean): number {
       return index;
     }
   }
+  return -1;
+}
+
+function findCurrentUserInputIndex(history: AiMessage[], query: string): number {
+  const normalizedQuery = query.trim();
+  if (!normalizedQuery) {
+    return -1;
+  }
+
+  for (let index = history.length - 1; index >= 0; index -= 1) {
+    const message = history[index];
+    if (
+      message.role === 'user' &&
+      message.type === 'user_input' &&
+      message.content.trim() === normalizedQuery
+    ) {
+      return index;
+    }
+  }
+
   return -1;
 }

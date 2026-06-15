@@ -49,12 +49,13 @@ describe('AgentSpec contract', () => {
       contextPolicy: {
         profileId: 'agent',
         budget: {
-          maxTokens: 120000,
+          maxTokens: 232000,
           reservedForResponse: 2400,
           workingMemoryBudgetPercentage: 0.7,
         },
         toolHistory: {
           strategy: 'per-run',
+          retentionMode: 'compress',
           keepLatestToolPairs: 2,
           keepLatestRuns: 2,
           maxInteractionGroups: 12,
@@ -171,6 +172,7 @@ describe('AgentSpec contract', () => {
     expect(minimalResult.success).toBe(true);
     expect(policy.profileId).toBe('agent');
     expect(policy.toolHistory?.strategy).toBe('per-run');
+    expect(policy.toolHistory?.retentionMode).toBe('drop');
     expect(policy.toolHistory?.keepLatestRuns).toBe(2);
     expect(policy.toolOutput?.observationGovernance).toEqual({
       enabled: true,
@@ -210,6 +212,23 @@ describe('AgentSpec contract', () => {
         profileId: 'agent',
         toolHistory: {
           overflowStrategy: 'silent',
+        },
+      },
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects invalid toolHistory retentionMode values', () => {
+    const result = AgentSpec.safeParse({
+      id: 'invalid-agent',
+      version: '0.1.0',
+      capabilities: [],
+      tools: [],
+      contextPolicy: {
+        profileId: 'agent',
+        toolHistory: {
+          retentionMode: 'archive',
         },
       },
     });

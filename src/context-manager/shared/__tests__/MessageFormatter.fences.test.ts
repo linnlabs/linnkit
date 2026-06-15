@@ -70,4 +70,44 @@ describe('MessageFormatter fences', () => {
       },
     ])).toEqual([{ role: 'user', content: 'write this' }]);
   });
+
+  it('does not merge adjacent text messages in the formatter', () => {
+    const result = formatAgentLlmMessages([
+      {
+        id: 'system-1',
+        role: 'system',
+        type: 'system_prompt',
+        content: 'System prompt',
+        timestamp: 1,
+      },
+      {
+        id: 'system-2',
+        role: 'system',
+        type: 'history_summary',
+        content: 'Summary',
+        timestamp: 2,
+      },
+      {
+        id: 'user-1',
+        role: 'user',
+        type: 'user_input',
+        content: 'First user turn',
+        timestamp: 3,
+      },
+      {
+        id: 'user-2',
+        role: 'user',
+        type: 'user_input',
+        content: 'Second user turn',
+        timestamp: 4,
+      },
+    ]);
+
+    expect(result).toEqual([
+      { role: 'system', content: 'System prompt' },
+      { role: 'system', content: 'Summary' },
+      { role: 'user', content: 'First user turn' },
+      { role: 'user', content: 'Second user turn' },
+    ]);
+  });
 });

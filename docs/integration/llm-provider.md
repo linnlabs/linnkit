@@ -31,7 +31,7 @@
 
 出关到 LLM 时，host 默认装配应当用 `formatAgentLlmMessages(messages, { fenceRegistry })`（来自 `@linnlabs/linnkit/context-manager`）；它走 native tool 回放形态，会自动把 sidecar 写回去。
 
-> ⚠️ **注意**：被工具历史压缩 / 历史摘要替换 / chat formatter 处理过的旧工具组，不再保证 sidecar 可回放——这是 token 预算与 chat 兼容层的设计取舍。如果某个 provider 强要求 reasoning blocks 必须随回传，请确保该工具组以原始 `tool_call_decision + tool_output` 结构进入下一轮上下文。
+> ⚠️ **注意**：被工具历史删除、工具历史可选压缩 / 历史摘要替换 / chat formatter 处理过的旧工具组，不再保证 sidecar 可回放——这是 token 预算与 chat 兼容层的设计取舍。如果某个 provider 强要求 reasoning blocks 必须随回传，请确保该工具组以原始 `tool_call_decision + tool_output` 结构进入下一轮上下文。
 
 ### 3.1 缺 sidecar 时怎么办
 
