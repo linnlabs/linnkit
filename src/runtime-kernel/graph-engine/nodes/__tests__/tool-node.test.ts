@@ -221,6 +221,60 @@ describe('ToolNode - 单元测试', () => {
       expect(runtimeEvents.filter((event) => event.type === 'tool_process')).toHaveLength(1);
       expect(runtimeEvents.find((event) => event.type === 'tool_output')).toBeUndefined();
     });
+
+    it('执行期 observation 截断后应把字符计量写入 tool_output metadata', async () => {
+      executeToolMock.mockResolvedValue({
+        success: true,
+        result: JSON.stringify({
+          observation: 'line 1\nline 2\nline 3',
+          data: {},
+        }),
+        durationMs: 5,
+      });
+      mockObservationPreview.truncateObservation = vi.fn(async () => ({
+        truncated: true,
+        preview: 'line 1',
+        blob_id: 'blob_1',
+        originalChars: 20,
+        previewChars: 6,
+        originalLines: 3,
+        previewLines: 1,
+      }));
+
+      const state: EngineState = {
+        nodeId: 'tool',
+        local: {
+          conversationId: 'conv_1',
+          turnId: 'turn_1',
+          pendingToolCalls: [
+            {
+              id: 'call_1',
+              type: 'function' as const,
+              function: { name: 'search', arguments: '{"query":"test"}' },
+            },
+          ],
+          toolContext: {},
+        },
+      };
+
+      const result = await toolNode.run(state);
+      const runtimeEvents = result.events ?? [];
+      const toolOutput = runtimeEvents.find((event) => event.type === 'tool_output');
+
+      expect(toolOutput?.metadata?.observationTruncation).toEqual({
+        originalChars: 20,
+        previewChars: 6,
+        originalLines: 3,
+        previewLines: 1,
+      });
+      expect(state.local?.history?.find((event) => event.type === 'tool_output')?.metadata?.observationTruncation)
+        .toEqual({
+          originalChars: 20,
+          previewChars: 6,
+          originalLines: 3,
+          previewLines: 1,
+        });
+    });
   });
 
   describe('3. 工具执行失败', () => {

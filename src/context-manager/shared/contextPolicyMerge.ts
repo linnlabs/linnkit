@@ -53,7 +53,7 @@ function mergePolicyLayer(
     workingMemory: mergeObject(base.workingMemory, override.workingMemory),
     checkpoint: mergeObject(base.checkpoint, override.checkpoint),
     reasoningRetention: mergeObject(base.reasoningRetention, override.reasoningRetention),
-    tokenEstimation: mergeObject(base.tokenEstimation, override.tokenEstimation),
+    tokenEstimation: mergeTokenEstimation(base.tokenEstimation, override.tokenEstimation),
     systemReminder: mergeSystemReminder(base.systemReminder, override.systemReminder),
     contextTrace: mergeObject(base.contextTrace, override.contextTrace),
   };
@@ -98,5 +98,20 @@ function mergeToolOutput(
     ...base,
     ...override,
     observationGovernance: mergeObject(base?.observationGovernance, override?.observationGovernance),
+  };
+}
+
+function mergeTokenEstimation(
+  base: AgentSpecContextPolicyInput['tokenEstimation'],
+  override: AgentSpecContextPolicyInput['tokenEstimation'],
+): AgentSpecContextPolicyInput['tokenEstimation'] {
+  if (!base && !override) {
+    return undefined;
+  }
+  return {
+    ...base,
+    ...override,
+    calibration: mergeObject(base?.calibration, override?.calibration),
+    remoteCount: mergeObject(base?.remoteCount, override?.remoteCount),
   };
 }

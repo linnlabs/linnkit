@@ -1,3 +1,4 @@
+import type { CanonicalLlmUsage } from '../contracts';
 import type { LlmCallOptions, LlmRequestMessage, ProviderReasoningDetails, ToolCallChunk } from './ai-engine.types';
 
 export type AgentAiEngineStreamContent =
@@ -6,6 +7,7 @@ export type AgentAiEngineStreamContent =
       content?: string;
       tool_calls?: ToolCallChunk[];
       reasoning_details?: ProviderReasoningDetails;
+      canonicalUsage?: CanonicalLlmUsage;
     };
 
 export interface AgentAiEngine {
@@ -23,6 +25,7 @@ export interface AgentAiEngine {
     onError?: (error: Error) => void,
     onFinish?: (reason: string) => void,
     onThought?: (thought: string) => void,
-    onUsage?: (usage: unknown) => void
+    onUsage?: (usage: unknown) => void,
+    onCanonicalUsage?: (usage: CanonicalLlmUsage) => void
   ): Promise<void>;
 }

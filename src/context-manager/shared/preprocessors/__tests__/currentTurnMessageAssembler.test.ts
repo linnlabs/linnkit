@@ -146,6 +146,28 @@ describe('CurrentTurnMessageAssembler', () => {
     expect(result.messages[0].content).not.toContain('<follow_up_context>');
   });
 
+  it('does not nest user_request when the host already wrapped model-facing user content', async () => {
+    const messages: AiMessage[] = [
+      message('doc', 'user', 'context_injection', '片段内容', {
+        fenceKind: 'document-context',
+      }),
+      message('user', 'user', 'user_input', [
+        '<local_time>2026-06-18 09:07:05</local_time>',
+        '<user_request>\n用户原始请求\n</user_request>',
+      ].join('\n\n')),
+    ];
+
+    const result = await new CurrentTurnMessageAssembler({ fenceRegistry: registry }).process(messages, {});
+
+    expect(result.messages).toHaveLength(1);
+    expect(result.messages[0].content).toBe([
+      '<document_context>\n片段内容\n</document_context>',
+      '<local_time>2026-06-18 09:07:05</local_time>',
+      '<user_request>\n用户原始请求\n</user_request>',
+    ].join('\n\n'));
+    expect(result.messages[0].content.match(/<user_request>/g)).toHaveLength(1);
+  });
+
   it('does not consume historical non-adjacent turn-only fences', async () => {
     const messages: AiMessage[] = [
       message('old-doc', 'user', 'context_injection', 'old selected source', {

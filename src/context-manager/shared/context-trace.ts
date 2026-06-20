@@ -2,8 +2,10 @@ import type {
   AgentSpecContextPolicy,
   AgentSpecContextTracePolicy,
   AiMessage,
+  ContextTokenComponent,
+  TokenUsageCalibrationTrace,
 } from '../../contracts';
-import type { MessageProcessingState } from './providers/base';
+import type { MessageProcessingState, RemoteTokenCountTrace } from './providers/base';
 
 export type ContextTraceEvent =
   | ContextTraceProviderEvent
@@ -36,6 +38,7 @@ export interface ContextTraceMessageDecisionEvent {
   kept: boolean;
   reason: string;
   replacementSourceIds?: string[];
+  tokenCalibration?: TokenUsageCalibrationTrace;
 }
 
 export interface ContextTrace {
@@ -49,6 +52,10 @@ export interface ContextTrace {
   originalCount: number;
   finalCount: number;
   finalTokens: number;
+  tokenLedgerEntryIds?: string[];
+  tokenComponents?: ContextTokenComponent[];
+  tokenCalibration?: TokenUsageCalibrationTrace;
+  remoteTokenCount?: RemoteTokenCountTrace;
   truncated: boolean;
   events: ContextTraceEvent[];
 }
@@ -58,6 +65,8 @@ interface ContextTraceCollectorOptions {
   effectivePolicy?: AgentSpecContextPolicy;
   totalBudget: number;
   originalCount: number;
+  tokenCalibration?: TokenUsageCalibrationTrace;
+  remoteTokenCount?: RemoteTokenCountTrace;
 }
 
 interface ProviderSnapshot {
@@ -90,12 +99,17 @@ export class ContextTraceCollector {
   private readonly effectivePolicy?: AgentSpecContextPolicy;
   private readonly totalBudget: number;
   private readonly originalCount: number;
+  private readonly tokenCalibration?: TokenUsageCalibrationTrace;
+  private remoteTokenCount?: RemoteTokenCountTrace;
+  private tokenComponents?: ContextTokenComponent[];
   private readonly events: ContextTraceEvent[] = [];
   private overflowed = false;
 
   private constructor(options: Required<Pick<ContextTraceCollectorOptions, 'totalBudget' | 'originalCount'>> & {
     policy?: AgentSpecContextTracePolicy;
     effectivePolicy?: AgentSpecContextPolicy;
+    tokenCalibration?: TokenUsageCalibrationTrace;
+    remoteTokenCount?: RemoteTokenCountTrace;
   }) {
     this.includeMessageIds = options.policy?.includeMessageIds ?? true;
     this.includeTokenBreakdown = options.policy?.includeTokenBreakdown ?? true;
@@ -103,6 +117,8 @@ export class ContextTraceCollector {
     this.effectivePolicy = options.effectivePolicy;
     this.totalBudget = options.totalBudget;
     this.originalCount = options.originalCount;
+    this.tokenCalibration = options.tokenCalibration;
+    this.remoteTokenCount = options.remoteTokenCount;
   }
 
   static create(options: ContextTraceCollectorOptions): ContextTraceCollector | undefined {
@@ -146,8 +162,20 @@ export class ContextTraceCollector {
         kept,
         reason: buildDecisionReason(state, kept),
         ...(state.replacementSourceIds ? { replacementSourceIds: [...state.replacementSourceIds] } : {}),
+        ...(this.includeTokenBreakdown && state.tokenCalibration ? { tokenCalibration: state.tokenCalibration } : {}),
       });
     }
+  }
+
+  recordRemoteTokenCount(trace: RemoteTokenCountTrace): void {
+    this.remoteTokenCount = trace;
+  }
+
+  recordTokenComponents(components: ReadonlyArray<ContextTokenComponent>): void {
+    if (!this.includeTokenBreakdown) {
+      return;
+    }
+    this.tokenComponents = [...components];
   }
 
   build(finalMessages: ReadonlyArray<AiMessage>, finalTokens: number): ContextTrace {
@@ -162,6 +190,9 @@ export class ContextTraceCollector {
       originalCount: this.originalCount,
       finalCount: finalMessages.length,
       finalTokens,
+      ...(this.tokenCalibration ? { tokenCalibration: this.tokenCalibration } : {}),
+      ...(this.remoteTokenCount ? { remoteTokenCount: this.remoteTokenCount } : {}),
+      ...(this.tokenComponents ? { tokenComponents: [...this.tokenComponents] } : {}),
       truncated: this.originalCount !== finalMessages.length,
       events: [...this.events],
     };

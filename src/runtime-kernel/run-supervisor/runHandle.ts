@@ -1,5 +1,5 @@
 import { AgentSpec as AgentSpecSchema } from '../../contracts';
-import type { AgentSpec, EventEnvelope, RuntimeEvent } from '../../contracts';
+import type { AgentSpec, EventEnvelope, RunTokenUsageAggregate, RuntimeEvent } from '../../contracts';
 import type { AuditPort } from '../../ports';
 import { generateAuditEnvelopeId } from '../../shared/ids';
 import type { EventBus } from '../execution/event-bus';
@@ -19,6 +19,8 @@ export interface CancelOpts {
 export interface RunCost {
   tokensInput: number;
   tokensOutput: number;
+  tokenUsage?: RunTokenUsageAggregate;
+  tokenLedgerEntryIds?: string[];
   totalCostUsd?: number;
   latencyMs?: number;
   childrenTotal?: RunCost;

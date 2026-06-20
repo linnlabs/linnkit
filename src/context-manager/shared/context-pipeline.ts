@@ -8,6 +8,7 @@ import {
 } from './providers/base';
 import type { ContextProviderRegistry } from './providers/registry';
 import type { AiMessage, RuntimeEvent } from '../../contracts';
+import type { TokenUsageCalibrationTrace } from '../../contracts';
 import type { ContextTraceCollector } from './context-trace';
 
 export interface ContextPipelineStats<TPhase extends PropertyKey> {
@@ -32,7 +33,10 @@ export interface RunContextPipelineOptions<
   buildStats: TStats;
   providerRegistry: ContextProviderRegistry<TConfig>;
   providerContext: TContext;
-  estimateTokens: (message: AiMessage) => number;
+  estimateTokens: (message: AiMessage) => {
+    tokens: number;
+    tokenCalibration?: TokenUsageCalibrationTrace;
+  };
   getPhaseByProviderName: (providerName: string) => TPhase | null;
   debug?: (message: string, data?: Record<string, unknown>) => void;
   contextTrace?: ContextTraceCollector;
@@ -68,7 +72,7 @@ export async function runContextPipeline<
     message,
     originalIndex: index,
     action: 'skip',
-    tokens: estimateTokens(message),
+    ...estimateTokens(message),
   }));
 
   const providers = providerRegistry.getAllProviders();
@@ -158,7 +162,7 @@ export async function runContextPipeline<
   buildStats.messageStats.afterSummarization = states.filter(state => state.action !== 'skip').length;
 
   const finalMessages = generateFinalMessages(states);
-  const finalTokens = finalMessages.reduce((total, message) => total + estimateTokens(message), 0);
+  const finalTokens = finalMessages.reduce((total, message) => total + estimateTokens(message).tokens, 0);
   contextTrace?.recordMessageDecisions(states);
 
   return {

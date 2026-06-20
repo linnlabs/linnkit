@@ -330,4 +330,40 @@ describe('mergeContextPolicy', () => {
       },
     ]);
   });
+
+  it('merges token estimation nested calibration and remote count policies field-by-field', () => {
+    const merged = mergeContextPolicy({
+      hostFallback: {
+        tokenEstimation: {
+          encoding: 'cl100k_base',
+          calibration: {
+            enabled: true,
+            minSamples: 3,
+          },
+          remoteCount: {
+            failureBehavior: 'use-local-estimate',
+          },
+        },
+      },
+      agentSpec: {
+        tokenEstimation: {
+          remoteCount: {
+            enabled: true,
+          },
+        },
+      },
+    });
+
+    expect(merged.tokenEstimation).toEqual(expect.objectContaining({
+      encoding: 'cl100k_base',
+      calibration: {
+        enabled: true,
+        minSamples: 3,
+      },
+      remoteCount: {
+        enabled: true,
+        failureBehavior: 'use-local-estimate',
+      },
+    }));
+  });
 });

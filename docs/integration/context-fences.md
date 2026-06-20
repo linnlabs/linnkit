@@ -101,6 +101,18 @@ export const myFenceRegistry = createMyFenceRegistry();
 
 没有注入的 fence 不会产生空 XML，也不会出现 `<formatter(before-current-user fence)>` 这类概念占位符。
 
+如果 host 已经把当前用户请求预包装成：
+
+```xml
+<local_time>2026-06-18 14:35:27</local_time>
+
+<user_request>
+用户原始请求
+</user_request>
+```
+
+`CurrentTurnMessageAssembler` 在合并当前轮 user-side fence 时会复用已有 `<user_request>`，不会再嵌套一层。这样 host 可以把某些历史事实持久化到 `user_input.content`，同时继续使用 fence 注入当前视图或选区。
+
 ## 4. 写一个 host 适配器：把请求字段转成 `FenceInjection[]`
 
 这是把 host 自己的产品语义（"项目名"、"被选中的段落"、"用户引用的句子"等）翻成通用 fence 注入的关键一层。

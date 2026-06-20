@@ -185,6 +185,30 @@ describe('LlmCaller', () => {
       });
     });
 
+    it('应该透传 adapter 回传的 canonicalUsage', async () => {
+      const canonicalUsage = {
+        inputTokens: 12,
+        outputTokens: 4,
+        totalTokens: 16,
+        source: 'host-supplied' as const,
+        confidence: 'actual' as const,
+      };
+      mockChatCompletion.mockResolvedValue({
+        content: 'Response content',
+        usage: { provider_raw: true },
+        canonicalUsage,
+      });
+
+      const result = await llmCaller.call(testModelId, testMessages);
+
+      expect(result).toEqual({
+        content: 'Response content',
+        reasoning_details: undefined,
+        usage: { provider_raw: true },
+        canonicalUsage,
+      });
+    });
+
     it('应该支持 AbortSignal', async () => {
       const mockResponse = 'Response';
       mockChatCompletion.mockResolvedValue(mockResponse);
@@ -258,6 +282,41 @@ describe('LlmCaller', () => {
       const thoughtEvents = events.filter(e => e.type === 'thought');
       expect(thoughtEvents.length).toBeGreaterThan(0);
       expect(thoughtEvents[0]).toHaveProperty('content');
+    });
+
+    it('应该通过 callback 透传流式 canonicalUsage', async () => {
+      const canonicalUsage = {
+        inputTokens: 9,
+        outputTokens: 6,
+        totalTokens: 15,
+        source: 'host-supplied' as const,
+        confidence: 'actual' as const,
+      };
+      mockChatCompletionStream.mockImplementation(
+        async (
+          _modelId: unknown,
+          _messages: unknown,
+          _options: unknown,
+          onContent: (content: string) => void,
+          _onError: unknown,
+          _onFinish: unknown,
+          _onThought: unknown,
+          _onUsage: unknown,
+          onCanonicalUsage: (usage: typeof canonicalUsage) => void,
+        ) => {
+          onContent('answer');
+          onCanonicalUsage(canonicalUsage);
+        },
+      );
+
+      const result = await llmCaller.callStream(testModelId, testMessages, {}, () => undefined);
+
+      expect(result).toEqual({
+        content: 'answer',
+        tool_calls: [],
+        reasoning_details: undefined,
+        canonicalUsage,
+      });
     });
 
     it('应该累积工具调用增量', async () => {
@@ -672,6 +731,7 @@ describe('LlmCaller', () => {
         testModelId,
         testMessages,
         expect.objectContaining({ signal: abortController.signal }),
+        expect.any(Function),
         expect.any(Function),
         expect.any(Function),
         expect.any(Function),

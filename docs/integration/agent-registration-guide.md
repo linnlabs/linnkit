@@ -128,6 +128,8 @@ const contextPolicy = defineContextPolicy({
 
 12 大分组的详细说明见 [`context-engineering.md`](./context-engineering.md) ⭐。
 
+如果你只是想确认“改预算要不要改很多地方”，先看 [`context-engineering.md §0.1`](./context-engineering.md#context-policy-source-of-truth)：`contextPolicy` 是配置真相源，运行时会先做三层合并，再由 adapter 拆给各消费点。
+
 > ⚠️ **不要手写 `AgentSpecContextPolicy` 对象**——`defineContextPolicy()` 不只补默认值，还**校验组合约束**（如 `summarization.enabled = true` 必须有 `agentId`）。手写绕过 helper 会在运行时崩溃。
 
 ### 4.1 `maxTokens` 谁来算？

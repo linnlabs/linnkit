@@ -7,9 +7,19 @@ import {
   type ContextPipelineStats,
   type RunContextPipelineResult,
 } from './context-pipeline';
-import type { AiMessage } from '../../contracts';
-import type { LlmRequestMessage, TokenizerPort } from '../../ports';
+import type {
+  AgentSpecTokenEstimationPolicy,
+  AiMessage,
+  TokenRoute,
+  TokenUsageCalibrationSample,
+} from '../../contracts';
+import type { LlmRequestMessage, TokenCounterPort, TokenizerPort } from '../../ports';
 import type { ContextTraceCollector } from './context-trace';
+import type { RemoteTokenCountTrace } from './providers/base';
+import {
+  buildTokenUsageCalibrationState,
+  calibrateTokenEstimate,
+} from './token-calibration';
 
 export interface ContextManagerBaseConfig {
   AVG_CHARS_PER_TOKEN: number;
@@ -23,6 +33,14 @@ export interface ContextManagerBaseOptions<TConfig, TRegistry> {
   providerRegistry?: TRegistry;
   tokenizer?: TokenizerPort;
   tokenizerModelId?: string;
+  tokenCounter?: TokenCounterPort;
+  tokenRoute?: TokenRoute;
+  remoteCount?: AgentSpecTokenEstimationPolicy['remoteCount'];
+  tokenCalibration?: {
+    policy?: AgentSpecTokenEstimationPolicy['calibration'];
+    route?: TokenRoute;
+    samples?: readonly TokenUsageCalibrationSample[];
+  };
 }
 
 interface ContextManagerBaseInit<TConfig, TRegistry> {
@@ -43,6 +61,10 @@ export abstract class ContextManagerBase<
   protected logger: Logger;
   protected tokenizer: TokenizerPort;
   protected tokenizerModelId?: string;
+  private readonly tokenCounter?: TokenCounterPort;
+  private readonly tokenRoute?: TokenRoute;
+  private readonly remoteCountPolicy?: AgentSpecTokenEstimationPolicy['remoteCount'];
+  private tokenCalibrationState: ReturnType<typeof buildTokenUsageCalibrationState>;
   private readonly validateConfigFn: (config: TConfig) => boolean;
   private readonly invalidConfigMessage: string;
   private readonly hasCustomTokenizer: boolean;
@@ -62,6 +84,10 @@ export abstract class ContextManagerBase<
     this.hasCustomTokenizer = options.tokenizer !== undefined;
     this.tokenizer = options.tokenizer ?? this.createDefaultTokenizer();
     this.tokenizerModelId = options.tokenizerModelId;
+    this.tokenCounter = options.tokenCounter;
+    this.tokenRoute = options.tokenRoute;
+    this.remoteCountPolicy = options.remoteCount;
+    this.tokenCalibrationState = buildTokenUsageCalibrationState(options.tokenCalibration ?? {});
 
     if (!this.validateConfigFn(this.config)) {
       throw new Error(this.invalidConfigMessage);
@@ -77,7 +103,107 @@ export abstract class ContextManagerBase<
   }
 
   protected estimateTokens(message: AiMessage): number {
-    return this.tokenizer.estimateMessage(message as LlmRequestMessage, this.tokenizerModelId);
+    const localEstimateTokens = this.tokenizer.estimateMessage(message as LlmRequestMessage, this.tokenizerModelId);
+    return calibrateTokenEstimate({
+      localEstimateTokens,
+      state: this.tokenCalibrationState,
+    }).tokens;
+  }
+
+  protected estimateTokensWithCalibrationTrace(message: AiMessage): {
+    tokens: number;
+    calibrationTrace: ReturnType<typeof calibrateTokenEstimate>['trace'];
+  } {
+    const localEstimateTokens = this.tokenizer.estimateMessage(message as LlmRequestMessage, this.tokenizerModelId);
+    const calibrated = calibrateTokenEstimate({
+      localEstimateTokens,
+      state: this.tokenCalibrationState,
+    });
+    return {
+      tokens: calibrated.tokens,
+      calibrationTrace: calibrated.trace,
+    };
+  }
+
+  protected getTokenCalibrationTrace(): ReturnType<typeof calibrateTokenEstimate>['trace'] {
+    return calibrateTokenEstimate({
+      localEstimateTokens: 0,
+      state: this.tokenCalibrationState,
+    }).trace;
+  }
+
+  protected getTokenRoute(): TokenRoute | undefined {
+    return this.tokenRoute ?? this.tokenCalibrationState.route;
+  }
+
+  protected estimateLocalTokens(messages: readonly AiMessage[]): number {
+    return messages.reduce(
+      (total, message) => total + this.tokenizer.estimateMessage(message as LlmRequestMessage, this.tokenizerModelId),
+      0,
+    );
+  }
+
+  protected async countMessagesWithRemoteCounter(input: {
+    messages: readonly AiMessage[];
+    localEstimateTokens: number;
+    signal?: AbortSignal;
+  }): Promise<{
+    tokens: number;
+    trace: RemoteTokenCountTrace;
+  }> {
+    const failureBehavior = this.remoteCountPolicy?.failureBehavior ?? 'use-local-estimate';
+    const baseTrace: RemoteTokenCountTrace = {
+      enabled: this.remoteCountPolicy?.enabled === true,
+      attempted: false,
+      applied: false,
+      ...(this.tokenRoute ? { route: this.tokenRoute } : {}),
+      localEstimateTokens: input.localEstimateTokens,
+      failureBehavior,
+    };
+
+    if (
+      this.remoteCountPolicy?.enabled !== true ||
+      !this.tokenCounter ||
+      !this.tokenRoute ||
+      this.tokenRoute.capabilities?.supportsRemoteTokenCount !== true
+    ) {
+      return {
+        tokens: input.localEstimateTokens,
+        trace: baseTrace,
+      };
+    }
+
+    try {
+      const result = await this.tokenCounter.countMessages({
+        route: this.tokenRoute,
+        messages: [...input.messages],
+        ...(input.signal ? { signal: input.signal } : {}),
+      });
+      return {
+        tokens: result.inputTokens,
+        trace: {
+          ...baseTrace,
+          attempted: true,
+          applied: true,
+          inputTokens: result.inputTokens,
+          deltaTokens: result.inputTokens - input.localEstimateTokens,
+          source: result.source,
+          confidence: result.confidence,
+        },
+      };
+    } catch (error) {
+      if (failureBehavior === 'fail-fast') {
+        throw error;
+      }
+      return {
+        tokens: input.localEstimateTokens,
+        trace: {
+          ...baseTrace,
+          attempted: true,
+          failureReason: error instanceof Error ? error.message : String(error),
+        },
+      };
+    }
   }
 
   protected debug(message: string, data?: Record<string, unknown>): void {
@@ -104,7 +230,13 @@ export abstract class ContextManagerBase<
       buildStats: options.buildStats,
       providerRegistry: this.providerRegistry,
       providerContext: options.providerContext,
-      estimateTokens: message => this.estimateTokens(message),
+      estimateTokens: message => {
+        const estimate = this.estimateTokensWithCalibrationTrace(message);
+        return {
+          tokens: estimate.tokens,
+          tokenCalibration: estimate.calibrationTrace,
+        };
+      },
       getPhaseByProviderName: options.getPhaseByProviderName,
       debug: (message, data) => this.debug(message, data),
       contextTrace: options.contextTrace,
@@ -133,5 +265,9 @@ export abstract class ContextManagerBase<
    */
   updateTokenizerModelId(modelId: string | undefined): void {
     this.tokenizerModelId = modelId;
+  }
+
+  updateTokenCalibration(input: ContextManagerBaseOptions<TConfig, TRegistry>['tokenCalibration']): void {
+    this.tokenCalibrationState = buildTokenUsageCalibrationState(input ?? {});
   }
 }

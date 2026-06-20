@@ -37,7 +37,7 @@ describe('toolNode.observationGovernance', () => {
       data: {},
     };
 
-    await applyObservationGovernance({
+    const result = await applyObservationGovernance({
       parsed,
       toolName: 'search',
       toolContext: {},
@@ -49,6 +49,46 @@ describe('toolNode.observationGovernance', () => {
 
     expect(parsed.observation).toBe('preview text');
     expect(parsed.data).toEqual({ tool_output_store: { blob_id: 'blob_1' } });
+    expect(result.observationTruncation).toEqual({
+      originalChars: 14,
+      previewChars: 12,
+      originalLines: 1,
+      previewLines: 1,
+    });
+  });
+
+  it('截断端口显式回传字符计量时应优先使用端口计量', async () => {
+    truncateObservationMock.mockResolvedValue({
+      truncated: true,
+      preview: 'line 1',
+      blob_id: 'blob_1',
+      originalChars: 100,
+      previewChars: 6,
+      originalLines: 10,
+      previewLines: 1,
+    });
+
+    const parsed = {
+      observation: 'line 1\nline 2',
+      data: {},
+    };
+
+    const result = await applyObservationGovernance({
+      parsed,
+      toolName: 'search',
+      toolContext: {},
+      structuredObservation: 'line 1\nline 2',
+      observationPreview: {
+        truncateObservation: truncateObservationMock,
+      },
+    });
+
+    expect(result.observationTruncation).toEqual({
+      originalChars: 100,
+      previewChars: 6,
+      originalLines: 10,
+      previewLines: 1,
+    });
   });
 
   it('应使用执行期 observation 预览阈值', async () => {

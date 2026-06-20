@@ -1,24 +1,23 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgentInvocationRequest } from '../../../../ports/agent-invocation';
+import type { TokenizerPort } from '../../../../ports';
 import { noopAudit } from '../../../audit/noopAudit';
 import type { TelemetryPort } from '../../../telemetry/telemetryPort';
 import type { TickPipelineContext, TickStage } from '../types';
 
 const normalizeLlmUsageMock = vi.fn();
 const recordLlmCallTelemetryMock = vi.fn();
-const estimateMessagesTokensPreciseMock = vi.fn();
-const estimateTokensPreciseMock = vi.fn();
-
-vi.mock('../../../../shared/llmTelemetryContext', () => ({
-  normalizeLlmUsage: normalizeLlmUsageMock,
-  recordLlmCallTelemetry: recordLlmCallTelemetryMock,
+const normalizedUsageFromCanonicalMock = vi.fn((canonicalUsage) => ({
+  promptTokens: canonicalUsage.inputTokens,
+  completionTokens: canonicalUsage.outputTokens,
+  totalTokens: canonicalUsage.totalTokens ?? canonicalUsage.inputTokens + canonicalUsage.outputTokens,
+  canonicalUsage,
 }));
 
-vi.mock('../../../../shared/TokenCalculator', () => ({
-  TokenCalculator: {
-    estimateMessagesTokensPrecise: estimateMessagesTokensPreciseMock,
-    estimateTokensPrecise: estimateTokensPreciseMock,
-  },
+vi.mock('../../../../shared/llmTelemetryContext', () => ({
+  normalizedUsageFromCanonical: normalizedUsageFromCanonicalMock,
+  normalizeLlmUsage: normalizeLlmUsageMock,
+  recordLlmCallTelemetry: recordLlmCallTelemetryMock,
 }));
 
 function createRequest(): AgentInvocationRequest {
@@ -40,6 +39,20 @@ function createTelemetrySpy(): TelemetryPort & {
   return {
     emit: emitMock,
     emitMock,
+  };
+}
+
+function createTokenizerMock(): TokenizerPort & {
+  estimateTextMock: ReturnType<typeof vi.fn>;
+  estimateMessageMock: ReturnType<typeof vi.fn>;
+} {
+  const estimateTextMock = vi.fn(() => 5);
+  const estimateMessageMock = vi.fn(() => 20);
+  return {
+    estimateTextMock,
+    estimateMessageMock,
+    estimateText: estimateTextMock,
+    estimateMessage: estimateMessageMock,
   };
 }
 
@@ -72,6 +85,7 @@ function createContext(
     llmCallDurationMs: 35,
     telemetry,
     audit: noopAudit,
+    tokenizer: createTokenizerMock(),
   };
 }
 
@@ -117,11 +131,11 @@ describe('llmTelemetryMiddleware', () => {
         totalTokens: 18,
       },
     });
-    expect(estimateMessagesTokensPreciseMock).not.toHaveBeenCalled();
-    expect(estimateTokensPreciseMock).not.toHaveBeenCalled();
+    expect(ctx.tokenizer.estimateMessage).not.toHaveBeenCalled();
+    expect(ctx.tokenizer.estimateText).not.toHaveBeenCalled();
   });
 
-  it('provider usage 缺失时回退到本地 token 估算', async () => {
+  it('provider usage 缺失时回退到 TokenizerPort 本地估算', async () => {
     const { llmTelemetryMiddleware } = await import('./llmTelemetryMiddleware');
     const ctx = createContext();
     const stage: TickStage = {
@@ -130,8 +144,6 @@ describe('llmTelemetryMiddleware', () => {
     };
 
     normalizeLlmUsageMock.mockReturnValue(undefined);
-    estimateMessagesTokensPreciseMock.mockReturnValue(20);
-    estimateTokensPreciseMock.mockReturnValue(5);
 
     await llmTelemetryMiddleware(ctx, stage, async () => {
       ctx.llmResp = {
@@ -148,7 +160,95 @@ describe('llmTelemetryMiddleware', () => {
         promptTokens: 20,
         completionTokens: 5,
         totalTokens: 25,
+        canonicalUsage: {
+          inputTokens: 20,
+          outputTokens: 5,
+          totalTokens: 25,
+          source: 'local-estimate',
+          confidence: 'estimate',
+        },
       },
+      canonicalUsage: {
+        inputTokens: 20,
+        outputTokens: 5,
+        totalTokens: 25,
+        source: 'local-estimate',
+        confidence: 'estimate',
+      },
+    });
+    expect(ctx.tokenizer.estimateMessage).toHaveBeenCalledWith({ role: 'user', content: 'hello' }, 'mock-model');
+    expect(ctx.tokenizer.estimateText).toHaveBeenCalledWith('partial answer', 'mock-model');
+  });
+
+  it('usage.tokens 这种只有总量的旧 mock 不会被伪造成 provider actual', async () => {
+    const { llmTelemetryMiddleware } = await import('./llmTelemetryMiddleware');
+    const ctx = createContext();
+    const stage: TickStage = {
+      id: 'execute_llm',
+      async run() {},
+    };
+
+    normalizeLlmUsageMock.mockReturnValue(undefined);
+
+    await llmTelemetryMiddleware(ctx, stage, async () => {
+      ctx.llmResp = {
+        content: 'answer',
+        usage: { tokens: 100 },
+      };
+    });
+
+    expect(normalizeLlmUsageMock).toHaveBeenCalledWith({ tokens: 100 });
+    expect(recordLlmCallTelemetryMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        usage: expect.objectContaining({
+          promptTokens: 20,
+          completionTokens: 5,
+          canonicalUsage: expect.objectContaining({
+            source: 'local-estimate',
+            confidence: 'estimate',
+          }),
+        }),
+      }),
+    );
+  });
+
+  it('优先使用 host 回传的 canonicalUsage，不从 raw usage 猜字段', async () => {
+    const { llmTelemetryMiddleware } = await import('./llmTelemetryMiddleware');
+    const ctx = createContext();
+    const stage: TickStage = {
+      id: 'execute_llm',
+      async run() {},
+    };
+    const canonicalUsage = {
+      inputTokens: 8,
+      outputTokens: 3,
+      cacheReadTokens: 2,
+      totalTokens: 13,
+      source: 'host-supplied' as const,
+      confidence: 'actual' as const,
+    };
+
+    await llmTelemetryMiddleware(ctx, stage, async () => {
+      ctx.llmResp = {
+        content: 'answer',
+        usage: { prompt_tokens: 999, completion_tokens: 999, total_tokens: 1998 },
+        canonicalUsage,
+      };
+    });
+
+    expect(normalizeLlmUsageMock).not.toHaveBeenCalled();
+    expect(recordLlmCallTelemetryMock).toHaveBeenCalledWith({
+      modelId: 'mock-model',
+      stream: true,
+      startedAt: 100,
+      durationMs: 35,
+      usage: {
+        promptTokens: 8,
+        completionTokens: 3,
+        totalTokens: 13,
+        canonicalUsage,
+      },
+      canonicalUsage,
     });
   });
 
@@ -221,8 +321,10 @@ describe('llmTelemetryMiddleware', () => {
       };
 
       normalizeLlmUsageMock.mockReturnValue(undefined);
-      estimateMessagesTokensPreciseMock.mockReturnValue(0);
-      estimateTokensPreciseMock.mockReturnValue(0);
+      const tokenizer = createTokenizerMock();
+      tokenizer.estimateMessageMock.mockReturnValue(0);
+      tokenizer.estimateTextMock.mockReturnValue(0);
+      ctx.tokenizer = tokenizer;
 
       await llmTelemetryMiddleware(ctx, stage, async () => {
         ctx.llmResp = { content: '' };

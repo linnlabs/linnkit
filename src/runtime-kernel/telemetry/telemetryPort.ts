@@ -1,4 +1,11 @@
 import type { NormalizedLlmUsage } from '../../shared/llmTelemetryContext';
+import type {
+  CanonicalLlmUsage,
+  ContextBuildTokenEstimate,
+  ContextComponentTokenLedgerEntry,
+  ContextTokenComponent,
+  LlmUsageTokenLedgerEntry,
+} from '../../contracts';
 import type { TelemetryEventKind } from './telemetryEvents';
 
 export type TelemetryScope = {
@@ -16,6 +23,8 @@ export type TelemetryEvent =
       stream: boolean;
       durationMs: number;
       usage?: NormalizedLlmUsage;
+      canonicalUsage?: CanonicalLlmUsage;
+      tokenLedgerEntry?: LlmUsageTokenLedgerEntry;
       scope: TelemetryScope;
     }
   | {
@@ -24,6 +33,15 @@ export type TelemetryEvent =
       durationMs: number;
       ok: boolean;
       errorCode?: string;
+      scope: TelemetryScope;
+    }
+  | {
+      kind: Extract<TelemetryEventKind, 'context_build'>;
+      modelId: string;
+      mode: 'agent' | 'chat';
+      tokenEstimate: ContextBuildTokenEstimate;
+      tokenComponents?: ContextTokenComponent[];
+      tokenLedgerEntry?: ContextComponentTokenLedgerEntry;
       scope: TelemetryScope;
     }
   | {

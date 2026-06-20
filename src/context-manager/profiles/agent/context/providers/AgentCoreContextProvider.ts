@@ -92,7 +92,11 @@ export class AgentCoreContextProvider extends BaseContextProvider {
         state.phase = 'CORE_CONTEXT';
         
         // 重新计算Token数量（基于可能被截断的内容）
-        state.tokens = context.estimateTokens({ ...msg, content: processedContent });
+        const tokenEstimate = context.estimateTokensWithTrace?.({ ...msg, content: processedContent });
+        state.tokens = tokenEstimate?.tokens ?? context.estimateTokens({ ...msg, content: processedContent });
+        if (tokenEstimate?.tokenCalibration) {
+          state.tokenCalibration = tokenEstimate.tokenCalibration;
+        }
         coreTokens += state.tokens;
         processedCount++;
         

@@ -216,5 +216,9 @@ function formatFence(fence: CollectedFence): string {
 }
 
 function wrapUserRequest(content: string): string {
-  return `<user_request>\n${content.trim()}\n</user_request>`;
+  const trimmed = content.trim();
+  if (/<user_request(?:\s[^>]*)?>[\s\S]*<\/user_request>/.test(trimmed)) {
+    return trimmed;
+  }
+  return `<user_request>\n${trimmed}\n</user_request>`;
 }

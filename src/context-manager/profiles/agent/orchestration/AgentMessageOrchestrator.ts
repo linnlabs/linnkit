@@ -21,8 +21,14 @@ import { ToolManager } from '../tools/ToolManager';
 import type { AgentTaskResolver } from '../tasks/base';
 import { convertEventsToAiMessages } from '../utils/eventConverter';
 import type { GenerateRequest, GenerateResponse } from '../../chat/contracts';
-import type { AgentSpecContextPolicy, AiMessage, RuntimeEvent } from '../../../../contracts';
-import type { TokenizerPort } from '../../../../ports';
+import type {
+  AgentSpecContextPolicy,
+  AiMessage,
+  RuntimeEvent,
+  TokenRoute,
+  TokenUsageCalibrationSample,
+} from '../../../../contracts';
+import type { TokenCounterPort, TokenizerPort } from '../../../../ports';
 import type { FenceRegistry } from '../../../shared/fences';
 import {
   contextPolicyToContextBuilderConfig,
@@ -59,10 +65,24 @@ export interface AgentOrchestratorOptions {
     contextPolicy: AgentSpecContextPolicy | undefined;
     contextBuilderConfig: Partial<AgentContextBuilderConfig>;
   }) => ContextProviderRegistry;
+  resolveTokenCalibration?: (params: {
+    request: AgentProfileRequest;
+    modelId: string;
+    contextPolicy: AgentSpecContextPolicy | undefined;
+  }) => {
+    route?: TokenRoute;
+    samples?: readonly TokenUsageCalibrationSample[];
+  } | undefined;
   taskResolver: AgentTaskResolver;
   providerRegistry: ContextProviderRegistry;
   fenceRegistry?: FenceRegistry;
   tokenizer?: TokenizerPort;
+  tokenCounter?: TokenCounterPort;
+  resolveTokenRoute?: (params: {
+    request: AgentProfileRequest;
+    modelId: string;
+    contextPolicy: AgentSpecContextPolicy | undefined;
+  }) => TokenRoute | undefined;
 }
 
 export interface AgentProcessingResult {
@@ -111,6 +131,7 @@ export class AgentMessageOrchestrator {
       providerRegistry: options.providerRegistry,
       tokenizer: options.tokenizer,
       tokenizerModelId: options.model,
+      tokenCounter: options.tokenCounter,
     });
   }
 
@@ -153,13 +174,32 @@ export class AgentMessageOrchestrator {
       contextPolicy,
       contextBuilderConfig,
     }) ?? this.options.providerRegistry;
+    const modelId = this.resolvePreprocessorModel(request);
+    const tokenCalibration = this.options.resolveTokenCalibration?.({
+      request,
+      modelId,
+      contextPolicy,
+    });
+    const tokenRoute = this.options.resolveTokenRoute?.({
+      request,
+      modelId,
+      contextPolicy,
+    }) ?? tokenCalibration?.route;
 
     this.agentContextManager = new AgentContextManager({
       debugMode: this.options.processing.debugMode,
       customConfig: contextBuilderConfig,
       providerRegistry,
       tokenizer: this.options.tokenizer,
-      tokenizerModelId: this.resolvePreprocessorModel(request),
+      tokenizerModelId: modelId,
+      tokenCounter: this.options.tokenCounter,
+      tokenRoute,
+      remoteCount: contextPolicy?.tokenEstimation?.remoteCount,
+      tokenCalibration: {
+        policy: contextPolicy?.tokenEstimation?.calibration,
+        route: tokenCalibration?.route,
+        samples: tokenCalibration?.samples,
+      },
     });
 
     return contextBuilderConfig;

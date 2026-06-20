@@ -16,6 +16,14 @@
 
 本文重点是 **Agent profile 的详细上下文构建机制**。三阶段模型、示意图、协议不变量和工具组一致性规则以当前实现为准；`profiles/chat/`* 仅作为过渡兼容轨道理解。
 
+> 公开接入文档入口：
+>
+> - 想知道“预算 / 工具历史 / 摘要 / must-keep 到底改哪里”，先读 [`docs/integration/context-engineering.md §0.1`](../../docs/integration/context-engineering.md#context-policy-source-of-truth)。
+> - 想定义或注册 agent，读 [`docs/integration/agent-registration-guide.md`](../../docs/integration/agent-registration-guide.md)。
+> - 想接入 host 上下文注入，读 [`docs/integration/context-fences.md`](../../docs/integration/context-fences.md)。
+>
+> 本 README 只解释 context-manager 内部结构。`contextPolicy` 的配置真相源仍是 `AgentSpec.contextPolicy`；本模块里的 builder / preprocessor / provider / execution 配置都是合并后 policy 的运行时消费点，不应另起一套局部默认。
+
 ---
 
 ## 上下文窗口概念模型

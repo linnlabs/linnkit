@@ -22,7 +22,7 @@
  *   等供应商（由各 adapter 做映射）。
  */
 
-import type { AiMessage } from '../contracts';
+import type { AiMessage, CanonicalLlmUsage } from '../contracts';
 
 /**
  * 工具调用的结构类型（OpenAI tool_calls 兼容）
@@ -98,6 +98,13 @@ export interface LlmResponseContent {
    * - 不同 provider 字段可能不同（例如 mock 返回 usage.tokens），上层应做归一化处理。
    */
   usage?: unknown;
+  /**
+   * 已归一化的 token 用量。
+   *
+   * host adapter 如果已经理解 provider usage 字段，应直接回传这个结构；
+   * linnkit 会优先使用它，避免从 raw usage 里猜 provider family。
+   */
+  canonicalUsage?: CanonicalLlmUsage;
 }
 
 export interface LlmCallOptions {

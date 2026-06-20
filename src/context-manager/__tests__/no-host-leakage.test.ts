@@ -44,6 +44,10 @@ function collectSourceFiles(target: string): string[] {
 
     const child = path.join(absoluteTarget, entry.name);
     if (entry.isDirectory()) {
+      // 该门禁约束生产源码的业务边界；测试夹具需要保留历史标签样本来验证转换行为。
+      if (entry.name === '__tests__') {
+        continue;
+      }
       files.push(...collectSourceFiles(path.relative(repoRoot, child)));
       continue;
     }

@@ -4,7 +4,8 @@ import type { ToolExecutionContext } from '../../tools/toolExecutionContext';
 import type { PendingContextRuntimeEvent } from '../executorContextBuilder';
 import type { StandardToolCall } from '../types';
 import type { LlmCallResponse, TickPipelineContext } from './types';
-import type { RuntimeEvent } from '../../../contracts';
+import { CanonicalLlmUsage } from '../../../contracts';
+import type { CanonicalLlmUsage as CanonicalLlmUsageType, RuntimeEvent } from '../../../contracts';
 
 export function readNonEmptyString(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined;
@@ -97,6 +98,14 @@ export function resolveUsage(response: LlmCallResponse | undefined): unknown {
     return undefined;
   }
   return response.usage;
+}
+
+export function resolveCanonicalUsage(response: LlmCallResponse | undefined): CanonicalLlmUsageType | undefined {
+  if (!response || typeof response === 'string') {
+    return undefined;
+  }
+  const parsed = CanonicalLlmUsage.safeParse(response.canonicalUsage);
+  return parsed.success ? parsed.data : undefined;
 }
 
 export function resolveToolCalls(response: LlmCallResponse | undefined): StandardToolCall[] | undefined {

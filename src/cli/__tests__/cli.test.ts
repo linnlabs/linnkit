@@ -68,7 +68,7 @@ describe('linnkit cli', () => {
     if (!isRecord(generatedPackageJson) || !isRecord(generatedPackageJson.dependencies)) {
       throw new Error('generated quickstart package.json must define dependencies.');
     }
-    expect(generatedPackageJson.dependencies['@linnlabs/linnkit']).toBe('^0.10.0');
+    expect(generatedPackageJson.dependencies['@linnlabs/linnkit']).toBe('^0.16.0');
     await expect(runInitCommand({ cwd, name: 'demo' })).rejects.toThrow(/not empty/);
   });
 

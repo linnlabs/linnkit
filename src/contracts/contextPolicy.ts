@@ -123,6 +123,16 @@ export const AgentSpecTokenEstimationPolicy = z.object({
   encoding: z.string().min(1).optional(),
   avgCharsPerToken: z.number().positive().optional(),
   toolCallOverhead: z.number().int().nonnegative().optional(),
+  calibration: z.object({
+    enabled: z.boolean().optional(),
+    minSamples: z.number().int().positive().optional(),
+    minCoefficient: z.number().positive().optional(),
+    maxCoefficient: z.number().positive().optional(),
+  }).optional(),
+  remoteCount: z.object({
+    enabled: z.boolean().optional(),
+    failureBehavior: z.enum(['use-local-estimate', 'fail-fast']).optional(),
+  }).optional(),
 });
 export type AgentSpecTokenEstimationPolicy = z.infer<typeof AgentSpecTokenEstimationPolicy>;
 

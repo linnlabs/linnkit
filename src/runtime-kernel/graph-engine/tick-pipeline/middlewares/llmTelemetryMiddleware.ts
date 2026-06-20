@@ -1,9 +1,9 @@
-import { TokenCalculator } from '../../../../shared/TokenCalculator';
 import {
+  normalizedUsageFromCanonical,
   normalizeLlmUsage,
   recordLlmCallTelemetry,
 } from '../../../../shared/llmTelemetryContext';
-import { extractResponseText, resolveUsage } from '../helpers';
+import { extractResponseText, resolveCanonicalUsage, resolveUsage } from '../helpers';
 import type { TickAroundMiddleware } from '../types';
 
 export const llmTelemetryMiddleware: TickAroundMiddleware = async (ctx, stage, next) => {
@@ -13,19 +13,27 @@ export const llmTelemetryMiddleware: TickAroundMiddleware = async (ctx, stage, n
     return;
   }
 
-  const normalizedUsageFromProvider = normalizeLlmUsage(resolveUsage(ctx.llmResp));
+  const canonicalUsageFromHost = resolveCanonicalUsage(ctx.llmResp);
+  const normalizedUsageFromProvider = canonicalUsageFromHost
+    ? normalizedUsageFromCanonical(canonicalUsageFromHost)
+    : normalizeLlmUsage(resolveUsage(ctx.llmResp));
   const respText = extractResponseText(ctx.llmResp);
   const normalizedUsage =
     normalizedUsageFromProvider ??
     (() => {
       try {
-        const promptTokens = TokenCalculator.estimateMessagesTokensPrecise(ctx.llmMessages, ctx.modelId);
-        const completionTokens = TokenCalculator.estimateTokensPrecise(respText, ctx.modelId);
-        return {
-          promptTokens,
-          completionTokens,
+        const promptTokens = ctx.llmMessages.reduce(
+          (total, message) => total + ctx.tokenizer.estimateMessage(message, ctx.modelId),
+          0,
+        );
+        const completionTokens = ctx.tokenizer.estimateText(respText, ctx.modelId);
+        return normalizedUsageFromCanonical({
+          inputTokens: promptTokens,
+          outputTokens: completionTokens,
           totalTokens: promptTokens + completionTokens,
-        };
+          source: 'local-estimate',
+          confidence: 'estimate',
+        });
       } catch {
         return undefined;
       }
@@ -37,6 +45,7 @@ export const llmTelemetryMiddleware: TickAroundMiddleware = async (ctx, stage, n
     startedAt: ctx.llmCallStartedAt,
     durationMs: ctx.llmCallDurationMs,
     usage: normalizedUsage,
+    ...(normalizedUsage?.canonicalUsage ? { canonicalUsage: normalizedUsage.canonicalUsage } : {}),
   });
 
   // B2-engine Batch 1: 同步上报到宿主侧 TelemetryPort（默认 noopTelemetry，业务无感）
@@ -47,6 +56,7 @@ export const llmTelemetryMiddleware: TickAroundMiddleware = async (ctx, stage, n
     stream: ctx.input.stream === true,
     durationMs: ctx.llmCallDurationMs,
     usage: normalizedUsage,
+    ...(normalizedUsage?.canonicalUsage ? { canonicalUsage: normalizedUsage.canonicalUsage } : {}),
     scope: {
       conversationId: ctx.conversationId || undefined,
       turnId: ctx.turnId,

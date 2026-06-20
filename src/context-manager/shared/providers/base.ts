@@ -2,13 +2,35 @@ import type {
   GenerateRequest,
   GenerateResponse,
 } from '../contracts/chatLineMessage';
-import type { AiMessage, RuntimeEvent } from '../../../contracts';
+import type {
+  AiMessage,
+  RuntimeEvent,
+  TokenCountConfidence,
+  TokenCountSource,
+  TokenRoute,
+  TokenUsageCalibrationTrace,
+} from '../../../contracts';
+
+export interface RemoteTokenCountTrace {
+  enabled: boolean;
+  attempted: boolean;
+  applied: boolean;
+  route?: TokenRoute;
+  inputTokens?: number;
+  localEstimateTokens?: number;
+  deltaTokens?: number;
+  source?: TokenCountSource;
+  confidence?: TokenCountConfidence;
+  failureBehavior?: 'use-local-estimate' | 'fail-fast';
+  failureReason?: string;
+}
 
 export interface MessageProcessingState {
   message: AiMessage;
   originalIndex: number;
   action: 'keep_core' | 'keep_working_memory' | 'summarize' | 'skip';
   tokens: number;
+  tokenCalibration?: TokenUsageCalibrationTrace;
   processedContent?: string;
   contentType?: 'full' | 'final_answer_only' | 'thinking_only';
   phase?: string;
@@ -31,6 +53,11 @@ export interface ProviderContext<TConfig = unknown> {
   config: TConfig;
   debugMode: boolean;
   estimateTokens: (message: AiMessage) => number;
+  estimateTokensWithTrace?: (message: AiMessage) => {
+    tokens: number;
+    tokenCalibration?: TokenUsageCalibrationTrace;
+  };
+  remoteTokenCount?: RemoteTokenCountTrace;
   summarizationCallbacks?: SummarizationCallbacks;
   /**
    * Host 注入的注册式 AI 调用入口。

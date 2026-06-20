@@ -10,6 +10,8 @@ import { noopTelemetry } from '../telemetry/noopTelemetry';
 import type { TelemetryPort } from '../telemetry/telemetryPort';
 import { noopAudit } from '../audit/noopAudit';
 import type { AuditPort } from '../../ports';
+import { createDefaultTokenizerPort } from '../../shared/defaultTokenizerPort';
+import type { TokenizerPort } from '../../ports';
 import type { ToolCatalogPort, ToolPresentationPort } from '../tools/ports';
 import { Logger } from '../../shared/logger';
 import type { GraphExecutorContextBuilder } from './executorContextBuilder';
@@ -67,6 +69,7 @@ export interface GraphAgentExecutorDependencies extends GraphAgentExecutorOption
    */
   telemetryPort?: TelemetryPort;
   auditPort?: AuditPort;
+  tokenizer?: TokenizerPort;
 }
 
 export class GraphAgentExecutor {
@@ -78,6 +81,7 @@ export class GraphAgentExecutor {
   private readonly modelCatalog: ModelCatalogLike;
   private readonly telemetryPort: TelemetryPort;
   private readonly auditPort: AuditPort;
+  private readonly tokenizer: TokenizerPort;
   private readonly stages: TickStage[];
   private readonly middlewares: TickAroundMiddleware[];
 
@@ -96,6 +100,7 @@ export class GraphAgentExecutor {
       });
     this.telemetryPort = dependencies.telemetryPort ?? noopTelemetry;
     this.auditPort = dependencies.auditPort ?? noopAudit;
+    this.tokenizer = dependencies.tokenizer ?? createDefaultTokenizerPort();
     this.stages = [
       createPrepareCallStage({
         modelResolver: this.modelResolver,
@@ -144,6 +149,7 @@ export class GraphAgentExecutor {
       turnId: readNonEmptyString(input.toolContext?.turnId) ?? `turn_${Date.now()}`,
       telemetry: this.telemetryPort,
       audit: this.auditPort,
+      tokenizer: this.tokenizer,
     };
 
     logger.info('[GraphAgentExecutor] tick 调用', {

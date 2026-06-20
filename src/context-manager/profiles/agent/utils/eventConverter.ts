@@ -1,8 +1,40 @@
 import { events as runtimeEvents } from '../../../../runtime-kernel';
-import type { FinalAnswerEvent, RuntimeEvent, ToolOutputEvent, AiMessage } from '../../../../contracts';
+import type {
+  AiMessage,
+  FinalAnswerEvent,
+  ObservationTruncationMeta,
+  RuntimeEvent,
+  ToolOutputEvent,
+} from '../../../../contracts';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function readObservationTruncationMeta(value: unknown): ObservationTruncationMeta | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const originalChars = value['originalChars'];
+  const previewChars = value['previewChars'];
+  if (typeof originalChars !== 'number' || !Number.isInteger(originalChars) || originalChars < 0) {
+    return undefined;
+  }
+  if (typeof previewChars !== 'number' || !Number.isInteger(previewChars) || previewChars < 0) {
+    return undefined;
+  }
+  const originalLines = value['originalLines'];
+  const previewLines = value['previewLines'];
+  return {
+    originalChars,
+    previewChars,
+    ...(typeof originalLines === 'number' && Number.isInteger(originalLines) && originalLines >= 0
+      ? { originalLines }
+      : {}),
+    ...(typeof previewLines === 'number' && Number.isInteger(previewLines) && previewLines >= 0
+      ? { previewLines }
+      : {}),
+  };
 }
 
 function isHistorySummaryEvent(event: RuntimeEvent): event is RuntimeEvent & {
@@ -142,6 +174,7 @@ export function convertEventToAiMessage(event: RuntimeEvent): AiMessage {
       })();
 
       const outputContent = observationFromPayload ?? rawOutput;
+      const observationTruncation = readObservationTruncationMeta(event.metadata?.observationTruncation);
 
       return {
         id: event.id,
@@ -153,6 +186,7 @@ export function convertEventToAiMessage(event: RuntimeEvent): AiMessage {
           tool_call_id: event.tool_call_id,
           tool_name: event.tool_name,
           raw_output: rawOutput,
+          ...(observationTruncation ? { observationTruncation } : {}),
           ...(observationFromPayload ? { observation: observationFromPayload } : {}),
         },
       };

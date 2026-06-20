@@ -320,7 +320,7 @@ export class ToolNode implements GraphNode {
 
     applyProtocolFuseState(context.local, 0);
 
-    await applyObservationGovernance({
+    const observationGovernance = await applyObservationGovernance({
       parsed: context.parsed,
       toolName: context.toolName,
       toolContext: context.toolContext,
@@ -350,6 +350,12 @@ export class ToolNode implements GraphNode {
       runtimeToolOutput,
       execIdempotency: context.exec.idempotency,
     });
+    if (runtimeToolOutput && observationGovernance.observationTruncation) {
+      runtimeToolOutput.metadata = {
+        ...(runtimeToolOutput.metadata ?? {}),
+        observationTruncation: observationGovernance.observationTruncation,
+      };
+    }
 
     const remainingCalls = context.calls.slice(1);
     context.state.local = buildSuccessLocalState({

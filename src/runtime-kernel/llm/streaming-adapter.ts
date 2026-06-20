@@ -1,6 +1,8 @@
 import type { AnyAgentEvent } from '../events/agentEvents';
 import { generateMessageId } from '../../shared/ids';
 import type { AgentAiEngine } from '../../ports';
+import { CanonicalLlmUsage } from '../../contracts';
+import type { CanonicalLlmUsage as CanonicalLlmUsageType } from '../../contracts';
 import type { LlmCallOptions, LlmRequestMessage, LlmResponseContent } from './caller.types';
 import { ToolCallStreamAccumulator } from './streaming/toolCallStreamAccumulator';
 import { ThoughtStreamSegmenter } from './streaming/thoughtStreamSegmenter';
@@ -33,6 +35,7 @@ export async function callLlmStream(params: CallLlmStreamParams): Promise<LlmCal
   const streamAnswerId = generateMessageId();
   let streamChunkSeq = 0;
   let capturedUsage: unknown | undefined = undefined;
+  let capturedCanonicalUsage: CanonicalLlmUsageType | undefined = undefined;
 
   const toolAccumulator = new ToolCallStreamAccumulator([
     'markdown_edit',
@@ -96,6 +99,11 @@ export async function callLlmStream(params: CallLlmStreamParams): Promise<LlmCal
 
     if (typeof chunk !== 'object' || chunk === null) {
       return;
+    }
+
+    const parsedCanonicalUsage = CanonicalLlmUsage.safeParse(chunk.canonicalUsage);
+    if (parsedCanonicalUsage.success) {
+      capturedCanonicalUsage = parsedCanonicalUsage.data;
     }
 
     if (chunk.content) {
@@ -192,6 +200,13 @@ export async function callLlmStream(params: CallLlmStreamParams): Promise<LlmCal
     capturedUsage = usage;
   };
 
+  const onCanonicalUsage = (usage: CanonicalLlmUsageType): void => {
+    const parsed = CanonicalLlmUsage.safeParse(usage);
+    if (parsed.success) {
+      capturedCanonicalUsage = parsed.data;
+    }
+  };
+
   await aiEngine.chatCompletionStream(
     modelId,
     messages,
@@ -205,6 +220,7 @@ export async function callLlmStream(params: CallLlmStreamParams): Promise<LlmCal
     onFinish,
     onThought,
     onUsage,
+    onCanonicalUsage,
   );
 
   if (streamError) {
@@ -215,12 +231,18 @@ export async function callLlmStream(params: CallLlmStreamParams): Promise<LlmCal
 
   const mergedToolCalls = toolAccumulator.getToolCalls();
   assertToolCallsHaveValidJsonArguments(mergedToolCalls);
-  if (mergedToolCalls.length > 0 || reasoningDetails.length > 0 || capturedUsage !== undefined) {
+  if (
+    mergedToolCalls.length > 0
+    || reasoningDetails.length > 0
+    || capturedUsage !== undefined
+    || capturedCanonicalUsage !== undefined
+  ) {
     return {
       content: fullResponse,
       tool_calls: mergedToolCalls,
       reasoning_details: reasoningDetails.length > 0 ? reasoningDetails : undefined,
       ...(capturedUsage !== undefined ? { usage: capturedUsage } : {}),
+      ...(capturedCanonicalUsage !== undefined ? { canonicalUsage: capturedCanonicalUsage } : {}),
     };
   }
 

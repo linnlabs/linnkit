@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
-import type { AiMessage, RuntimeEvent } from '../../../../../contracts';
+import type { AiMessage, RuntimeEvent, TokenRoute } from '../../../../../contracts';
 import { defineContextPolicy } from '../../../../../contracts';
+import type { TokenCounterPort } from '../../../../../ports';
 import type { IAgentTask } from '../../tasks/base';
 import type { MessageProcessingState, ProviderContext, ProviderResult } from '../../context/providers';
 import {
@@ -425,5 +426,74 @@ describe('AgentMessageOrchestrator contextPolicy provider registry', () => {
     expect(result.metadata.tokenUsage.budget).toBe(17_000);
     expect(result.contextBuildResult.contextTrace?.totalBudget).toBe(17_000);
     expect(result.contextBuildResult.contextTrace?.effectivePolicy?.budget?.maxTokens).toBe(20_000);
+  });
+
+  it('按 resolveTokenRoute 注入 route-aware TokenCounterPort，不按模型名猜 route', async () => {
+    const route: TokenRoute = {
+      providerId: 'anthropic',
+      baseURL: 'https://api.linnyai.com/proxy/anthropic',
+      modelId: 'cloud:claude-sonnet-4-6',
+      providerModelId: 'claude-sonnet-4-6',
+      capabilities: {
+        supportsRemoteTokenCount: true,
+      },
+    };
+    const calls: Array<Parameters<TokenCounterPort['countMessages']>[0]> = [];
+    const tokenCounter: TokenCounterPort = {
+      countMessages: async (input) => {
+        calls.push(input);
+        return {
+          inputTokens: 123,
+          source: 'test-fixture',
+          confidence: 'provider-estimate',
+        };
+      },
+    };
+    const providerRegistry = new ContextProviderRegistry();
+    providerRegistry.register(keepAllProvider);
+    const orchestrator = new AgentMessageOrchestrator({
+      tokenBudget: {
+        maxTokens: 100_000,
+        reservedForResponse: 1000,
+      },
+      processing: {
+        debugMode: false,
+      },
+      taskResolver: () => passThroughTask,
+      providerRegistry,
+      tokenCounter,
+      resolveTokenRoute: ({ modelId }) => modelId === 'cloud:claude-sonnet-4-6' ? route : undefined,
+      resolveContextPolicy: () => defineContextPolicy({
+        tokenEstimation: {
+          remoteCount: {
+            enabled: true,
+          },
+        },
+        contextTrace: {
+          enabled: true,
+        },
+      }),
+    });
+
+    const result = await orchestrator.processAgentConversation(
+      {
+        query: '继续',
+        promptKey: 'default',
+        model_id: 'cloud:claude-sonnet-4-6',
+      },
+      [],
+      new ToolManager(testToolRegistry),
+    );
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.route).toEqual(route);
+    expect(result.metadata.tokenUsage.estimated).toBe(123);
+    expect(result.contextBuildResult.contextTrace?.remoteTokenCount).toMatchObject({
+      enabled: true,
+      attempted: true,
+      applied: true,
+      route,
+      inputTokens: 123,
+    });
   });
 });

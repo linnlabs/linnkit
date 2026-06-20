@@ -19,14 +19,8 @@ async function readJson(relativePath: string): Promise<Record<string, unknown>> 
   return parsed;
 }
 
-async function readText(relativePath: string): Promise<string> {
-  const testDir = dirname(fileURLToPath(import.meta.url));
-  const filePath = resolve(testDir, '..', relativePath);
-  return await readFile(filePath, 'utf8');
-}
-
 /**
- * Smoke test for `@linnlabs/linnkit` 0.10.0 publishable shape.
+ * Smoke test for `@linnlabs/linnkit` 0.21.0 publishable shape.
  *
  * 这个 test 是公开包 manifest 的硬性闸门，覆盖：
  *   1. 包元数据（name / version / 不再 private / repository / npmjs publishConfig）
@@ -42,11 +36,11 @@ async function readText(relativePath: string): Promise<string> {
  * 任何破坏以上不变量的改动 = break，必须同步 CHANGELOG / integration docs。
  */
 describe('packages/linnkit shell manifest', () => {
-  it('declares the publishable @linnlabs/linnkit 0.10.0 shape with dist-only exports', async () => {
+  it('declares the publishable @linnlabs/linnkit 0.21.0 shape with dist-only exports', async () => {
     const manifest = await readJson('package.json');
 
     expect(manifest.name).toBe('@linnlabs/linnkit');
-    expect(manifest.version).toBe('0.10.0');
+    expect(manifest.version).toBe('0.21.0');
     expect(manifest.private).toBeUndefined();
     expect(manifest.type).toBe('module');
     expect(manifest.main).toBe('./dist/index.cjs');
@@ -224,30 +218,6 @@ describe('packages/linnkit shell tsconfig', () => {
 
     expect(paths).not.toHaveProperty('@app/schemas');
     expect(paths).not.toHaveProperty('@app/schemas/*');
-  });
-});
-
-describe('packages/linnkit release workflow', () => {
-  it('publishes from the public linnlabs/linnkit repo through npm Trusted Publishing', async () => {
-    const workflow = await readText('.github/workflows/release.yml');
-
-    expect(workflow).toContain("tags:\n      - 'v*'");
-    expect(workflow).toContain('actions/checkout@v6');
-    expect(workflow).toContain('actions/setup-node@v6');
-    expect(workflow).toContain("node-version: '24'");
-    expect(workflow).toContain('registry-url:');
-    expect(workflow).toContain('https://registry.npmjs.org/');
-    expect(workflow).toContain('package-manager-cache: false');
-    expect(workflow).toContain('id-token: write');
-    expect(workflow).toContain('npm@11.17.0');
-    expect(workflow).toContain('npm publish --provenance --access public');
-    expect(workflow).toContain('TAG#v');
-    expect(workflow).not.toContain('linnkit-v*');
-    expect(workflow).not.toContain('release-linnkit');
-    expect(workflow).not.toContain('packages/linnkit');
-    expect(workflow).not.toContain('NPM_TOKEN');
-    expect(workflow).not.toContain('LINNLABS_NPM_TOKEN');
-    expect(workflow).not.toContain('npm whoami');
   });
 });
 

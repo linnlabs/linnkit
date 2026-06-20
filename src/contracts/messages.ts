@@ -49,6 +49,15 @@ export const ToolOutputMeta = z.object({
 
 export type ToolOutputMeta = z.infer<typeof ToolOutputMeta>;
 
+export const ObservationTruncationMeta = z.object({
+  originalChars: z.number().int().nonnegative(),
+  previewChars: z.number().int().nonnegative(),
+  originalLines: z.number().int().nonnegative().optional(),
+  previewLines: z.number().int().nonnegative().optional(),
+});
+
+export type ObservationTruncationMeta = z.infer<typeof ObservationTruncationMeta>;
+
 export const ImageInfoMeta = z.object({
   url: z.string().optional(),
   width: z.number().int().positive().optional(),
@@ -86,6 +95,7 @@ export const PersistentMetadata = z.object({
   tool_name: z.string().optional(),
   args: z.record(z.unknown()).optional(),
   tool_call_id: z.string().optional(),
+  observationTruncation: ObservationTruncationMeta.optional(),
   raw_output: z.string().optional(),
   image_info: ImageInfoMeta.optional(),
   taskType: z.string().optional(),

@@ -35,7 +35,15 @@ export type ObservationPreviewContext = ToolExecutionContext & ConversationArtif
 
 export type ObservationPreviewResult =
   | { truncated: false; preview: string }
-  | { truncated: true; preview: string; blob_id: string };
+  | {
+      truncated: true;
+      preview: string;
+      blob_id: string;
+      originalChars?: number;
+      previewChars?: number;
+      originalLines?: number;
+      previewLines?: number;
+    };
 
 export interface ToolCatalogPort {
   getToolSchemas(toolNames?: string[], baseContext?: ToolSchemaContext): OpenAIToolSchema[];

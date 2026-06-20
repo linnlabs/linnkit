@@ -1,4 +1,5 @@
 import { Logger } from '../../../../shared/logger';
+import { createContextComponentLedgerEntry } from '../../../token-accounting';
 import type { GraphExecutorContextBuilder } from '../../executorContextBuilder';
 import type { TickPipelineContext, TickStage } from '../types';
 import {
@@ -30,6 +31,25 @@ export function createBuildContextStage(
       ctx.llmMessages = contextBuildResult.llmMessages;
       ctx.contextTrace = contextBuildResult.contextTrace;
 
+      if (contextBuildResult.tokenEstimate) {
+        const tokenLedgerEntry = contextBuildResult.tokenLedgerEntry
+          ?? createContextLedgerEntry(ctx, contextBuildResult);
+        ctx.telemetry.emit({
+          kind: 'context_build',
+          modelId: ctx.modelId,
+          mode: contextBuildResult.mode,
+          tokenEstimate: contextBuildResult.tokenEstimate,
+          ...(contextBuildResult.tokenComponents ? { tokenComponents: contextBuildResult.tokenComponents } : {}),
+          ...(tokenLedgerEntry ? { tokenLedgerEntry } : {}),
+          scope: {
+            conversationId: ctx.conversationId,
+            runId: ctx.input.toolContext?.runId,
+            parentRunId: ctx.input.toolContext?.parentRunId,
+            turnId: ctx.turnId,
+          },
+        });
+      }
+
       for (const event of contextBuildResult.summaryEvents) {
         if (!isHistorySummaryEvent(event)) {
           continue;
@@ -43,4 +63,27 @@ export function createBuildContextStage(
       }
     },
   };
+}
+
+function createContextLedgerEntry(
+  ctx: TickPipelineContext,
+  contextBuildResult: Awaited<ReturnType<GraphExecutorContextBuilder['build']>>,
+) {
+  const keptComponents = contextBuildResult.tokenComponents?.filter((component) => component.kept !== false) ?? [];
+  if (keptComponents.length === 0) {
+    return undefined;
+  }
+
+  const runId = ctx.input.toolContext?.runId ?? ctx.turnId;
+  const createdAt = Date.now();
+  return createContextComponentLedgerEntry({
+    id: `context_${runId}_${ctx.turnId}_${createdAt}`,
+    conversationId: ctx.conversationId,
+    runId,
+    parentRunId: ctx.input.toolContext?.parentRunId,
+    turnId: ctx.turnId,
+    route: contextBuildResult.tokenEstimate?.route,
+    createdAt,
+    components: keptComponents,
+  });
 }

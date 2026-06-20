@@ -21,14 +21,18 @@ import {
   generateContextRecommendations,
 } from '../../../shared/context-result';
 import { ContextTraceCollector, type ContextTrace } from '../../../shared/context-trace';
+import { buildContextTokenComponents } from '../../../shared/context-token-components';
 import type { GenerateRequest, GenerateResponse } from '../../chat/contracts';
 import type {
   AgentSpecContextPolicy,
   AgentSpecContextTracePolicy,
   AiMessage,
+  ContextBuildTokenEstimate,
+  ContextTokenComponent,
   RuntimeEvent,
+  TokenRoute,
 } from '../../../../contracts';
-import type { TokenizerPort } from '../../../../ports';
+import type { TokenCounterPort, TokenizerPort } from '../../../../ports';
 
 /**
  * Agent 专用的 Provider 上下文
@@ -79,6 +83,12 @@ export interface ContextBuildResult {
 
   /** ContextTrace：解释本次上下文构建如何保留/裁剪消息。 */
   contextTrace?: ContextTrace;
+
+  /** 构建期 token 估算快照，用于 host 把本地估算与响应后 actual usage 配对。 */
+  tokenEstimate?: ContextBuildTokenEstimate;
+
+  /** 构建期上下文分项 token 估算，用于 trace、账本与 host 面板后端。 */
+  tokenComponents?: ContextTokenComponent[];
 }
 
 /**
@@ -105,6 +115,16 @@ export class AgentContextManager extends ContextManagerBase<
     providerRegistry?: ContextProviderRegistry;
     tokenizer?: TokenizerPort;
     tokenizerModelId?: string;
+    tokenCounter?: TokenCounterPort;
+    tokenRoute?: TokenRoute;
+    remoteCount?: ContextManagerBaseOptions<
+      AgentContextBuilderConfig,
+      ContextProviderRegistry
+    >['remoteCount'];
+    tokenCalibration?: ContextManagerBaseOptions<
+      AgentContextBuilderConfig,
+      ContextProviderRegistry
+    >['tokenCalibration'];
   } = {}) {
     super(options as ContextManagerBaseOptions<
       AgentContextBuilderConfig,
@@ -161,6 +181,13 @@ export class AgentContextManager extends ContextManagerBase<
         config: this.config,
         debugMode: this.debugMode,
         estimateTokens: (msg: AiMessage) => this.estimateTokens(msg),
+        estimateTokensWithTrace: (msg: AiMessage) => {
+          const estimate = this.estimateTokensWithCalibrationTrace(msg);
+          return {
+            tokens: estimate.tokens,
+            tokenCalibration: estimate.calibrationTrace,
+          };
+        },
         summarizationCallbacks: callbacks,
         generate,
         agentRequest: request
@@ -170,10 +197,11 @@ export class AgentContextManager extends ContextManagerBase<
         effectivePolicy: traceOptions?.effectiveContextPolicy,
         totalBudget,
         originalCount: preprocessedMessages.length,
+        tokenCalibration: this.getTokenCalibrationTrace(),
       });
 
       // 核心流程：编排各个Provider按优先级处理预处理过的消息
-      const { finalMessages, finalTokens, strategiesApplied, events } =
+      const { finalMessages, finalTokens, strategiesApplied, events, states } =
         await this.runPipeline({
           messages: preprocessedMessages,
           totalBudget,
@@ -182,6 +210,14 @@ export class AgentContextManager extends ContextManagerBase<
           getPhaseByProviderName: providerName => this.getPhaseByProviderName(providerName),
           contextTrace,
         });
+      const remoteCount = await this.countMessagesWithRemoteCounter({
+        messages: finalMessages,
+        localEstimateTokens: finalTokens,
+      });
+      contextTrace?.recordRemoteTokenCount(remoteCount.trace);
+      const tokenComponents = buildContextTokenComponents(states);
+      contextTrace?.recordTokenComponents(tokenComponents);
+      const tokenEstimate = this.buildContextTokenEstimate(finalMessages, finalTokens);
       
       const endTime = performance.now();
       buildStats.totalTime = endTime - startTime;
@@ -193,23 +229,25 @@ export class AgentContextManager extends ContextManagerBase<
       this.debug('✅ [Agent上下文管理器] 上下文构建完成', {
         预处理消息: preprocessedMessages.length,
         最终消息: finalMessages.length,
-        Token使用: finalTokens,
+        Token使用: remoteCount.tokens,
         总预算: totalBudget,
-        使用率: `${((finalTokens / totalBudget) * 100).toFixed(1)}%`,
+        使用率: `${((remoteCount.tokens / totalBudget) * 100).toFixed(1)}%`,
         摘要触发阈值: `${(summarizationThreshold * 100).toFixed(0)}%`,
         摘要Token阈值: summarizationTokenThreshold,
         总耗时: `${buildStats.totalTime.toFixed(2)}ms`
       });
 
       return this.buildFinalResult(
-        finalMessages, 
-        finalTokens, 
-        totalBudget, 
-        preprocessedMessages.length, 
-        strategiesApplied, 
+        finalMessages,
+        remoteCount.tokens,
+        totalBudget,
+        preprocessedMessages.length,
+        strategiesApplied,
         buildStats,
         events,
         contextTrace?.build(finalMessages, finalTokens),
+        tokenEstimate,
+        tokenComponents,
       );
 
     } catch (error) {
@@ -272,6 +310,8 @@ export class AgentContextManager extends ContextManagerBase<
     buildStats: AgentContextBuildStats,
     events: RuntimeEvent[] = [],  // 🔥 新增：事件列表
     contextTrace?: ContextTrace,
+    tokenEstimate?: ContextBuildTokenEstimate,
+    tokenComponents?: ContextTokenComponent[],
   ): ContextBuildResult {
     const recommendations = this.generateRecommendations(buildStats, totalBudget);
     return buildContextResult({
@@ -287,7 +327,23 @@ export class AgentContextManager extends ContextManagerBase<
       recommendations,
       events,
       contextTrace,
+      tokenEstimate,
+      tokenComponents,
     });
+  }
+
+  private buildContextTokenEstimate(
+    finalMessages: readonly AiMessage[],
+    calibratedEstimateTokens: number,
+  ): ContextBuildTokenEstimate {
+    return {
+      ...(this.getTokenRoute() ? { route: this.getTokenRoute() } : {}),
+      localEstimateTokens: this.estimateLocalTokens(finalMessages),
+      calibratedEstimateTokens,
+      finalTokens: calibratedEstimateTokens,
+      source: 'local-estimate',
+      confidence: 'estimate',
+    };
   }
   /**
    * 生成优化建议

@@ -1,4 +1,6 @@
 import type { AgentAiEngine } from '../../ports';
+import { CanonicalLlmUsage } from '../../contracts';
+import type { CanonicalLlmUsage as CanonicalLlmUsageType } from '../../contracts';
 import type { LlmCallOptions, LlmRequestMessage, ToolCall } from './caller.types';
 import { isRecord, toToolCalls } from './sidecar-replay';
 
@@ -9,7 +11,13 @@ export type LlmCallResult =
       tool_calls?: ToolCall[];
       reasoning_details?: unknown[];
       usage?: unknown;
+      canonicalUsage?: CanonicalLlmUsageType;
     };
+
+function parseCanonicalUsage(value: unknown): CanonicalLlmUsageType | undefined {
+  const parsed = CanonicalLlmUsage.safeParse(value);
+  return parsed.success ? parsed.data : undefined;
+}
 
 export async function callPlainCompletion(
   aiEngine: AgentAiEngine,
@@ -29,6 +37,7 @@ export function normalizeCompletionResponse(response: unknown): LlmCallResult {
 
   if (isRecord(response)) {
     const usage = response['usage'];
+    const canonicalUsage = parseCanonicalUsage(response['canonicalUsage']);
     const parsedToolCalls = toToolCalls(response['tool_calls']);
     if (parsedToolCalls) {
       const reasoningDetails = Array.isArray(response['reasoning_details'])
@@ -39,6 +48,7 @@ export function normalizeCompletionResponse(response: unknown): LlmCallResult {
         tool_calls: parsedToolCalls,
         reasoning_details: reasoningDetails,
         ...(usage !== undefined ? { usage } : {}),
+        ...(canonicalUsage !== undefined ? { canonicalUsage } : {}),
       };
     }
   }
@@ -50,12 +60,14 @@ export function normalizeCompletionResponse(response: unknown): LlmCallResult {
   if (typeof response === 'object') {
     if (isRecord(response) && (response['content'] !== undefined || response['reasoning_details'] !== undefined)) {
       const usage = response['usage'];
+      const canonicalUsage = parseCanonicalUsage(response['canonicalUsage']);
       return {
         content: typeof response['content'] === 'string' ? response['content'] : '',
         reasoning_details: Array.isArray(response['reasoning_details'])
           ? response['reasoning_details']
           : undefined,
         ...(usage !== undefined ? { usage } : {}),
+        ...(canonicalUsage !== undefined ? { canonicalUsage } : {}),
       };
     }
 

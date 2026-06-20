@@ -157,6 +157,38 @@ describe('agent/utils/eventConverter.convertEventsToAiMessages', () => {
     expect(messages[1]?.content).toBe('{"action":"approve"}');
   });
 
+  it('tool_output 回放时应保留执行期 observation 截断计量', () => {
+    const event: RuntimeEvent = {
+      type: 'tool_output',
+      id: 'o_truncated',
+      conversation_id: 'c1',
+      turn_id: 't1',
+      timestamp: 1,
+      version: 1,
+      tool_name: 'workspace_read',
+      tool_call_id: 'call_1',
+      status: 'success',
+      output: '{"observation":"preview"}',
+      metadata: {
+        observationTruncation: {
+          originalChars: 100,
+          previewChars: 20,
+          originalLines: 10,
+          previewLines: 2,
+        },
+      },
+    };
+
+    const messages = convertEventsToAiMessages([event]);
+
+    expect(messages[0]?.metadata?.observationTruncation).toEqual({
+      originalChars: 100,
+      previewChars: 20,
+      originalLines: 10,
+      previewLines: 2,
+    });
+  });
+
   it('工具调用回放出关时应保留 provider replay sidecar', () => {
     const reasoningDetails = [
       { provider: 'deepseek', type: 'reasoning_content', reasoning_content: 'Need the tool.' },

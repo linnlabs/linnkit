@@ -1,4 +1,4 @@
-import type { AgentInvocationRequest, LlmRequestMessage } from '../../../ports';
+import type { AgentInvocationRequest, LlmRequestMessage, TokenizerPort } from '../../../ports';
 import type {
   AnyAgentEvent,
   FinalAnswerEvent,
@@ -11,7 +11,7 @@ import type { TelemetryPort } from '../../telemetry/telemetryPort';
 import type { AuditPort } from '../../../ports';
 import type { ExecutorLocalState, StandardToolCall } from '../types';
 import type { GraphExecutorSummarizationCallbacks } from '../executorContextBuilder';
-import type { RuntimeEvent } from '../../../contracts';
+import type { CanonicalLlmUsage, RuntimeEvent } from '../../../contracts';
 
 export type TickEvent = AnyAgentEvent | RuntimeEvent;
 
@@ -57,6 +57,7 @@ export type LlmCallResponse =
       tool_calls?: StandardToolCall[];
       reasoning_details?: unknown[];
       usage?: unknown;
+      canonicalUsage?: CanonicalLlmUsage;
     };
 
 export interface TickPipelineContext {
@@ -95,6 +96,10 @@ export interface TickPipelineContext {
    */
   telemetry: TelemetryPort;
   audit: AuditPort;
+  /**
+   * LLM telemetry 本地估算也必须走 TokenizerPort，避免绕过 host 注入的 tokenizer。
+   */
+  tokenizer: TokenizerPort;
 }
 
 export type TickStageId =

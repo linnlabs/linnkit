@@ -1,4 +1,9 @@
-import type { AiMessage, RuntimeEvent } from '../../contracts';
+import type {
+  AiMessage,
+  ContextBuildTokenEstimate,
+  ContextTokenComponent,
+  RuntimeEvent,
+} from '../../contracts';
 import type { ContextTrace } from './context-trace';
 
 export interface RecommendationStats {
@@ -22,6 +27,8 @@ export interface BuildContextResultOptions<TBuildStats> {
   recommendations: string[];
   events?: RuntimeEvent[];
   contextTrace?: ContextTrace;
+  tokenEstimate?: ContextBuildTokenEstimate;
+  tokenComponents?: ContextTokenComponent[];
 }
 
 export function buildContextResult<TBuildStats>(
@@ -40,6 +47,8 @@ export function buildContextResult<TBuildStats>(
     recommendations,
     events = [],
     contextTrace,
+    tokenEstimate,
+    tokenComponents,
   } = options;
 
   const tokenDistribution = calculateTokenDistribution(
@@ -73,6 +82,8 @@ export function buildContextResult<TBuildStats>(
     },
     events,
     ...(contextTrace ? { contextTrace } : {}),
+    ...(tokenEstimate ? { tokenEstimate } : {}),
+    ...(tokenComponents ? { tokenComponents } : {}),
   };
 }
 

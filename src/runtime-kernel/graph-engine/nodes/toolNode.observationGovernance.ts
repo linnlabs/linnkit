@@ -3,7 +3,10 @@ import type {
   ObservationPreviewMeta,
   ObservationPreviewPort,
 } from '../../tools/ports';
-import type { AgentSpecToolObservationGovernancePolicy } from '../../../contracts';
+import type {
+  AgentSpecToolObservationGovernancePolicy,
+  ObservationTruncationMeta,
+} from '../../../contracts';
 import { isRecord, readString } from './toolNode.helpers';
 
 export const DEFAULT_TOOL_OBSERVATION_GOVERNANCE_POLICY = {
@@ -21,6 +24,10 @@ export const DEFAULT_TOOL_OBSERVATION_GOVERNANCE_POLICY = {
 } as const;
 
 export const TOOL_OBSERVATION_PREVIEW_LIMITS = DEFAULT_TOOL_OBSERVATION_GOVERNANCE_POLICY;
+
+export interface ObservationGovernanceResult {
+  observationTruncation?: ObservationTruncationMeta;
+}
 
 export function resolveToolObservationGovernancePolicy(
   policy: AgentSpecToolObservationGovernancePolicy | undefined,
@@ -86,14 +93,14 @@ export async function applyObservationGovernance(params: {
   structuredObservation: string | undefined;
   observationPreview: ObservationPreviewPort;
   policy?: AgentSpecToolObservationGovernancePolicy;
-}): Promise<void> {
+}): Promise<ObservationGovernanceResult> {
   if (!params.structuredObservation || !isRecord(params.parsed)) {
-    return;
+    return {};
   }
 
   const policy = resolveToolObservationGovernancePolicy(params.policy);
   if (!policy.enabled) {
-    return;
+    return {};
   }
 
   const truncated = await params.observationPreview.truncateObservation({
@@ -109,7 +116,7 @@ export async function applyObservationGovernance(params: {
   });
 
   if (!truncated.truncated) {
-    return;
+    return {};
   }
 
   params.parsed['observation'] = truncated.preview;
@@ -117,4 +124,38 @@ export async function applyObservationGovernance(params: {
   if (isRecord(data) && !('tool_output_store' in data)) {
     data['tool_output_store'] = { blob_id: truncated.blob_id };
   }
+
+  return {
+    observationTruncation: buildObservationTruncationMeta({
+      originalText: params.structuredObservation,
+      previewText: truncated.preview,
+      originalChars: truncated.originalChars,
+      previewChars: truncated.previewChars,
+      originalLines: truncated.originalLines,
+      previewLines: truncated.previewLines,
+    }),
+  };
+}
+
+function buildObservationTruncationMeta(input: {
+  originalText: string;
+  previewText: string;
+  originalChars?: number;
+  previewChars?: number;
+  originalLines?: number;
+  previewLines?: number;
+}): ObservationTruncationMeta {
+  return {
+    originalChars: input.originalChars ?? input.originalText.length,
+    previewChars: input.previewChars ?? input.previewText.length,
+    originalLines: input.originalLines ?? countLines(input.originalText),
+    previewLines: input.previewLines ?? countLines(input.previewText),
+  };
+}
+
+function countLines(value: string): number {
+  if (value.length === 0) {
+    return 0;
+  }
+  return value.split(/\r\n|\r|\n/).length;
 }

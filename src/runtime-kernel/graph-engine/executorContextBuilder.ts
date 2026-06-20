@@ -1,5 +1,10 @@
 import type { AgentInvocationRequest, LlmRequestMessage } from '../../ports';
-import type { RuntimeEvent } from '../../contracts';
+import type {
+  ContextBuildTokenEstimate,
+  ContextComponentTokenLedgerEntry,
+  ContextTokenComponent,
+  RuntimeEvent,
+} from '../../contracts';
 
 export interface GraphExecutorSummarizationCallbacks {
   onSummarizationStart?: () => void;
@@ -30,6 +35,21 @@ export interface GraphExecutorContextBuildOutput {
    * 避免 graph-engine 反向依赖 context-manager。
    */
   contextTrace?: unknown;
+  /**
+   * 构建期 token 估算快照。
+   *
+   * 中文备注：runtime-kernel 只透传稳定 DTO；它不解析 context-manager 内部 trace，
+   * 也不把 provider remote count 当成本地估算样本来源。
+   */
+  tokenEstimate?: ContextBuildTokenEstimate;
+  /**
+   * 构建期上下文分项 token 估算。
+   *
+   * 中文备注：context-manager 只产稳定 DTO，runtime-kernel 在带 run/turn scope 的地方
+   * 再创建账本条目，避免反向读取 ContextTrace 内部结构。
+   */
+  tokenComponents?: ContextTokenComponent[];
+  tokenLedgerEntry?: ContextComponentTokenLedgerEntry;
 }
 
 export interface GraphExecutorContextBuilder {

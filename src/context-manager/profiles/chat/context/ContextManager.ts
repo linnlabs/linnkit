@@ -20,7 +20,7 @@ import {
   generateContextRecommendations,
 } from '../../../shared/context-result';
 import type { GenerateRequest, GenerateResponse } from '../contracts';
-import type { AiMessage, RuntimeEvent } from '../../../../contracts';
+import type { AiMessage, ContextBuildTokenEstimate, RuntimeEvent } from '../../../../contracts';
 import type { TokenizerPort } from '../../../../ports';
 
 /**
@@ -62,6 +62,9 @@ export interface ContextBuildResult {
   
   /** 🔥 新增：Provider生成的运行时事件（如摘要事件） */
   events?: RuntimeEvent[];
+
+  /** 构建期 token 估算快照。Chat 目前无 route，host 可只读 token 数。 */
+  tokenEstimate?: ContextBuildTokenEstimate;
 }
 
 /**
@@ -133,6 +136,7 @@ export class ContextManager extends ContextManagerBase<
           providerContext,
           getPhaseByProviderName: providerName => this.getPhaseByProviderName(providerName),
         });
+      const tokenEstimate = this.buildContextTokenEstimate(finalMessages, finalTokens);
       
       const endTime = performance.now();
       buildStats.totalTime = endTime - startTime;
@@ -159,7 +163,8 @@ export class ContextManager extends ContextManagerBase<
         messages.length, 
         strategiesApplied, 
         buildStats,
-        events  // 🔥 传递收集的事件
+        events,  // 🔥 传递收集的事件
+        tokenEstimate,
       );
 
     } catch (error) {
@@ -208,7 +213,8 @@ export class ContextManager extends ContextManagerBase<
     originalCount: number,
     strategiesApplied: string[],
     buildStats: ContextBuildStats,
-    events: RuntimeEvent[] = []  // 🔥 新增：事件列表
+    events: RuntimeEvent[] = [],  // 🔥 新增：事件列表
+    tokenEstimate?: ContextBuildTokenEstimate,
   ): ContextBuildResult {
     const recommendations = this.generateRecommendations(buildStats, totalBudget);
     return buildContextResult({
@@ -223,7 +229,21 @@ export class ContextManager extends ContextManagerBase<
       coreTypes: this.config.CORE_MESSAGE_TYPES,
       recommendations,
       events,
+      tokenEstimate,
     });
+  }
+
+  private buildContextTokenEstimate(
+    finalMessages: readonly AiMessage[],
+    calibratedEstimateTokens: number,
+  ): ContextBuildTokenEstimate {
+    return {
+      localEstimateTokens: this.estimateLocalTokens(finalMessages),
+      calibratedEstimateTokens,
+      finalTokens: calibratedEstimateTokens,
+      source: 'local-estimate',
+      confidence: 'estimate',
+    };
   }
   /**
    * 生成优化建议

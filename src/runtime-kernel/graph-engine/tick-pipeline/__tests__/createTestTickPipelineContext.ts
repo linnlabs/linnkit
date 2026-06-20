@@ -1,6 +1,7 @@
 import type { AgentInvocationRequest } from '../../../../ports/agent-invocation';
 import { noopAudit } from '../../../audit/noopAudit';
 import { noopTelemetry } from '../../../telemetry/noopTelemetry';
+import { createDefaultTokenizerPort } from '../../../../shared/defaultTokenizerPort';
 import type { TickPipelineContext } from '../types';
 
 interface CreateTestTickPipelineContextOverrides {
@@ -51,6 +52,7 @@ export function createTestTickPipelineContext(
     turnId: 'turn_test',
     telemetry: noopTelemetry,
     audit: noopAudit,
+    tokenizer: createDefaultTokenizerPort(),
     ...overrides.context,
   };
 }

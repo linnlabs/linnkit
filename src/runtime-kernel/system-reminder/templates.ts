@@ -73,10 +73,10 @@ export const contextBudgetWarningTemplate: SystemReminderContentTemplate = (ctx)
   return [
     `⚠️ 上下文预算告警：你已执行了 ${displayStep}/${displayMax} 步，上下文空间即将耗尽。`,
     '你必须立即执行以下操作以避免上下文溢出：',
-    '1. 调用sharedmemory_write工具，将当前发现、总结、思考或者任何重要信息详细写入sharedmemory。',
+    '1. 先确认关键进展、约束、下一步已经进入 TaskState；如果没有，请调用 taskstate_write 更新。',
     `2. 调用 ${checkpointToolName} 工具，传入 summary（阶段过渡摘要）和 taskstate（最新任务状态）。`,
     '   这会一次性完成"保存状态 + 清理历史"，checkpoint tool_output 中会保留你的 TaskState 快照。',
-    '3. 清理后你的上下文将只保留：checkpoint 工具对（含摘要 + TaskState）+ 最近 2 对工具交互。重要信息会通过sharedmemory保存。',
+    '3. 清理后你的上下文将只保留：checkpoint 工具对（含摘要 + TaskState）+ 最近 2 对工具交互。需要长期交付给用户的内容请写入 Workspace 文件。',
   ].join('\n');
 };
 
