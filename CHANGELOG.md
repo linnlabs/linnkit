@@ -16,6 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.21.0] - 2026-06-20
 
+> Published release. This is the first npm / GitHub Release after `0.10.0`; it includes the unpublished `0.11.0`-`0.20.0` internal milestones below.
+
 ### Added
 
 - `GraphExecutorContextBuildOutput` can now carry context token components and context component ledger entries.
@@ -26,7 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Minor bump because runtime-kernel context builder and telemetry contracts expose new optional context component accounting fields.
 
-## [0.20.0] - 2026-06-20
+## [0.20.0] - 2026-06-20 (unpublished milestone; included in 0.21.0)
 
 ### Added
 
@@ -38,7 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Minor bump because `@linnlabs/linnkit/context-manager` context traces expose new token component breakdown data.
 
-## [0.19.0] - 2026-06-20
+## [0.19.0] - 2026-06-20 (unpublished milestone; included in 0.21.0)
 
 ### Added
 
@@ -48,7 +50,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Minor bump because `@linnlabs/linnkit/contracts` exposes new optional context component accounting fields.
 
-## [0.18.0] - 2026-06-20
+## [0.18.0] - 2026-06-20 (unpublished milestone; included in 0.21.0)
 
 ### Added
 
@@ -60,7 +62,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Minor bump because `@linnlabs/linnkit/contracts` and runtime-kernel tool ports expose new optional observation truncation metadata.
 
-## [0.17.0] - 2026-06-19
+## [0.17.0] - 2026-06-19 (unpublished milestone; included in 0.21.0)
 
 ### Added
 
@@ -76,7 +78,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Minor bump because `@linnlabs/linnkit/contracts`, `@linnlabs/linnkit/runtime-kernel`, and telemetry event types expose new public APIs.
 
-## [0.16.0] - 2026-06-18
+## [0.16.0] - 2026-06-18 (unpublished milestone; included in 0.21.0)
 
 ### Added
 
@@ -94,7 +96,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Minor bump because `@linnlabs/linnkit/ports` and `@linnlabs/linnkit/context-manager` expose new public token counting APIs.
 
-## [0.15.0] - 2026-06-18
+## [0.15.0] - 2026-06-18 (unpublished milestone; included in 0.21.0)
 
 ### Added
 
@@ -110,7 +112,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Minor bump because `@linnlabs/linnkit/contracts` and `@linnlabs/linnkit/context-manager` expose new public token calibration APIs.
 
-## [0.14.0] - 2026-06-18
+## [0.14.0] - 2026-06-18 (unpublished milestone; included in 0.21.0)
 
 ### Changed
 
@@ -121,7 +123,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Minor bump because `@linnlabs/linnkit/runtime-kernel` changes the public `RunCost` shape by removing the ambiguous `canonicalUsage` field.
 
-## [0.13.0] - 2026-06-18
+## [0.13.0] - 2026-06-18 (unpublished milestone; included in 0.21.0)
 
 ### Added
 
@@ -136,7 +138,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Minor bump because `@linnlabs/linnkit/contracts` and `@linnlabs/linnkit/runtime-kernel` expose new public cost accounting APIs.
 
-## [0.12.0] - 2026-06-18
+## [0.12.0] - 2026-06-18 (unpublished milestone; included in 0.21.0)
 
 ### Added
 
@@ -152,7 +154,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Minor bump because `@linnlabs/linnkit/contracts` and `@linnlabs/linnkit/runtime-kernel` expose new public token accounting APIs.
 
-## [0.11.0] - 2026-06-18
+## [0.11.0] - 2026-06-18 (unpublished milestone; included in 0.21.0)
 
 ### Added
 
@@ -220,7 +222,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [0.7.0] - 2026-05-12
+## [0.7.0] - 2026-05-12 (pre-npmjs milestone; superseded by 0.8.0)
 
 ### Added
 
@@ -235,7 +237,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [0.6.0] - 2026-05-11
+## [0.6.0] - 2026-05-11 (pre-npmjs milestone; superseded by 0.8.0)
 
 ### Added
 
@@ -253,7 +255,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [0.5.0] - 2026-05-10
+## [0.5.0] - 2026-05-10 (pre-npmjs milestone; superseded by 0.8.0)
 
 ### Added
 

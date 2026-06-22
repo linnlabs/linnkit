@@ -48,6 +48,7 @@ npm view @linnlabs/linnkit version dist-tags.latest versions --json --registry=h
 
 - `package.json#version` 和准备发布的 tag 一致。
 - `CHANGELOG.md` 有对应版本段。
+- `CHANGELOG.md` 中所有看起来像正式版本的段落，要么已经有对应 npm version + Git tag，要么在标题中明确标注为 `unpublished milestone` / `pre-npmjs milestone` 并说明折入或被哪个已发布版本覆盖。
 - `git status --short` 为空。
 - npm 上还没有同版本；如果已经有同版本，只能按“已发布版本”处理，不能覆盖。
 
