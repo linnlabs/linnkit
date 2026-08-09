@@ -8,9 +8,10 @@
  * - 兼容 OpenAI 标准“arguments delta”与部分 OpenAI-compat 的异常形态（同 index 新 id、多顶层 JSON `}{` 等）。
  */
 
-import { generateMessageId } from '../../../shared/ids';
+import { generateToolCallId, ToolCallIdSchema, type ToolCallId } from '../../../contracts';
 import { splitConcatenatedJsonObjects, tryParseJsonRecord } from '../toolCallUtils';
 import type { ToolCall, ToolCallChunk, ToolCallExtraContent } from '../caller.types';
+import type { ToolCallStreamingPolicy } from '../../tools/toolContracts';
 
 const isToolCallChunk = (v: unknown): v is ToolCallChunk => {
   if (!v || typeof v !== 'object') return false;
@@ -23,16 +24,17 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function mergeToolCallExtraContent(
   existing: ToolCallExtraContent | undefined,
-  incoming: ToolCallExtraContent | undefined,
+  incoming: ToolCallExtraContent | undefined
 ): ToolCallExtraContent | undefined {
   if (!incoming) return existing;
   const merged: Record<string, unknown> = { ...(existing ?? {}) };
 
   for (const [namespace, incomingValue] of Object.entries(incoming)) {
     const existingValue = merged[namespace];
-    merged[namespace] = isRecord(existingValue) && isRecord(incomingValue)
-      ? { ...existingValue, ...incomingValue }
-      : incomingValue;
+    merged[namespace] =
+      isRecord(existingValue) && isRecord(incomingValue)
+        ? { ...existingValue, ...incomingValue }
+        : incomingValue;
   }
 
   return merged as ToolCallExtraContent;
@@ -41,7 +43,7 @@ function mergeToolCallExtraContent(
 export class ToolCallStreamAccumulator {
   private toolCalls: ToolCall[] = [];
   private readonly emittedToolCallIds = new Set<string>();
-  private readonly placeholderAllowlist: Set<string>;
+  private readonly streamingPolicies: Readonly<Record<string, ToolCallStreamingPolicy>>;
   /**
    * 已发出的“可解析 args 快照”（按 tool_call_id 去重），用于避免 update 事件刷屏与 UI 抖动。
    *
@@ -53,21 +55,25 @@ export class ToolCallStreamAccumulator {
   private readonly emittedArgsSnapshotByToolCallId = new Map<string, string>();
   private readonly lastArgsEmitAtByToolCallId = new Map<string, number>();
 
-  constructor(placeholderToolAllowlist: Iterable<string>) {
-    this.placeholderAllowlist = new Set<string>(placeholderToolAllowlist);
+  constructor(streamingPolicies: Readonly<Record<string, ToolCallStreamingPolicy>> = {}) {
+    this.streamingPolicies = streamingPolicies;
   }
 
   /**
    * @description
    * 在 tool_call id + name 都就绪时触发，用于上层发“占位 tool_process”。
    */
-  private maybeEmitPlaceholder(toolCallId: string, toolName: string, onPlaceholder?: (toolCallId: string, toolName: string) => void): void {
+  private maybeEmitPlaceholder(
+    toolCallId: string,
+    toolName: string,
+    onPlaceholder?: (toolCallId: ToolCallId, toolName: string) => void
+  ): void {
     if (!onPlaceholder) return;
     if (!toolCallId || !toolName) return;
-    if (!this.placeholderAllowlist.has(toolName)) return;
+    if (this.streamingPolicies[toolName]?.emitPlaceholder !== true) return;
     if (this.emittedToolCallIds.has(toolCallId)) return;
     this.emittedToolCallIds.add(toolCallId);
-    onPlaceholder(toolCallId, toolName);
+    onPlaceholder(ToolCallIdSchema.parse(toolCallId), toolName);
   }
 
   /**
@@ -82,10 +88,15 @@ export class ToolCallStreamAccumulator {
     toolCallId: string,
     toolName: string,
     rawArgsJson: string,
-    onArgsSnapshot?: (toolCallId: string, toolName: string, args: Record<string, unknown>) => void
+    onArgsSnapshot?: (
+      toolCallId: ToolCallId,
+      toolName: string,
+      args: Record<string, unknown>
+    ) => void
   ): void {
     if (!onArgsSnapshot) return;
     if (!toolCallId || !toolName) return;
+    if (this.streamingPolicies[toolName]?.emitArgumentSnapshots !== true) return;
 
     const now = Date.now();
     const lastAt = this.lastArgsEmitAtByToolCallId.get(toolCallId) ?? 0;
@@ -102,13 +113,17 @@ export class ToolCallStreamAccumulator {
 
     this.emittedArgsSnapshotByToolCallId.set(toolCallId, trimmed);
     this.lastArgsEmitAtByToolCallId.set(toolCallId, now);
-    onArgsSnapshot(toolCallId, toolName, parsed.value);
+    onArgsSnapshot(ToolCallIdSchema.parse(toolCallId), toolName, parsed.value);
   }
 
   applyChunks(
     chunks: unknown[],
-    onPlaceholder?: (toolCallId: string, toolName: string) => void,
-    onArgsSnapshot?: (toolCallId: string, toolName: string, args: Record<string, unknown>) => void
+    onPlaceholder?: (toolCallId: ToolCallId, toolName: string) => void,
+    onArgsSnapshot?: (
+      toolCallId: ToolCallId,
+      toolName: string,
+      args: Record<string, unknown>
+    ) => void
   ): void {
     for (const toolCallChunk of chunks) {
       if (!isToolCallChunk(toolCallChunk)) continue;
@@ -130,7 +145,11 @@ export class ToolCallStreamAccumulator {
         // 同一 index 出现“不同 id”：通常意味着 provider 把下一条 tool_call 仍标成旧 index。
         if (this.toolCalls[index].id && this.toolCalls[index].id !== toolCallChunk.id) {
           const nextIndex = this.toolCalls.length;
-          this.toolCalls[nextIndex] = { id: toolCallChunk.id, type: 'function', function: { name: '', arguments: '' } };
+          this.toolCalls[nextIndex] = {
+            id: toolCallChunk.id,
+            type: 'function',
+            function: { name: '', arguments: '' },
+          };
           index = nextIndex;
         } else {
           this.toolCalls[index].id = toolCallChunk.id;
@@ -141,7 +160,7 @@ export class ToolCallStreamAccumulator {
       if (toolCallChunk.extra_content) {
         this.toolCalls[index].extra_content = mergeToolCallExtraContent(
           this.toolCalls[index].extra_content,
-          toolCallChunk.extra_content,
+          toolCallChunk.extra_content
         );
       }
 
@@ -155,7 +174,12 @@ export class ToolCallStreamAccumulator {
       if (readyId && readyName) {
         this.maybeEmitPlaceholder(readyId, readyName, onPlaceholder);
         // 如果 provider 在“name/id 就绪”时就给出完整 JSON snapshot，可直接触发一次 update
-        this.maybeEmitArgsSnapshot(readyId, readyName, this.toolCalls[index].function.arguments, onArgsSnapshot);
+        this.maybeEmitArgsSnapshot(
+          readyId,
+          readyName,
+          this.toolCalls[index].function.arguments,
+          onArgsSnapshot
+        );
       }
 
       if (toolCallChunk.function?.arguments) {
@@ -169,10 +193,18 @@ export class ToolCallStreamAccumulator {
         const newIsFullJson = tryParseJsonRecord(newArgsChunk.trim()).ok;
         const oldIsFullJson = tryParseJsonRecord(oldArgs.trim()).ok;
 
-        if (newIsFullJson && (!oldArgs || !oldIsFullJson || newArgsChunk.trim().length >= oldArgs.trim().length)) {
+        if (
+          newIsFullJson &&
+          (!oldArgs || !oldIsFullJson || newArgsChunk.trim().length >= oldArgs.trim().length)
+        ) {
           this.toolCalls[index].function.arguments = newArgsChunk;
           if (readyId && readyName) {
-            this.maybeEmitArgsSnapshot(readyId, readyName, this.toolCalls[index].function.arguments, onArgsSnapshot);
+            this.maybeEmitArgsSnapshot(
+              readyId,
+              readyName,
+              this.toolCalls[index].function.arguments,
+              onArgsSnapshot
+            );
           }
           continue;
         }
@@ -186,20 +218,25 @@ export class ToolCallStreamAccumulator {
           // 当前 index 保留第一段，其余段作为“后续 tool_call”追加
           this.toolCalls[index].function.arguments = pieces[0];
           if (readyId && readyName) {
-            this.maybeEmitArgsSnapshot(readyId, readyName, this.toolCalls[index].function.arguments, onArgsSnapshot);
+            this.maybeEmitArgsSnapshot(
+              readyId,
+              readyName,
+              this.toolCalls[index].function.arguments,
+              onArgsSnapshot
+            );
           }
 
           for (let pi = 1; pi < pieces.length; pi += 1) {
             const nextIndex = this.toolCalls.length;
             this.toolCalls[nextIndex] = {
-              id: generateMessageId(),
+              id: generateToolCallId(),
               type: 'function',
               function: {
                 name: this.toolCalls[index].function.name,
-                arguments: pieces[pi]
+                arguments: pieces[pi],
               },
               // 仅透传一次 thought_signature（额外 tool_call 为兼容生成，不强行复制签名）
-              extra_content: undefined
+              extra_content: undefined,
             };
           }
           continue;
@@ -207,7 +244,12 @@ export class ToolCallStreamAccumulator {
 
         this.toolCalls[index].function.arguments = merged;
         if (readyId && readyName) {
-          this.maybeEmitArgsSnapshot(readyId, readyName, this.toolCalls[index].function.arguments, onArgsSnapshot);
+          this.maybeEmitArgsSnapshot(
+            readyId,
+            readyName,
+            this.toolCalls[index].function.arguments,
+            onArgsSnapshot
+          );
         }
       }
     }

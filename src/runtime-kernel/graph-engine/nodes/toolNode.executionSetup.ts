@@ -3,10 +3,25 @@ import type { ToolExecutionContext } from '../../tools/toolExecutionContext';
 import { computeToolIdempotencyKey } from '../../tools/idempotency/toolIdempotency';
 import type { ToolCatalogPort, ToolRuntimeDefinition } from '../../tools/ports';
 import { ensureToolContextRuntimeCapability } from '../../tools/toolContextRuntime';
-import type { EngineState, StandardToolCall } from '../types';
+import type { EngineState, RuntimeEventSink, StandardToolCall } from '../types';
+import type { ModelInputRequirement } from '../../llm/input-capabilities';
 import { ToolNodeEventBridge } from './toolNode.eventBridge';
-import { computeCitationOffset, isRecord, parseJsonSafe, type UnknownRecord } from './toolNode.helpers';
-import type { RuntimeEvent } from '../../../contracts';
+import {
+  isRecord,
+  parseJsonSafe,
+  type UnknownRecord,
+} from './toolNode.helpers';
+import {
+  parseRuntimeEvents,
+  toSerializableJsonRecord,
+  type RuntimeEvent,
+  type ToolCallId,
+} from '../../../contracts';
+import { Logger } from '../../../shared/logger';
+import { requireRuntimeEventSink } from '../graphLocal';
+import { requireRuntimeIdentity } from '../tick-pipeline/helpers';
+
+const logger = new Logger('ToolNode');
 
 export type PreparedToolNodeContext = {
   state: EngineState;
@@ -14,17 +29,24 @@ export type PreparedToolNodeContext = {
   toolContext: ToolExecutionContext;
   conversationId: string;
   turnId: string;
+  runtimeEventSink: RuntimeEventSink;
 };
 
 export type PreparedToolExecution = {
   call: StandardToolCall;
   toolName: string;
-  toolCallId: string;
+  toolCallId: ToolCallId;
   rawArguments: string;
   toolArgs: Record<string, unknown>;
   protocolError?: string;
+  idempotencyKey?: string;
+  modelInputRequirement?: ModelInputRequirement;
+  modelInputRequirementError?: string;
   bridge: ToolNodeEventBridge;
 };
+
+const MODEL_INPUT_REQUIREMENT_RESOLUTION_ERROR =
+  'tool.model_input.requirement_resolution_failed: Tool model input requirement could not be resolved';
 
 type ParsedToolArgsResult =
   | { ok: true; value: Record<string, unknown> }
@@ -50,7 +72,7 @@ export function parseToolArgs(call: StandardToolCall): ParsedToolArgsResult {
     return { ok: true, value: parsed };
   } catch (error) {
     const reason = error instanceof Error ? error.message : 'Unknown JSON parse error';
-    console.warn('[ToolNode] Failed to parse tool arguments:', error);
+    logger.warn('failed to parse tool arguments', { error });
     return {
       ok: false,
       error: `Tool arguments are not valid JSON: ${reason}`,
@@ -67,15 +89,10 @@ export function prepareToolNodeContext(state: EngineState): PreparedToolNodeCont
     local.toolContext = toolContext as UnknownRecord;
   }
 
-  const conversationId = typeof local.conversationId === 'string' ? local.conversationId : '';
-  const turnId =
-    typeof local.turnId === 'string'
-      ? local.turnId
-      : `turn_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-  local.turnId = turnId;
+  const conversationId = requireRuntimeIdentity(local.conversationId, 'conversationId');
+  const turnId = requireRuntimeIdentity(local.turnId, 'turnId');
 
-  const historyEvents = (local.history as RuntimeEvent[]) || [];
-  const citationOffset = computeCitationOffset(historyEvents, turnId);
+  const historyEvents = parseRuntimeEvents(local.history ?? []);
   const existingConversationId =
     typeof toolContext.conversationId === 'string' ? toolContext.conversationId.trim() : '';
   ensureToolContextRuntimeCapability({
@@ -83,12 +100,18 @@ export function prepareToolNodeContext(state: EngineState): PreparedToolNodeCont
     executionMeta: {
       conversationId: existingConversationId || conversationId,
       turnId,
-      citationOffset,
     },
   });
   attachWorkingHistoryView({ state, toolContext });
 
-  return { state, local, toolContext, conversationId, turnId };
+  return {
+    state,
+    local,
+    toolContext,
+    conversationId,
+    turnId,
+    runtimeEventSink: requireRuntimeEventSink(state.local),
+  };
 }
 
 export function prepareToolExecution(params: {
@@ -102,7 +125,8 @@ export function prepareToolExecution(params: {
   }
 
   const toolCallId = params.call.id;
-  const rawArguments = typeof params.call.function?.arguments === 'string' ? params.call.function.arguments : '';
+  const rawArguments =
+    typeof params.call.function?.arguments === 'string' ? params.call.function.arguments : '';
   let toolArgs: Record<string, unknown> = {};
   let protocolError: string | undefined;
   const parsedToolArgs = parseToolArgs(params.call);
@@ -116,9 +140,20 @@ export function prepareToolExecution(params: {
 
   if (!protocolError && toolDefinition) {
     toolArgs = normalizeToolArgs(toolDefinition.parameters, toolArgs, { toolName });
+    if (toolDefinition.validateArguments) {
+      try {
+        const validation = toolDefinition.validateArguments(toolArgs);
+        if (!validation.success) {
+          protocolError = validation.error ?? `Tool '${toolName}' arguments failed owner validation.`;
+        }
+      } catch (error) {
+        protocolError = `Tool '${toolName}' argument validation failed: ${
+          error instanceof Error ? error.message : 'Unknown validation error'
+        }`;
+      }
+    }
   }
 
-  const displayOptions = (toolDefinition?.displayOptions ?? {}) as Record<string, unknown>;
   const idempotencyKey = protocolError
     ? undefined
     : computeIdempotencyKey({
@@ -135,19 +170,20 @@ export function prepareToolExecution(params: {
     toolCallId,
   });
 
-  const sseSink =
-    typeof params.prepared.local.sseSink === 'function'
-      ? (params.prepared.local.sseSink as (evt: unknown) => void)
-      : undefined;
   const bridge = new ToolNodeEventBridge({
-    sseSink,
+    runtimeEventSink: params.prepared.runtimeEventSink,
     conversationId: params.prepared.conversationId,
     turnId: params.prepared.turnId,
     toolName,
     toolCallId,
     toolArgs,
-    displayOptions,
     idempotencyKey,
+  });
+  const modelInputRequirement = resolveModelInputRequirement({
+    toolDefinition,
+    toolArgs,
+    hasProtocolError: protocolError !== undefined,
+    toolName,
   });
 
   return {
@@ -157,23 +193,59 @@ export function prepareToolExecution(params: {
     rawArguments,
     toolArgs,
     protocolError,
+    idempotencyKey,
+    ...(modelInputRequirement.requirement
+      ? { modelInputRequirement: modelInputRequirement.requirement }
+      : {}),
+    ...(modelInputRequirement.error
+      ? { modelInputRequirementError: modelInputRequirement.error }
+      : {}),
     bridge,
   };
+}
+
+function resolveModelInputRequirement(params: {
+  toolDefinition: ToolRuntimeDefinition | undefined;
+  toolArgs: Record<string, unknown>;
+  hasProtocolError: boolean;
+  toolName: string;
+}): { requirement?: ModelInputRequirement; error?: string } {
+  if (params.hasProtocolError) {
+    return {};
+  }
+  if (!params.toolDefinition?.resolveModelInputRequirement) {
+    return params.toolDefinition?.modelInputRequirement
+      ? { requirement: params.toolDefinition.modelInputRequirement }
+      : {};
+  }
+
+  try {
+    const requirement = params.toolDefinition.resolveModelInputRequirement(params.toolArgs);
+    return requirement ? { requirement } : {};
+  } catch (error) {
+    logger.warn('dynamic model input requirement resolution failed', {
+      toolName: params.toolName,
+      errorName: error instanceof Error ? error.name : 'UnknownError',
+    });
+    return { error: MODEL_INPUT_REQUIREMENT_RESOLUTION_ERROR };
+  }
 }
 
 function attachWorkingHistoryView(params: {
   state: EngineState;
   toolContext: ToolExecutionContext;
 }): void {
-  const historyEvents = ((params.state.local as UnknownRecord | undefined)?.history as RuntimeEvent[] | undefined) ?? [];
+  const historyEvents = parseRuntimeEvents(
+    (params.state.local as UnknownRecord | undefined)?.history ?? []
+  );
   const runtimeBinding = ensureToolContextRuntimeCapability({
     context: params.toolContext,
     workingHistory: historyEvents,
   });
   runtimeBinding.setWorkingHistorySource(() => {
     const currentLocal = params.state.local as UnknownRecord | undefined;
-    const currentHistory = (currentLocal?.history as RuntimeEvent[] | undefined) ?? [];
-    if (Array.isArray(currentHistory) && currentHistory.length > 0) {
+    const currentHistory = parseRuntimeEvents(currentLocal?.history ?? []);
+    if (currentHistory.length > 0) {
       return currentHistory;
     }
     return runtimeBinding.getPersistedHistoryEvents();
@@ -190,36 +262,30 @@ function computeIdempotencyKey(params: {
     return undefined;
   }
 
-  try {
-    return computeToolIdempotencyKey({
-      policy: params.toolDefinition.idempotency,
-      toolName: params.toolName,
-      args: params.toolArgs,
-      context: params.toolContext,
-    });
-  } catch {
-    return undefined;
-  }
+  return computeToolIdempotencyKey({
+    policy: params.toolDefinition.idempotency,
+    toolName: params.toolName,
+    args: params.toolArgs,
+    context: params.toolContext,
+  });
 }
 
 function bindRuntimeToolContext(params: {
   toolContext: ToolExecutionContext;
   conversationId: string;
   turnId: string;
-  toolCallId: string;
+  toolCallId: ToolCallId;
 }): void {
   const existingConversationId =
-    typeof params.toolContext.conversationId === 'string' ? params.toolContext.conversationId.trim() : '';
+    typeof params.toolContext.conversationId === 'string'
+      ? params.toolContext.conversationId.trim()
+      : '';
   ensureToolContextRuntimeCapability({
     context: params.toolContext,
     executionMeta: {
       conversationId: existingConversationId || params.conversationId,
       turnId: params.turnId,
       parentToolCallId: params.toolCallId,
-      citationOffset:
-        typeof params.toolContext.citationOffset === 'number' && Number.isFinite(params.toolContext.citationOffset)
-          ? params.toolContext.citationOffset
-          : undefined,
     },
   });
 }

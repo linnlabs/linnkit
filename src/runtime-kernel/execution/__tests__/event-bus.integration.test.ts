@@ -8,10 +8,16 @@ import { EventBus } from '../event-bus';
 import { EventSequencer } from '../sequencer';
 import type { RuntimeEvent } from '../../../contracts';
 import type { EventEnvelope as Envelope } from 'linnkit/contracts';
+import { RunIdSchema, ToolCallIdSchema } from '../../../contracts';
 
 type EventEnvelope = Envelope<RuntimeEvent>;
 
 describe('事件总线集成测试', () => {
+  const routingIdentity = {
+    run_id: RunIdSchema.parse('run_1'),
+    lane: 'foreground' as const,
+    visibility: 'conversation' as const,
+  };
   let eventBus: EventBus;
   let sequencer: EventSequencer;
   let receivedEnvelopes: EventEnvelope[];
@@ -22,7 +28,7 @@ describe('事件总线集成测试', () => {
     eventBus = new EventBus(sequencer.getExecutionId());
 
     // 订阅事件
-    eventBus.on('event', (envelope) => {
+    eventBus.on('event', envelope => {
       receivedEnvelopes.push(envelope);
     });
   });
@@ -34,6 +40,7 @@ describe('事件总线集成测试', () => {
   describe('1. 基础事件发布', () => {
     it('应该正确包装和发布事件', () => {
       const event: RuntimeEvent = {
+        ...routingIdentity,
         type: 'user_input',
         id: 'msg_1',
         content: 'Hello',
@@ -55,6 +62,7 @@ describe('事件总线集成测试', () => {
     it('应该为多个事件分配递增序号', () => {
       const events: RuntimeEvent[] = [
         {
+          ...routingIdentity,
           type: 'user_input',
           id: 'msg_1',
           content: 'Hello',
@@ -65,6 +73,7 @@ describe('事件总线集成测试', () => {
           source: 'user',
         },
         {
+          ...routingIdentity,
           type: 'thought',
           id: 'thought_1',
           content: 'Thinking...',
@@ -93,6 +102,7 @@ describe('事件总线集成测试', () => {
       eventBus.on('error', errorHandler);
 
       const event: RuntimeEvent = {
+        ...routingIdentity,
         type: 'user_input',
         id: 'msg_1',
         content: 'Hello',
@@ -123,10 +133,11 @@ describe('事件总线集成测试', () => {
 
     it('应该保留执行上下文', () => {
       const event: RuntimeEvent = {
+        ...routingIdentity,
         type: 'tool_call_decision',
         id: 'decision_1',
         tool_name: 'search',
-        tool_call_id: 'call_1',
+        tool_call_id: ToolCallIdSchema.parse('call_1'),
         conversation_id: 'conv_1',
         timestamp: Date.now(),
         turn_id: 'turn_1',
@@ -147,15 +158,17 @@ describe('事件总线集成测试', () => {
   describe('3. 事件数据完整性', () => {
     it('应该保留所有事件属性', () => {
       const event: RuntimeEvent = {
+        ...routingIdentity,
         type: 'tool_output',
         id: 'output_1',
         tool_name: 'search',
-        tool_call_id: 'call_1',
+        tool_call_id: ToolCallIdSchema.parse('call_1'),
         conversation_id: 'conv_1',
         timestamp: Date.now(),
         turn_id: 'turn_1',
         version: 1,
-        output: { results: ['result1', 'result2'] },
+        observation: 'found 2 results',
+        data: { results: ['result1', 'result2'] },
         status: 'success',
       };
 
@@ -164,12 +177,13 @@ describe('事件总线集成测试', () => {
 
       const received = receivedEnvelopes[0].payload as typeof event;
       expect(received.tool_name).toBe('search');
-      expect(received.output).toEqual({ results: ['result1', 'result2'] });
+      expect(received.data).toEqual({ results: ['result1', 'result2'] });
       expect(received.status).toBe('success');
     });
 
     it('应该支持可选的渲染提示', () => {
       const event: RuntimeEvent = {
+        ...routingIdentity,
         type: 'final_answer',
         id: 'answer_1',
         content: 'The answer is 42',
@@ -179,6 +193,7 @@ describe('事件总线集成测试', () => {
         version: 1,
         answer_id: 'ans_1',
         is_complete: true,
+        completion_reason: 'terminal',
       };
 
       const envelope = sequencer.wrapEvent(event, 'llm-node', {
@@ -197,15 +212,16 @@ describe('事件总线集成测试', () => {
       const subscriber1Events: EventEnvelope[] = [];
       const subscriber2Events: EventEnvelope[] = [];
 
-      eventBus.on('event', (envelope) => {
+      eventBus.on('event', envelope => {
         subscriber1Events.push(envelope);
       });
 
-      eventBus.on('event', (envelope) => {
+      eventBus.on('event', envelope => {
         subscriber2Events.push(envelope);
       });
 
       const event: RuntimeEvent = {
+        ...routingIdentity,
         type: 'user_input',
         id: 'msg_1',
         content: 'Hello',
@@ -229,6 +245,7 @@ describe('事件总线集成测试', () => {
   describe('5. 序号管理', () => {
     it('应该保证序号严格递增', () => {
       const events: RuntimeEvent[] = Array.from({ length: 10 }, (_, i) => ({
+        ...routingIdentity,
         type: 'thought' as const,
         id: `thought_${i}`,
         content: `Thought ${i}`,
@@ -254,6 +271,7 @@ describe('事件总线集成测试', () => {
       expect(sequencer.getCurrentSeq()).toBe(0);
 
       const event: RuntimeEvent = {
+        ...routingIdentity,
         type: 'user_input',
         id: 'msg_1',
         content: 'Hello',

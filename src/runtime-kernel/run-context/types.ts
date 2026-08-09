@@ -13,7 +13,7 @@ export interface RunContext {
    * 当前 Run 的唯一标识（对应一次 Graph 执行 / 一次 conversation turn）
    * - 通常对应 `turnId` 或 `messageId`
    */
-  runId: string;
+  runId: RunId;
 
   /**
    * 链路追踪 ID（贯穿业务全流程）
@@ -26,12 +26,12 @@ export interface RunContext {
    * 父级 Run ID（用于子 Agent / 嵌套图）
    * - 如果是顶层任务，则为 undefined
    */
-  parentId?: string;
+  parentId?: RunId;
 
   /**
    * 根 Run ID（业务发起的原点）
    */
-  rootRunId?: string;
+  rootRunId?: RunId;
 
   /**
    * 业务标签/元数据（业务特定的上下文挂载点）
@@ -41,15 +41,13 @@ export interface RunContext {
   tags: Record<string, string | number | boolean | undefined>;
 }
 
-/**
- * 创建默认的 RunContext
- */
-export function createDefaultRunContext(overrides?: Partial<RunContext>): RunContext {
-  const id = `run_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+/** 由 run admission 使用已确定的身份创建执行上下文。 */
+export function createRunContext(
+  input: Pick<RunContext, 'runId' | 'traceId'> & Partial<Omit<RunContext, 'runId' | 'traceId'>>
+): RunContext {
   return {
-    runId: id,
-    traceId: id,
     tags: {},
-    ...overrides
+    ...input,
   };
 }
+import type { RunId } from '../../contracts';

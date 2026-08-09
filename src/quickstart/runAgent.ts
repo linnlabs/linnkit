@@ -1,9 +1,16 @@
 import {
-  createFinalAnswerChunkEvent,
   createUserInputEvent,
+  toSerializableJsonRecord,
+  type RoutedRuntimeEvent,
   type RuntimeEvent,
+  type RuntimeEventRoutingIdentity,
+  type SerializableJsonRecord,
+  generateConversationId,
+  generateRunId,
+  RunIdSchema,
+  generateRuntimeEventId,
+  generateTurnId,
 } from '../contracts';
-import { generateMessageId, generateRunId } from '../shared/ids';
 import {
   GraphAgentExecutor,
   LlmCaller,
@@ -12,17 +19,18 @@ import {
   type ObservationPreviewPort,
   type ToolExecutionContext,
   createDefaultGraphExecutor,
+  createFixedChatModelCatalog,
+  events,
   execution,
   graph,
+  events as runtimeEvents,
   runSupervisor,
 } from '../runtime-kernel';
 import type { DefinedAgent, RunAgentOptions, RunAgentResult } from './types';
 import { QuickstartContextBuilder } from './contextBuilder';
+import { resolveQuickstartMaxSteps } from './functions/contextTrace';
 import { QuickstartMemoryToolRuntime } from './toolRuntime';
-import {
-  QuickstartRunCostCollector,
-  createQuickstartTelemetryPort,
-} from './runCost';
+import { QuickstartRunCostCollector, createQuickstartTelemetryPort } from './runCost';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -35,20 +43,11 @@ function readString(value: unknown): string | undefined {
 function resolveModelId(agent: DefinedAgent, options: RunAgentOptions): string {
   const modelId = readString(options.modelId) ?? readString(agent.modelId);
   if (!modelId) {
-    throw new Error('[linnkit] runAgent requires modelId. Pass opts.modelId or defineAgent({ modelId }).');
+    throw new Error(
+      '[linnkit] runAgent requires modelId. Pass opts.modelId or defineAgent({ modelId }).'
+    );
   }
   return modelId;
-}
-
-interface QuickstartStreamChunkEvent {
-  type: 'stream_chunk';
-  content: string;
-  answer_id?: string;
-  seq?: number;
-}
-
-function isQuickstartStreamChunkEvent(value: unknown): value is QuickstartStreamChunkEvent {
-  return isRecord(value) && value.type === 'stream_chunk' && typeof value.content === 'string';
 }
 
 function createNoopObservationPreview(): ObservationPreviewPort {
@@ -59,46 +58,10 @@ function createNoopObservationPreview(): ObservationPreviewPort {
   };
 }
 
-function buildChunkRuntimeEvent(params: {
-  event: QuickstartStreamChunkEvent;
-  conversationId: string;
-  turnId: string;
-}): RuntimeEvent[] {
-  const content = params.event.content;
-  if (!content) return [];
-  const answerId = readString(params.event.answer_id) ?? `answer_${params.turnId}`;
-  const seq = Number.isInteger(params.event.seq) ? Number(params.event.seq) : 0;
-  return [
-    createFinalAnswerChunkEvent(
-      generateMessageId(),
-      params.conversationId,
-      params.turnId,
-      answerId,
-      seq,
-      content,
-      {
-        ephemeral: true,
-        metadata: {
-          run_context: { runId: params.turnId },
-        },
-      },
-    ),
-  ];
-}
-
 function readFinalAnswer(events: RuntimeEvent[], checkpointLocal: unknown): string {
-  const finalAnswerEvent = [...events].reverse().find((event) => event.type === 'final_answer');
-  if (finalAnswerEvent?.type === 'final_answer') {
+  const finalAnswerEvent = runtimeEvents.findTerminalFinalAnswer(events);
+  if (finalAnswerEvent) {
     return finalAnswerEvent.content;
-  }
-
-  const chunks = events
-    .filter((event): event is Extract<RuntimeEvent, { type: 'final_answer_chunk' }> =>
-      event.type === 'final_answer_chunk')
-    .sort((a, b) => a.seq - b.seq)
-    .map((event) => event.content);
-  if (chunks.length > 0) {
-    return chunks.join('');
   }
 
   if (isRecord(checkpointLocal)) {
@@ -111,14 +74,14 @@ function readFinalAnswer(events: RuntimeEvent[], checkpointLocal: unknown): stri
   return '';
 }
 
-function readContextTrace(checkpointLocal: unknown): unknown {
+function readContextTrace(checkpointLocal: unknown): SerializableJsonRecord | undefined {
   if (!isRecord(checkpointLocal)) return undefined;
-  return checkpointLocal['contextTrace'];
+  return toSerializableJsonRecord(checkpointLocal['contextTrace']);
 }
 
 async function emitRunEvent(
-  event: RuntimeEvent,
-  sink: RunAgentOptions['onEvent'],
+  event: RoutedRuntimeEvent,
+  sink: RunAgentOptions['onEvent']
 ): Promise<void> {
   await sink?.(event);
 }
@@ -132,18 +95,27 @@ async function emitRunEvent(
  */
 export async function runAgent(
   agent: DefinedAgent,
-  options: RunAgentOptions,
+  options: RunAgentOptions
 ): Promise<RunAgentResult> {
   const modelId = resolveModelId(agent, options);
-  const conversationId = options.conversationId ?? `conv_${Date.now()}`;
-  const checkpointKey = conversationId;
-  const runId = options.runId ?? generateRunId();
-  const turnId = runId;
+  const maxSteps = resolveQuickstartMaxSteps(options.maxSteps);
+  const conversationId = options.conversationId ?? generateConversationId();
+  const runId = RunIdSchema.parse(options.runId ?? generateRunId());
+  const checkpointKey = runId;
+  const turnId = generateTurnId();
+  const routingIdentity: RuntimeEventRoutingIdentity = {
+    run_id: runId,
+    lane: 'foreground',
+    visibility: 'conversation',
+  };
   const costCollector = new QuickstartRunCostCollector();
   const telemetryPort = createQuickstartTelemetryPort(costCollector);
   const toolRuntime = new QuickstartMemoryToolRuntime(agent.tools);
   const eventStore = new graph.MemoryEventStore();
-  const eventBus = new execution.EventBus(`exec_${runId}`);
+  const sequencer = new execution.EventSequencer(conversationId);
+  const eventBus = new execution.EventBus(sequencer.getExecutionId());
+  const publisher = new execution.RuntimeEventPublisher(eventBus, sequencer, routingIdentity);
+  const nextEventStoreId = graph.createMonotonicEventStoreIdFactory();
   const registryStore = new runSupervisor.MemoryRunRegistryStore();
   const supervisor = new runSupervisor.DefaultRunSupervisor({
     registryStore,
@@ -162,6 +134,7 @@ export async function runAgent(
 
   const llmCaller = new LlmCaller({
     aiEngine: options.llm,
+    modelCatalog: createFixedChatModelCatalog(modelId),
     maxRetries: 0,
     enableEmptyResponseRetry: false,
   });
@@ -177,15 +150,29 @@ export async function runAgent(
     observationPreview: createNoopObservationPreview(),
     checkpointer: new MemoryCheckpointer(),
     telemetryPort,
-    maxSteps: 8,
+    maxSteps,
   });
 
-  const runtimeEvents: RuntimeEvent[] = [
-    createUserInputEvent(generateMessageId(), conversationId, turnId, options.input, {
-      metadata: { run_context: { runId } },
-    }),
-  ];
-  await emitRunEvent(runtimeEvents[0], options.onEvent);
+  const runtimeEvents: RoutedRuntimeEvent[] = [];
+  let callbackTail: Promise<void> = Promise.resolve();
+  let persistenceTail: Promise<void> = Promise.resolve();
+  eventBus.on('event', envelope => {
+    const event = envelope.payload;
+    runtimeEvents.push(event);
+    callbackTail = callbackTail.then(() => emitRunEvent(event, options.onEvent));
+    if (events.shouldPersistRuntimeEvent(event)) {
+      persistenceTail = persistenceTail.then(() =>
+        eventStore.append({
+          eventStoreId: nextEventStoreId(),
+          event,
+        })
+      );
+    }
+  });
+  publisher.publish(
+    createUserInputEvent(generateRuntimeEventId(), conversationId, turnId, options.input),
+    'Quickstart.user_input'
+  );
   const toolContext: ToolExecutionContext = {
     runId,
     conversationId,
@@ -202,40 +189,22 @@ export async function runAgent(
         query: options.input,
         promptKey: agent.spec.id,
         model_id: modelId,
+        maxSteps,
         enableTools: agent.tools.length > 0,
-        availableTools: agent.tools.map((tool) => tool.name),
+        availableTools: agent.tools.map(tool => tool.name),
       },
       history: [],
-      newEvents: runtimeEvents,
+      newEvents: [...runtimeEvents],
       toolContext,
       signal: handle.signal,
-      sseSink: (event: unknown) => {
-        if (isQuickstartStreamChunkEvent(event)) {
-          const chunkEvents = buildChunkRuntimeEvent({ event, conversationId, turnId });
-          for (const chunkEvent of chunkEvents) {
-            void emitRunEvent(chunkEvent, options.onEvent);
-          }
-          return chunkEvents;
-        }
-        return undefined;
-      },
+      runtimeEventSink: (event: RuntimeEvent, source: string) => publisher.publish(event, source),
     });
     const result = await executor.runUntilYield(checkpointKey);
-    runtimeEvents.push(...result.events);
-    for (const event of result.events) {
-      if (event.type === 'final_answer_chunk') continue;
-      await emitRunEvent(event, options.onEvent);
-    }
-    for (const event of runtimeEvents) {
-      await eventStore.append(conversationId, {
-        eventId: event.id,
-        timestamp: event.timestamp,
-        conversationId,
-        runId,
-        event,
-      });
-    }
-    await handle.markCompleted({ currentNode: result.checkpoint.nodeId, iterationsUsed: result.stepCount });
+    await Promise.all([callbackTail, persistenceTail]);
+    await handle.markCompleted({
+      currentNode: result.checkpoint.nodeId,
+      iterationsUsed: result.stepCount,
+    });
     return {
       runId,
       finalAnswer: readFinalAnswer(runtimeEvents, result.checkpoint.local),

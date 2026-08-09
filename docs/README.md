@@ -21,7 +21,7 @@
 |---|---|---|
 | `@linnlabs/linnkit` | 根入口，常用 namespace 与 helper | Node-only |
 | `@linnlabs/linnkit/ports` | host 需要实现的接口 | Node-only |
-| `@linnlabs/linnkit/contracts` | 消息、事件、SSE 等稳定合同 | Node-only |
+| `@linnlabs/linnkit/contracts` | 消息、事件、SSE 等稳定 Zod 合同；前后端共享 wire 定义 | Browser-safe |
 | `@linnlabs/linnkit/runtime-kernel` | graph、tool、run、llm 等 runtime 能力 | Node-only |
 | `@linnlabs/linnkit/runtime-kernel/events` | 浏览器安全的事件治理函数 | Browser-safe |
 | `@linnlabs/linnkit/context-manager` | context pipeline、fence、profile 能力 | Node-only |
@@ -59,6 +59,7 @@
 - [LLM provider](./integration/llm-provider.md)
 - [tools](./integration/tools.md)
 - [tool development guide](./integration/tool-development-guide.md)
+- [host-originated tools](./integration/host-originated-tools.md)
 - [agent registration](./integration/agent-registration-guide.md)
 - [context engineering](./integration/context-engineering.md)
 - [context fences](./integration/context-fences.md)

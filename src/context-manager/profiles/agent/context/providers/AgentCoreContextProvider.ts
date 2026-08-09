@@ -87,7 +87,7 @@ export class AgentCoreContextProvider extends BaseContextProvider {
         
         // 标记为核心消息
         state.action = 'keep_core';
-        state.processedContent = processedContent;
+        state.overrideContent = processedContent;
         state.contentType = contentType;
         state.phase = 'CORE_CONTEXT';
         

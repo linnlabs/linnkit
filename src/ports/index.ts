@@ -4,6 +4,18 @@ export type { AuditPort } from './audit';
 export type { TokenCounterPort, TokenCountResult } from './token-counter';
 export type { TokenizerPort } from './tokenizer';
 export type { UsageNormalizer } from './usage-normalizer';
+export type {
+  ImageInputAdmissionAttachmentEvidence,
+  ImageInputAdmissionEvidence,
+  LlmImageInputDescriptor,
+  LlmImageInputEstimate,
+  LlmImageInputEstimatorPort,
+  LlmImageInputPlacement,
+  LlmInputMaterializationAttempt,
+  LlmInputMaterializerPort,
+  ResolvedLlmImageAttachment,
+  ResolvedLlmInputMessage,
+} from './llm-input-materialization';
 
 /**
  * AI 引擎协议参数 type（`AgentAiEngine` 的入参形状）。

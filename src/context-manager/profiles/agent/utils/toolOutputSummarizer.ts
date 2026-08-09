@@ -1,6 +1,8 @@
 import type { ToolSummaryProvider } from '../../../shared/preprocessors/base';
+import { Logger } from '../../../../shared/logger';
 
 type UnknownRecord = Record<string, unknown>;
+const logger = new Logger('ToolOutputSummarizer');
 
 export interface SummarizerConfig {
   fullContentThreshold: number;
@@ -27,7 +29,6 @@ export class ToolOutputSummarizer {
     toolName: string,
     output: string,
     toolSummaryProvider?: ToolSummaryProvider,
-    toolArgs?: UnknownRecord,
   ): string {
     if (!output) {
       return '无输出';
@@ -36,7 +37,7 @@ export class ToolOutputSummarizer {
       return output;
     }
     if (toolSummaryProvider) {
-      const toolSummary = this.tryToolSpecificSummary(toolName, output, toolSummaryProvider, toolArgs);
+      const toolSummary = this.tryToolSpecificSummary(toolName, output, toolSummaryProvider);
       if (toolSummary) {
         return toolSummary;
       }
@@ -59,20 +60,14 @@ export class ToolOutputSummarizer {
     toolName: string,
     output: string,
     toolSummaryProvider: ToolSummaryProvider,
-    toolArgs?: UnknownRecord,
   ): string | null {
-    if (toolName === 'text_to_image' && toolArgs) {
-      const n = typeof toolArgs.n === 'number' ? toolArgs.n : 1;
-      return `生成了 ${n} 张图片。`;
-    }
-
     try {
       const tool = toolSummaryProvider.getTool(toolName);
       if (tool && typeof tool.getExecutionSummary === 'function') {
         return tool.getExecutionSummary(output);
       }
     } catch (error) {
-      console.error(`[ToolOutputSummarizer] Tool '${toolName}' getExecutionSummary failed:`, error);
+      logger.error('tool getExecutionSummary failed', { toolName, error });
     }
 
     return null;
@@ -137,9 +132,8 @@ export const summarizeToolOutput = (
   toolName: string,
   output: string,
   toolSummaryProvider?: ToolSummaryProvider,
-  toolArgs?: UnknownRecord,
   config?: Partial<SummarizerConfig>,
 ): string => {
   const summarizer = createDefaultToolOutputSummarizer(config);
-  return summarizer.getSummary(toolName, output, toolSummaryProvider, toolArgs);
+  return summarizer.getSummary(toolName, output, toolSummaryProvider);
 };

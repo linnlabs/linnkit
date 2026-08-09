@@ -47,13 +47,17 @@ export class QuickstartMemoryToolRuntime implements QuickstartToolRuntime {
     if (!tool) return undefined;
     return {
       parameters: tool.parameters,
-      displayOptions: tool.displayOptions,
+      validateArguments: args => tool['validateArguments'](args),
       idempotency: tool.idempotency,
+      modelInputRequirement: tool.modelInputRequirement,
+      ...(tool.resolveModelInputRequirement
+        ? {
+            resolveModelInputRequirement: (args: ToolArgs) => (
+              tool.resolveModelInputRequirement?.(args)
+            ),
+          }
+        : {}),
     };
-  }
-
-  getDisplayOptions(toolName: string): BaseTool<ToolArgs, string>['displayOptions'] | undefined {
-    return this.tools.get(toolName)?.displayOptions;
   }
 
   async executeTool(

@@ -4,6 +4,8 @@ import { ENGINE_STATE_SCHEMA_VERSION } from '../../types';
 import type { EngineState, StandardToolCall } from '../../types';
 import type { TelemetryPort } from '../../../telemetry/telemetryPort';
 import type { ToolExecutionResult } from '../../../tools/ports';
+import { createRuntimeEventAdmissionSink } from './runtimeEventAdmissionFixture';
+import { RunIdSchema } from '../../../../contracts';
 
 function buildCall(overrides: Partial<StandardToolCall> = {}): StandardToolCall {
   return {
@@ -26,9 +28,10 @@ function buildState(call: StandardToolCall): EngineState {
       conversationId: 'conv_telemetry',
       turnId: 'turn_telemetry',
       history: [],
+      runtimeEventSink: createRuntimeEventAdmissionSink('conv_telemetry', 'run_telemetry'),
       toolContext: {
-        runId: 'run_telemetry',
-        parentRunId: 'parent_run_telemetry',
+        runId: RunIdSchema.parse('run_telemetry'),
+        parentRunId: RunIdSchema.parse('parent_run_telemetry'),
       },
     },
   };
@@ -51,7 +54,7 @@ describe('ToolNode B2-engine Batch 2: TelemetryPort emit', () => {
     const telemetry = buildTelemetry();
     const exec: ToolExecutionResult = {
       success: true,
-      result: '{"observation":"ok"}',
+      result: '{"data":{},"observation":"ok"}',
       durationMs: 42,
     };
     const toolRuntime = {
@@ -153,6 +156,7 @@ describe('ToolNode B2-engine Batch 2: TelemetryPort emit', () => {
         conversationId: 'conv',
         turnId: 'turn',
         history: [],
+        runtimeEventSink: createRuntimeEventAdmissionSink('conv', 'run_telemetry_empty'),
       },
     };
 
@@ -165,7 +169,7 @@ describe('ToolNode B2-engine Batch 2: TelemetryPort emit', () => {
   it('uses noopTelemetry when telemetryPort is omitted (no crash, no emit observable)', async () => {
     const exec: ToolExecutionResult = {
       success: true,
-      result: '{"observation":"ok"}',
+      result: '{"data":{},"observation":"ok"}',
       durationMs: 5,
     };
     const toolRuntime = {

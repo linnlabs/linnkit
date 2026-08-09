@@ -38,6 +38,7 @@ describe('LlmCaller fallback boundary', () => {
       api_key: 'primary-key',
       model_name: 'primary-model',
       api_base: 'https://api.example.com/v1',
+      capabilities: ['chat'],
     });
     modelCatalog = {
       getModelById: getModelByIdMock,
@@ -74,7 +75,7 @@ describe('LlmCaller fallback boundary', () => {
       {},
       undefined,
       undefined,
-      onCloudQuotaFallbackApplied,
+      { onCloudQuotaFallbackApplied },
     );
 
     expect(result).toBe('policy fallback success');
@@ -105,6 +106,7 @@ describe('LlmCaller fallback boundary', () => {
       api_key: `${id}-key`,
       model_name: id,
       api_base: 'https://api.example.com/v1',
+      capabilities: ['chat'],
     }));
 
     const onCloudQuotaFallbackApplied = vi.fn();
@@ -116,7 +118,7 @@ describe('LlmCaller fallback boundary', () => {
       { cloud_quota_fallback_model_id: 'cloud-deepseek-reasoner' },
       undefined,
       undefined,
-      onCloudQuotaFallbackApplied,
+      { onCloudQuotaFallbackApplied },
     );
 
     expect(result).toBe('quota fallback success');
@@ -125,5 +127,111 @@ describe('LlmCaller fallback boundary', () => {
     expect(modelResolver.pickFallbackChatModel).not.toHaveBeenCalled();
     expect(onCloudQuotaFallbackApplied).toHaveBeenCalledTimes(1);
     expect(onCloudQuotaFallbackApplied).toHaveBeenCalledWith('cloud-deepseek-reasoner');
+  });
+
+  it('固定模型调用不应被 Policy Model Switch 自动切到备用模型', async () => {
+    const { LlmCaller } = await import('../caller');
+    const modelResolver = {
+      resolveModelId: vi.fn((modelId?: string) => modelId ?? 'default-model'),
+      pickFallbackChatModel: vi.fn(() => 'policy-fallback-model'),
+    };
+
+    chatCompletionMock.mockRejectedValueOnce(new Error('policy switch wanted'));
+    decideOnErrorMock.mockReturnValue({
+      action: 'switch_model',
+      reason: 'policy boundary',
+    });
+
+    const caller = new LlmCaller({ modelResolver, modelCatalog, aiEngine });
+
+    await expect(
+      caller.callWithRetries(
+        'primary-model',
+        messages,
+        { allow_model_fallback: false },
+      ),
+    ).rejects.toThrow('policy switch wanted');
+
+    expect(chatCompletionMock).toHaveBeenCalledTimes(1);
+    expect(chatCompletionMock.mock.calls[0]?.[0]).toBe('primary-model');
+    expect(modelResolver.pickFallbackChatModel).not.toHaveBeenCalled();
+  });
+
+  it('固定模型调用不应被 Cloud Quota Fallback 自动切到降级模型', async () => {
+    const { LlmCaller } = await import('../caller');
+    const modelResolver = {
+      resolveModelId: vi.fn((modelId?: string) => modelId ?? 'default-model'),
+      pickFallbackChatModel: vi.fn(() => 'policy-fallback-model'),
+    };
+
+    chatCompletionMock.mockRejectedValueOnce(new Error('今日使用次数已达上限（3次），明天再来吧'));
+    decideOnErrorMock.mockReturnValue({
+      action: 'none',
+      reason: 'no policy switch',
+    });
+    getModelByIdMock.mockImplementation((id: string) => ({
+      id,
+      billing_mode: 'cloud',
+      enable_client_retry: false,
+      api_key: `${id}-key`,
+      model_name: id,
+      api_base: 'https://api.example.com/v1',
+      capabilities: ['chat'],
+    }));
+
+    const onCloudQuotaFallbackApplied = vi.fn();
+    const caller = new LlmCaller({ modelResolver, modelCatalog, aiEngine });
+
+    await expect(
+      caller.callWithRetries(
+        'cloud-primary-model',
+        messages,
+        {
+          allow_model_fallback: false,
+          cloud_quota_fallback_model_id: 'cloud-deepseek-reasoner',
+        },
+        undefined,
+        undefined,
+        { onCloudQuotaFallbackApplied },
+      ),
+    ).rejects.toThrow('今日使用次数已达上限');
+
+    expect(chatCompletionMock).toHaveBeenCalledTimes(1);
+    expect(chatCompletionMock.mock.calls[0]?.[0]).toBe('cloud-primary-model');
+    expect(onCloudQuotaFallbackApplied).not.toHaveBeenCalled();
+    expect(modelResolver.pickFallbackChatModel).not.toHaveBeenCalled();
+  });
+
+  it('Policy Model Switch 不能绕开 maxTotalAttempts 继续多级切模型', async () => {
+    const { LlmCaller } = await import('../caller');
+    const modelResolver = {
+      resolveModelId: vi.fn((modelId?: string) => modelId ?? 'default-model'),
+      pickFallbackChatModel: vi.fn()
+        .mockReturnValueOnce('policy-fallback-a')
+        .mockReturnValueOnce('policy-fallback-b'),
+    };
+
+    chatCompletionMock
+      .mockRejectedValueOnce(new Error('primary failed'))
+      .mockRejectedValueOnce(new Error('fallback failed'));
+    decideOnErrorMock.mockReturnValue({
+      action: 'switch_model',
+      reason: 'policy boundary',
+    });
+
+    const caller = new LlmCaller({
+      modelResolver,
+      modelCatalog,
+      aiEngine,
+      maxRetries: 0,
+      maxTotalAttempts: 2,
+    });
+
+    await expect(caller.callWithRetries('primary-model', messages)).rejects.toThrow('fallback failed');
+
+    expect(chatCompletionMock).toHaveBeenCalledTimes(2);
+    expect(chatCompletionMock.mock.calls[0]?.[0]).toBe('primary-model');
+    expect(chatCompletionMock.mock.calls[1]?.[0]).toBe('policy-fallback-a');
+    expect(modelResolver.pickFallbackChatModel).toHaveBeenCalledTimes(1);
   });
 });

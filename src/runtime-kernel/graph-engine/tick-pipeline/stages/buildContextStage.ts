@@ -1,6 +1,12 @@
 import { Logger } from '../../../../shared/logger';
 import { createContextComponentLedgerEntry } from '../../../token-accounting';
+import { normalizedUsageFromCanonical } from '../../../../shared/llmTelemetryContext';
+import {
+  generateContextLedgerEntryId,
+  toSerializableJsonRecord,
+} from '../../../../contracts';
 import type { GraphExecutorContextBuilder } from '../../executorContextBuilder';
+import { defineTickStage } from '../types';
 import type { TickPipelineContext, TickStage } from '../types';
 import {
   buildHistorySummaryRuntimeEvent,
@@ -16,9 +22,22 @@ export interface BuildContextStageDependencies {
 export function createBuildContextStage(
   dependencies: BuildContextStageDependencies,
 ): TickStage {
-  return {
+  return defineTickStage({
     id: 'build_context',
-    async run(ctx: TickPipelineContext): Promise<void> {
+    reads: [
+      'request',
+      'history',
+      'summarizationCallbacks',
+      'modelId',
+      'signal',
+      'telemetry',
+      'conversationId',
+      'turnId',
+      'input',
+      'eventHandler',
+    ],
+    writes: ['llmMessages', 'imageInputAdmissionEvidence', 'outputProcessor', 'contextTrace'],
+    async run(ctx) {
       const contextBuildResult = await dependencies.contextBuilder.build({
         request: ctx.request,
         history: ctx.history,
@@ -27,9 +46,7 @@ export function createBuildContextStage(
         signal: ctx.signal,
       });
 
-      ctx.mode = contextBuildResult.mode;
-      ctx.llmMessages = contextBuildResult.llmMessages;
-      ctx.contextTrace = contextBuildResult.contextTrace;
+      const contextTrace = toSerializableJsonRecord(contextBuildResult.contextTrace);
 
       if (contextBuildResult.tokenEstimate) {
         const tokenLedgerEntry = contextBuildResult.tokenLedgerEntry
@@ -37,13 +54,31 @@ export function createBuildContextStage(
         ctx.telemetry.emit({
           kind: 'context_build',
           modelId: ctx.modelId,
-          mode: contextBuildResult.mode,
           tokenEstimate: contextBuildResult.tokenEstimate,
           ...(contextBuildResult.tokenComponents ? { tokenComponents: contextBuildResult.tokenComponents } : {}),
           ...(tokenLedgerEntry ? { tokenLedgerEntry } : {}),
           scope: {
             conversationId: ctx.conversationId,
             runId: ctx.input.toolContext?.runId,
+            parentRunId: ctx.input.toolContext?.parentRunId,
+            turnId: ctx.turnId,
+          },
+        });
+      }
+
+      for (const internalCall of contextBuildResult.internalLlmCalls ?? []) {
+        ctx.telemetry.emit({
+          kind: 'llm_call',
+          modelId: internalCall.modelId,
+          stream: false,
+          durationMs: 0,
+          usage: normalizedUsageFromCanonical(internalCall.canonicalUsage),
+          canonicalUsage: internalCall.canonicalUsage,
+          phase: 'context-internal',
+          purpose: internalCall.purpose,
+          scope: {
+            conversationId: ctx.conversationId,
+            runId: ctx.input.toolContext?.runId ?? ctx.turnId,
             parentRunId: ctx.input.toolContext?.parentRunId,
             turnId: ctx.turnId,
           },
@@ -57,16 +92,22 @@ export function createBuildContextStage(
         const runtimeEvent = buildHistorySummaryRuntimeEvent(event, ctx.conversationId, ctx.turnId);
         ctx.eventHandler?.(runtimeEvent);
         logger.info('[GraphAgentExecutor] 发出上下文构建摘要事件', {
-          mode: ctx.mode,
           eventId: runtimeEvent.id,
         });
       }
+
+      return {
+        llmMessages: contextBuildResult.llmMessages,
+        imageInputAdmissionEvidence: contextBuildResult.imageInputAdmissionEvidence,
+        outputProcessor: contextBuildResult.outputProcessor,
+        contextTrace,
+      };
     },
-  };
+  });
 }
 
 function createContextLedgerEntry(
-  ctx: TickPipelineContext,
+  ctx: Readonly<Pick<TickPipelineContext, 'conversationId' | 'turnId' | 'input'>>,
   contextBuildResult: Awaited<ReturnType<GraphExecutorContextBuilder['build']>>,
 ) {
   const keptComponents = contextBuildResult.tokenComponents?.filter((component) => component.kept !== false) ?? [];
@@ -77,7 +118,7 @@ function createContextLedgerEntry(
   const runId = ctx.input.toolContext?.runId ?? ctx.turnId;
   const createdAt = Date.now();
   return createContextComponentLedgerEntry({
-    id: `context_${runId}_${ctx.turnId}_${createdAt}`,
+    id: generateContextLedgerEntryId(),
     conversationId: ctx.conversationId,
     runId,
     parentRunId: ctx.input.toolContext?.parentRunId,

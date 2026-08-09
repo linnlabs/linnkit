@@ -100,6 +100,7 @@ describe('BaseAgentTask fence messages', () => {
 
     const messages = task.buildMessages({
       query: 'current query',
+      currentUserEventId: 'current-user',
       promptKey: 'default',
       fences: [{ kind: 'document-context', content: 'selected source' }],
     }, [

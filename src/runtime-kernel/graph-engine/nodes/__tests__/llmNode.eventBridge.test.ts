@@ -1,286 +1,210 @@
-/**
- * @file src/core/graph-engine/nodes/__tests__/llmNode.eventBridge.test.ts
- * @description LlmNodeEventBridge 单元测试（Phase 1.5-2b 护栏）
- */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import { routeRuntimeEvent, type RuntimeEvent, ToolCallIdSchema } from '../../../../contracts';
+import { LlmNodeEventBridge, type TickEvent } from '../llmNode.eventBridge';
+import { initLlmNodeState, llmNodeReducer, type LlmNodeAction } from '../llmNode.state';
 
-vi.mock('../../../events/eventMappers', () => ({
-  eventMapper: {
-    agentToRuntime: vi.fn((evt: Record<string, unknown>) => ({ ...evt, _mapped: true })),
-  },
-}));
+const identity = {
+  run_id: 'run_test',
+  lane: 'foreground' as const,
+  visibility: 'conversation' as const,
+};
 
-vi.mock('../../../../shared/ids', () => ({
-  generateMessageId: vi.fn(() => 'msg_generated_test'),
-}));
-
-import { LlmNodeEventBridge, readIncomingAnswerId } from '../llmNode.eventBridge';
-import type { LlmNodeEventBridgeDeps } from '../llmNode.eventBridge';
-import {
-  initLlmNodeState,
-  llmNodeReducer,
-  type LlmNodeLocalState,
-  type LlmNodeAction,
-} from '../llmNode.state';
-
-/**
- * 创建带有真实 reducer 的测试环境：
- * - state 通过 reducer 管理，保证与生产行为一致
- * - sseSink 使用 vi.fn() 便于断言
- */
-function createTestEnv(overrides?: {
-  sseSink?: LlmNodeEventBridgeDeps['sseSink'];
-  answerId?: string;
-  chunkSeq?: number;
-}) {
-  let state = initLlmNodeState({
-    answerId: overrides?.answerId,
-    chunkSeq: overrides?.chunkSeq ?? 0,
-  });
-
-  const dispatched: LlmNodeAction[] = [];
-
-  const dispatch = (action: LlmNodeAction) => {
-    dispatched.push(action);
-    state = llmNodeReducer(state, action);
-  };
-
-  const sseSink = overrides?.sseSink ?? vi.fn(() => []);
-
+function createSubject(options: { publishError?: Error } = {}) {
+  let state = initLlmNodeState({ answerId: undefined, chunkSeq: 0 });
+  const published: RuntimeEvent[] = [];
+  const actions: LlmNodeAction[] = [];
   const bridge = new LlmNodeEventBridge({
     getState: () => state,
-    dispatch,
-    sseSink,
+    dispatch: action => {
+      actions.push(action);
+      state = llmNodeReducer(state, action);
+    },
+    runtimeEventSink: event => {
+      if (options.publishError) throw options.publishError;
+      const routed = routeRuntimeEvent(event, identity);
+      published.push(routed);
+      return routed;
+    },
     conversationId: 'conv_test',
     turnId: 'turn_test',
   });
-
-  return { bridge, getState: () => state, dispatched, sseSink };
+  return { bridge, published, actions, getState: () => state };
 }
 
-// ── readIncomingAnswerId ────────────────────────────────────────────────
+function emit(bridge: LlmNodeEventBridge, event: TickEvent): void {
+  bridge.handle(event);
+}
 
-describe('readIncomingAnswerId', () => {
-  it('应返回有效的 answer_id', () => {
-    expect(readIncomingAnswerId({ answer_id: 'ans_123' })).toBe('ans_123');
+describe('LlmNodeEventBridge runtime facts', () => {
+  it('保持 provider 的 answer_id/seq，并用同一身份组装完整 final_answer', () => {
+    const { bridge, published, getState } = createSubject();
+
+    emit(bridge, {
+      type: 'stream_chunk',
+      id: 'chunk_0',
+      timestamp: 1,
+      answer_id: 'answer_provider',
+      seq: 0,
+      content: ' 第一段',
+    });
+    emit(bridge, {
+      type: 'stream_chunk',
+      id: 'chunk_1',
+      timestamp: 2,
+      answer_id: 'answer_provider',
+      seq: 1,
+      content: '第二段 ',
+    });
+    emit(bridge, {
+      type: 'final_answer',
+      id: 'provider_final',
+      timestamp: 3,
+      answer_id: 'different_sidecar_id',
+      answer: '第一段第二段',
+      completion_reason: 'terminal',
+    });
+
+    expect(published.map(event => event.type)).toEqual([
+      'final_answer_chunk',
+      'final_answer_chunk',
+      'final_answer',
+    ]);
+    expect(published[0]).toMatchObject({ answer_id: 'answer_provider', seq: 0 });
+    expect(published[1]).toMatchObject({ answer_id: 'answer_provider', seq: 1 });
+    expect(published[2]).toMatchObject({
+      id: 'answer_provider',
+      answer_id: 'answer_provider',
+      content: ' 第一段第二段 ',
+      is_complete: true,
+      completion_reason: 'terminal',
+      run_id: 'run_test',
+    });
+    expect(getState().streamRuntimeEvents).toEqual(published);
   });
 
-  it('应过滤 temp_answer 占位符', () => {
-    expect(readIncomingAnswerId({ answer_id: 'temp_answer' })).toBeUndefined();
+  it('工具决策前先结算已有答案段，保证历史顺序可直接回放', () => {
+    const { bridge, published } = createSubject();
+    emit(bridge, {
+      type: 'stream_chunk',
+      id: 'chunk_0',
+      timestamp: 1,
+      answer_id: 'answer_before_tool',
+      seq: 0,
+      content: '先说明背景。',
+    });
+    emit(bridge, {
+      type: 'tool_call_decision',
+      id: 'decision_1',
+      timestamp: 2,
+      tool_name: 'search',
+      tool_args: { query: '事实' },
+      tool_call_id: ToolCallIdSchema.parse('call_1'),
+      phase: 'start',
+      status: 'loading',
+    });
+
+    expect(published.map(event => event.type)).toEqual([
+      'final_answer_chunk',
+      'final_answer',
+      'tool_call_decision',
+    ]);
+    expect(published[1]).toMatchObject({
+      answer_id: 'answer_before_tool',
+      content: '先说明背景。',
+      completion_reason: 'tool_call',
+    });
   });
 
-  it('应过滤空字符串', () => {
-    expect(readIncomingAnswerId({ answer_id: '' })).toBeUndefined();
-    expect(readIncomingAnswerId({ answer_id: '   ' })).toBeUndefined();
+  it('非流式完整答案先发布 one-shot chunk，再发布 durable final_answer', () => {
+    const { bridge, published } = createSubject();
+
+    emit(bridge, {
+      type: 'final_answer',
+      id: 'provider_final',
+      timestamp: 3,
+      answer_id: 'answer_standalone',
+      answer: '一次性答案',
+      completion_reason: 'terminal',
+    });
+
+    expect(published).toHaveLength(2);
+    expect(published[0]).toMatchObject({
+      type: 'final_answer_chunk',
+      answer_id: 'answer_standalone',
+      seq: 0,
+      content: '一次性答案',
+      is_last: true,
+      ephemeral: true,
+    });
+    expect(published[1]).toMatchObject({
+      type: 'final_answer',
+      id: 'answer_standalone',
+      answer_id: 'answer_standalone',
+      content: '一次性答案',
+      completion_reason: 'terminal',
+    });
   });
 
-  it('应过滤非字符串类型', () => {
-    expect(readIncomingAnswerId({ answer_id: 123 })).toBeUndefined();
-    expect(readIncomingAnswerId({ answer_id: null })).toBeUndefined();
+  it('异常或取消只把在途文本封成 interrupted，不产生终态交付', () => {
+    const { bridge, published } = createSubject();
+    emit(bridge, {
+      type: 'stream_chunk',
+      id: 'chunk_partial',
+      timestamp: 1,
+      answer_id: 'answer_partial',
+      seq: 0,
+      content: '处理中',
+    });
+
+    bridge.finalizePartialAnswer();
+
+    expect(published[1]).toMatchObject({
+      type: 'final_answer',
+      answer_id: 'answer_partial',
+      content: '处理中',
+      is_complete: false,
+      completion_reason: 'interrupted',
+      meta: { partial: true, chunk_count: 1 },
+    });
   });
 
-  it('应处理非对象输入', () => {
-    expect(readIncomingAnswerId(null)).toBeUndefined();
-    expect(readIncomingAnswerId(undefined)).toBeUndefined();
-    expect(readIncomingAnswerId('string')).toBeUndefined();
-  });
-});
+  it('拒绝同一答案段的跳号 chunk，避免渲染与持久化静默分叉', () => {
+    const { bridge, published } = createSubject();
+    emit(bridge, {
+      type: 'stream_chunk',
+      id: 'chunk_0',
+      timestamp: 1,
+      answer_id: 'answer_1',
+      seq: 0,
+      content: 'A',
+    });
 
-// ── handle: stream_chunk ────────────────────────────────────────────────
-
-describe('handle: stream_chunk', () => {
-  it('首次 chunk：应生成 answerId 并构建增强事件', () => {
-    const { bridge, getState, sseSink } = createTestEnv();
-
-    bridge.handle({ type: 'stream_chunk', id: 'c1', content: 'hello', timestamp: 1000 } as never);
-
-    expect(getState().answerId).toBe('msg_generated_test');
-    expect(getState().chunkSeq).toBe(1);
-
-    expect(sseSink).toHaveBeenCalledTimes(1);
-    const sseArg = (sseSink as ReturnType<typeof vi.fn>).mock.calls[0][0] as Record<string, unknown>;
-    expect(sseArg.answer_id).toBe('msg_generated_test');
-    expect(sseArg.seq).toBe(0);
-    expect(sseArg.turn_id).toBe('turn_test');
-  });
-
-  it('上游携带 answer_id：应使用上游 answer_id', () => {
-    const { bridge, getState, sseSink } = createTestEnv();
-
-    bridge.handle({
-      type: 'stream_chunk', id: 'c1', content: 'hello',
-      answer_id: 'ans_upstream', timestamp: 1000,
-    } as never);
-
-    expect(getState().answerId).toBe('ans_upstream');
-    const sseArg = (sseSink as ReturnType<typeof vi.fn>).mock.calls[0][0] as Record<string, unknown>;
-    expect(sseArg.answer_id).toBe('ans_upstream');
+    expect(() =>
+      emit(bridge, {
+        type: 'stream_chunk',
+        id: 'chunk_2',
+        timestamp: 2,
+        answer_id: 'answer_1',
+        seq: 2,
+        content: 'C',
+      })
+    ).toThrow('sequence mismatch');
+    expect(published).toHaveLength(1);
   });
 
-  it('answer_id 切换：应重置 seq', () => {
-    const { bridge, sseSink } = createTestEnv({ answerId: 'ans_before', chunkSeq: 5 });
+  it('publisher 失败必须向上传播，且失败事实不能进入 graph journal', () => {
+    const publishError = new Error('EventBus publish failed');
+    const { bridge, actions } = createSubject({ publishError });
 
-    bridge.handle({
-      type: 'stream_chunk', id: 'c1', content: 'after',
-      answer_id: 'ans_after', timestamp: 1000,
-    } as never);
-
-    const sseArg = (sseSink as ReturnType<typeof vi.fn>).mock.calls[0][0] as Record<string, unknown>;
-    expect(sseArg.answer_id).toBe('ans_after');
-    expect(sseArg.seq).toBe(0);
-  });
-
-  it('连续 chunk（同一 answerId）：seq 递增', () => {
-    const { bridge, sseSink } = createTestEnv({ answerId: 'ans_1', chunkSeq: 3 });
-
-    bridge.handle({
-      type: 'stream_chunk', id: 'c1', content: '...', timestamp: 1000,
-    } as never);
-
-    const sseArg = (sseSink as ReturnType<typeof vi.fn>).mock.calls[0][0] as Record<string, unknown>;
-    expect(sseArg.seq).toBe(3);
-  });
-
-  it('不应将 stream_chunk 映射为 RuntimeEvent', () => {
-    const { dispatched } = createTestEnv();
-    const env = createTestEnv();
-    env.bridge.handle({ type: 'stream_chunk', id: 'c1', content: '...', timestamp: 1000 } as never);
-
-    const runtimeBuffered = env.dispatched.filter((a) => a.type === 'RUNTIME_EVENT_BUFFERED');
-    expect(runtimeBuffered).toHaveLength(0);
-  });
-});
-
-// ── handle: final_answer ────────────────────────────────────────────────
-
-describe('handle: final_answer', () => {
-  it('已有 chunk 时应忽略（dispatch FINAL_ANSWER_IGNORED，不调用 sseSink）', () => {
-    const { bridge, dispatched, sseSink } = createTestEnv({ answerId: 'ans_1', chunkSeq: 3 });
-
-    bridge.handle({ type: 'final_answer', id: 'fa1', answer: 'done', timestamp: 1000 } as never);
-
-    expect(dispatched.some((a) => a.type === 'FINAL_ANSWER_IGNORED')).toBe(true);
-    expect(sseSink).not.toHaveBeenCalled();
-  });
-
-  it('无 chunk 时应正常处理（dispatch FINAL_ANSWER_RECEIVED + RUNTIME_EVENT_BUFFERED）', () => {
-    const { bridge, dispatched, sseSink } = createTestEnv();
-
-    bridge.handle({ type: 'final_answer', id: 'fa1', answer: 'done', timestamp: 1000 } as never);
-
-    expect(sseSink).toHaveBeenCalledTimes(1);
-    expect(dispatched.some((a) => a.type === 'RUNTIME_EVENT_BUFFERED')).toBe(true);
-    expect(dispatched.some((a) => a.type === 'FINAL_ANSWER_RECEIVED')).toBe(true);
-  });
-
-  it('FINAL_ANSWER_RECEIVED 应在 RUNTIME_EVENT_BUFFERED 之后 dispatch', () => {
-    const { bridge, dispatched } = createTestEnv();
-
-    bridge.handle({ type: 'final_answer', id: 'fa1', answer: 'done', timestamp: 1000 } as never);
-
-    const bufIdx = dispatched.findIndex((a) => a.type === 'RUNTIME_EVENT_BUFFERED');
-    const recIdx = dispatched.findIndex((a) => a.type === 'FINAL_ANSWER_RECEIVED');
-    expect(bufIdx).toBeGreaterThanOrEqual(0);
-    expect(recIdx).toBeGreaterThan(bufIdx);
-  });
-});
-
-// ── handle: 其他事件类型 ────────────────────────────────────────────────
-
-describe('handle: 其他事件类型', () => {
-  it('thought 事件：应通过 SSE 发送并缓冲为 RuntimeEvent', () => {
-    const { bridge, dispatched, sseSink } = createTestEnv();
-
-    bridge.handle({ type: 'thought', id: 'th1', content: '思考中...', timestamp: 1000 } as never);
-
-    expect(sseSink).toHaveBeenCalledTimes(1);
-    expect(dispatched.some((a) => a.type === 'RUNTIME_EVENT_BUFFERED')).toBe(true);
-  });
-
-  it('tool_call_decision 事件：应通过 SSE 发送并缓冲', () => {
-    const { bridge, dispatched, sseSink } = createTestEnv();
-
-    bridge.handle({
-      type: 'tool_call_decision', id: 'tcd1', timestamp: 1000,
-      tool_name: 'search', tool_args: {}, tool_call_id: 'tc1',
-    } as never);
-
-    expect(sseSink).toHaveBeenCalledTimes(1);
-    expect(dispatched.some((a) => a.type === 'RUNTIME_EVENT_BUFFERED')).toBe(true);
-  });
-});
-
-// ── SSE 分发与反馈 ────────────────────────────────────────────────────
-
-describe('SSE 分发与反馈', () => {
-  it('sseSink 返回事件时应 dispatch RUNTIME_EVENT_BUFFERED', () => {
-    const feedbackEvent = { id: 'fb1', type: 'final_answer', timestamp: 2000, conversation_id: 'c', turn_id: 't', version: 1 };
-    const sseSink = vi.fn(() => [feedbackEvent]);
-
-    const { bridge, dispatched } = createTestEnv({ sseSink: sseSink as never });
-
-    bridge.handle({ type: 'thought', id: 'th1', content: '...', timestamp: 1000 } as never);
-
-    const buffered = dispatched.filter((a) => a.type === 'RUNTIME_EVENT_BUFFERED');
-    // 一个来自 eventMapper（thought 本身），一个来自 sink feedback
-    expect(buffered.length).toBeGreaterThanOrEqual(2);
-  });
-
-  it('sseSink 为 undefined 时不应报错', () => {
-    const { bridge, dispatched } = createTestEnv({ sseSink: undefined });
-
-    expect(() => {
-      bridge.handle({ type: 'thought', id: 'th1', content: '...', timestamp: 1000 } as never);
-    }).not.toThrow();
-
-    // eventMapper 仍应被调用，RuntimeEvent 仍应被缓冲
-    expect(dispatched.some((a) => a.type === 'RUNTIME_EVENT_BUFFERED')).toBe(true);
-  });
-
-  it('sseSink 抛出错误时不应传播', () => {
-    const sseSink = vi.fn(() => { throw new Error('SSE boom'); });
-
-    const { bridge } = createTestEnv({ sseSink: sseSink as never });
-
-    expect(() => {
-      bridge.handle({ type: 'thought', id: 'th1', content: '...', timestamp: 1000 } as never);
-    }).not.toThrow();
-  });
-
-  it('事件应被标记 __dispatched_via_sse__', () => {
-    const captured: unknown[] = [];
-    const sseSink = vi.fn((evt: unknown) => { captured.push(evt); return []; });
-
-    const { bridge } = createTestEnv({ sseSink: sseSink as never });
-
-    bridge.handle({ type: 'thought', id: 'th1', content: '...', timestamp: 1000 } as never);
-
-    expect(captured).toHaveLength(1);
-    const desc = Object.getOwnPropertyDescriptor(captured[0], '__dispatched_via_sse__');
-    expect(desc?.value).toBe(true);
-    expect(desc?.enumerable).toBe(false);
-  });
-});
-
-// ── 边界情况 ────────────────────────────────────────────────────────────
-
-describe('边界情况', () => {
-  it('null/undefined 事件应被忽略', () => {
-    const { bridge, dispatched, sseSink } = createTestEnv();
-
-    bridge.handle(null as never);
-    bridge.handle(undefined as never);
-
-    expect(dispatched).toHaveLength(0);
-    expect(sseSink).not.toHaveBeenCalled();
-  });
-
-  it('非对象事件应被忽略', () => {
-    const { bridge, dispatched } = createTestEnv();
-
-    bridge.handle('string_event' as never);
-    bridge.handle(42 as never);
-
-    expect(dispatched).toHaveLength(0);
+    expect(() =>
+      emit(bridge, {
+        type: 'thought',
+        id: 'thought_1',
+        timestamp: 1,
+        content: '处理中',
+        is_complete: false,
+      })
+    ).toThrow(publishError);
+    expect(actions.some(action => action.type === 'RUNTIME_EVENT_BUFFERED')).toBe(false);
   });
 });

@@ -4,11 +4,11 @@ export { LlmNode } from './nodes/llmNode';
 export { ToolNode } from './nodes/toolNode';
 export { UserNode } from './nodes/userNode';
 export { WaitUserNode } from './nodes/waitUserNode';
-export { AnswerNode } from './nodes/answerNode';
 export { MemoryCheckpointer } from './checkpointer/memoryCheckpointer';
 export { summarizeCheckpoint } from './checkpointer/base';
 export { MemoryEventStore } from './event-store/memoryEventStore';
-export { createMonotonicEventIdFactory } from './event-store/base';
+export { createMonotonicEventStoreIdFactory, requireEventStoreId } from './event-store/base';
+export { createHostToolCallBootstrap } from './functions/createHostToolCallBootstrap';
 export { ENGINE_STATE_SCHEMA_VERSION } from './types';
 
 export type { GraphAgentExecutorDependencies } from './executor';
@@ -16,6 +16,7 @@ export type {
   GraphExecutorContextBuilder,
   GraphExecutorContextBuildInput,
   GraphExecutorContextBuildOutput,
+  GraphExecutorOutputProcessor,
   PendingContextRuntimeEvent,
 } from './executorContextBuilder';
 export type {
@@ -25,4 +26,16 @@ export type {
   CheckpointSummary,
 } from './checkpointer/base';
 export type { EventRangeOptions, EventStore, PersistedEvent } from './event-store/base';
-export type { EngineState, ExecutorLocalState, GraphNode } from './types';
+export type {
+  EngineState,
+  ExecutorLlmInvocationKind,
+  ExecutorLocalPatch,
+  ExecutorLocalState,
+  GraphNode,
+  RuntimeEventSink,
+} from './types';
+export type {
+  HostToolCallBootstrap,
+  HostToolCallBootstrapInput,
+  HostToolCallBootstrapLocalPatch,
+} from './functions/createHostToolCallBootstrap';

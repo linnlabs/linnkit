@@ -35,7 +35,6 @@ describe('TelemetryPort contract', () => {
     const event: TelemetryEvent = {
       kind: 'context_build',
       modelId: 'gpt-4.1',
-      mode: 'agent',
       tokenEstimate: {
         localEstimateTokens: 10,
         calibratedEstimateTokens: 12,

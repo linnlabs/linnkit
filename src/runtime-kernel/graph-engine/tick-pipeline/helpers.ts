@@ -1,11 +1,13 @@
-import { generateMessageId } from '../../../shared/ids';
+import { generateToolCallId } from '../../../contracts';
 import { splitConcatenatedJsonObjects, tryParseJsonRecord } from '../../llm/toolCallUtils';
 import type { ToolExecutionContext } from '../../tools/toolExecutionContext';
 import type { PendingContextRuntimeEvent } from '../executorContextBuilder';
 import type { StandardToolCall } from '../types';
 import type { LlmCallResponse, TickPipelineContext } from './types';
+import type { ToolCall } from '../../../ports';
 import { CanonicalLlmUsage } from '../../../contracts';
 import type { CanonicalLlmUsage as CanonicalLlmUsageType, RuntimeEvent } from '../../../contracts';
+import { RuntimeEvent as RuntimeEventSchema } from '../../../contracts';
 
 export function readNonEmptyString(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined;
@@ -13,12 +15,12 @@ export function readNonEmptyString(value: unknown): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
-export function resolveConversationIdForRuntimeEvents(toolContext: ToolExecutionContext | undefined): string {
-  const fromCamel = readNonEmptyString(toolContext?.conversationId);
-  if (fromCamel) return fromCamel;
-  const fromSnake = toolContext ? readNonEmptyString(toolContext['conversation_id']) : undefined;
-  if (fromSnake) return fromSnake;
-  return generateMessageId();
+export function requireRuntimeIdentity(value: unknown, field: 'conversationId' | 'turnId'): string {
+  const identity = readNonEmptyString(value);
+  if (!identity) {
+    throw new Error(`Graph execution requires a non-empty ${field}.`);
+  }
+  return identity;
 }
 
 export function extractResponseText(response: LlmCallResponse | undefined): string {
@@ -34,21 +36,21 @@ export function extractResponseText(response: LlmCallResponse | undefined): stri
 export function buildHistorySummaryRuntimeEvent(
   event: PendingContextRuntimeEvent,
   conversationId: string,
-  turnId: string,
+  turnId: string
 ): RuntimeEvent {
-  return {
+  return RuntimeEventSchema.parse({
     ...(event as Record<string, unknown>),
     conversation_id: conversationId,
     turn_id: turnId,
-  } as RuntimeEvent;
+  });
 }
 
 export function isHistorySummaryEvent(event: PendingContextRuntimeEvent): boolean {
   return event.type === 'history_summary';
 }
 
-export function normalizeToolCalls(rawCalls: StandardToolCall[]): StandardToolCall[] {
-  const expanded: StandardToolCall[] = [];
+export function normalizeToolCalls(rawCalls: ToolCall[]): ToolCall[] {
+  const expanded: ToolCall[] = [];
   for (const toolCall of rawCalls) {
     const argsRaw = toolCall.function?.arguments ?? '';
     const parsedDirectly = typeof argsRaw === 'string' && tryParseJsonRecord(argsRaw.trim()).ok;
@@ -58,7 +60,7 @@ export function normalizeToolCalls(rawCalls: StandardToolCall[]): StandardToolCa
     }
 
     const pieces = typeof argsRaw === 'string' ? splitConcatenatedJsonObjects(argsRaw) : [];
-    const validPieces = pieces.length >= 2 && pieces.every((piece) => tryParseJsonRecord(piece).ok);
+    const validPieces = pieces.length >= 2 && pieces.every(piece => tryParseJsonRecord(piece).ok);
     if (validPieces) {
       expanded.push({
         ...toolCall,
@@ -67,7 +69,7 @@ export function normalizeToolCalls(rawCalls: StandardToolCall[]): StandardToolCa
       for (let index = 1; index < pieces.length; index += 1) {
         expanded.push({
           ...toolCall,
-          id: generateMessageId(),
+          id: generateToolCallId(),
           function: { ...toolCall.function, arguments: pieces[index] },
         });
       }
@@ -81,13 +83,15 @@ export function normalizeToolCalls(rawCalls: StandardToolCall[]): StandardToolCa
   return expanded;
 }
 
-export function parsePrimaryToolArgs(toolCall: StandardToolCall | undefined): Record<string, unknown> {
+export function parsePrimaryToolArgs(
+  toolCall: StandardToolCall | undefined
+): Record<string, unknown> {
   if (!toolCall?.function?.arguments) {
     return {};
   }
   try {
     const parsed = JSON.parse(toolCall.function.arguments);
-    return typeof parsed === 'object' && parsed !== null ? parsed as Record<string, unknown> : {};
+    return typeof parsed === 'object' && parsed !== null ? (parsed as Record<string, unknown>) : {};
   } catch {
     return {};
   }
@@ -100,7 +104,9 @@ export function resolveUsage(response: LlmCallResponse | undefined): unknown {
   return response.usage;
 }
 
-export function resolveCanonicalUsage(response: LlmCallResponse | undefined): CanonicalLlmUsageType | undefined {
+export function resolveCanonicalUsage(
+  response: LlmCallResponse | undefined
+): CanonicalLlmUsageType | undefined {
   if (!response || typeof response === 'string') {
     return undefined;
   }
@@ -108,14 +114,16 @@ export function resolveCanonicalUsage(response: LlmCallResponse | undefined): Ca
   return parsed.success ? parsed.data : undefined;
 }
 
-export function resolveToolCalls(response: LlmCallResponse | undefined): StandardToolCall[] | undefined {
+export function resolveToolCalls(response: LlmCallResponse | undefined): ToolCall[] | undefined {
   if (!response || typeof response === 'string') {
     return undefined;
   }
   return Array.isArray(response.tool_calls) ? response.tool_calls : undefined;
 }
 
-export function resolveReasoningDetails(response: LlmCallResponse | undefined): unknown[] | undefined {
+export function resolveReasoningDetails(
+  response: LlmCallResponse | undefined
+): unknown[] | undefined {
   if (!response || typeof response === 'string') {
     return undefined;
   }
@@ -126,5 +134,5 @@ export function resolveToolNamesForAudit(ctx: TickPipelineContext): string[] {
   if (ctx.forceFinalAnswer || ctx.request.enableTools === false || ctx.toolSchemas.length === 0) {
     return [];
   }
-  return ctx.toolSchemas.map((tool) => tool.function.name);
+  return ctx.toolSchemas.map(tool => tool.function.name);
 }

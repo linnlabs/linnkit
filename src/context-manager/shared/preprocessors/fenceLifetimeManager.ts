@@ -1,6 +1,7 @@
 import type { AiMessage } from '../../../contracts';
 import type { FenceRegistry } from '../fences';
 import { BasePreprocessor, type PreprocessorContext, type PreprocessorResult } from './base';
+import { PREPROCESSOR_PRIORITY } from './priority';
 
 export interface FenceLifetimePreprocessorOptions {
   fenceRegistry: FenceRegistry;
@@ -9,7 +10,7 @@ export interface FenceLifetimePreprocessorOptions {
 export class FenceLifetimePreprocessor extends BasePreprocessor {
   readonly name = 'FenceLifetimePreprocessor';
   readonly description = 'Removes expired turn-only context injection messages from history';
-  readonly priority = 15;
+  readonly priority = PREPROCESSOR_PRIORITY.fenceLifetimeCleanup;
 
   private readonly fenceRegistry: FenceRegistry;
 

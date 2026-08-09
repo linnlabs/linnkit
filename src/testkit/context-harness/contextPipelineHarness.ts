@@ -2,13 +2,16 @@ import * as contextManager from '../../context-manager';
 import type { AiMessage } from '../../contracts';
 import type { LlmRequestMessage, TokenizerPort } from '../../ports';
 
-type IContextProvider = contextManager.agentContext.IContextProvider;
-type MessageProcessingState = contextManager.agentContext.MessageProcessingState;
-type ProviderContext = contextManager.agentContext.ProviderContext;
-type ProviderResult = contextManager.agentContext.ProviderResult;
+type ContextPipelineStats<TPhase extends PropertyKey> = contextManager.ContextPipelineStats<TPhase>;
+type ContextTraceCollector = contextManager.ContextTraceCollector;
+type IContextProvider<TConfig = unknown> = contextManager.SharedContextProvider<TConfig>;
 type IPreprocessor = contextManager.agentPreprocessors.IPreprocessor;
+type MessageProcessingState = contextManager.MessageProcessingState;
 type PreprocessorContext = contextManager.agentPreprocessors.PreprocessorContext;
 type PreprocessorResult = contextManager.agentPreprocessors.PreprocessorResult;
+type ProviderContext<TConfig = unknown> = contextManager.SharedProviderContext<TConfig>;
+type ProviderResult = contextManager.ProviderResult;
+type RunContextPipelineResult = contextManager.RunContextPipelineResult;
 
 export interface ContextPipelineHarnessOptions {
   messages: AiMessage[];
@@ -26,6 +29,16 @@ export interface ContextPipelineHarness {
     provider: IContextProvider,
     options?: { coreMessageIds?: string[]; messages?: AiMessage[]; contextPatch?: Partial<ProviderContext> }
   ): Promise<ProviderResult>;
+  runPipeline<TConfig, TPhase extends PropertyKey, TStats extends ContextPipelineStats<TPhase>>(
+    providers: IContextProvider<TConfig>[],
+    options: {
+      buildStats: TStats;
+      providerContext: ProviderContext<TConfig>;
+      getPhaseByProviderName: (providerName: string) => TPhase | null;
+      messages?: AiMessage[];
+      contextTrace?: ContextTraceCollector;
+    },
+  ): Promise<RunContextPipelineResult>;
 }
 
 function createDefaultProviderContext(
@@ -110,6 +123,33 @@ export function createContextPipelineHarness(
       const context = createDefaultProviderContext(options, runOptions?.contextPatch);
       const states = this.createStates(runOptions?.coreMessageIds ?? [], providerMessages);
       return provider.provide(states, context.totalBudget, context);
+    },
+
+    async runPipeline<TConfig, TPhase extends PropertyKey, TStats extends ContextPipelineStats<TPhase>>(
+      providers: IContextProvider<TConfig>[],
+      runOptions: {
+        buildStats: TStats;
+        providerContext: ProviderContext<TConfig>;
+        getPhaseByProviderName: (providerName: string) => TPhase | null;
+        messages?: AiMessage[];
+        contextTrace?: ContextTraceCollector;
+      },
+    ): Promise<RunContextPipelineResult> {
+      const registry = new contextManager.ContextProviderRegistry<TConfig>();
+      for (const provider of providers) {
+        registry.register(provider);
+      }
+      const pipelineMessages = runOptions.messages ?? options.messages;
+      return contextManager.runContextPipeline({
+        messages: pipelineMessages,
+        totalBudget: options.totalBudget ?? 100_000,
+        buildStats: runOptions.buildStats,
+        providerRegistry: registry,
+        providerContext: runOptions.providerContext,
+        estimateTokens: (message) => ({ tokens: runOptions.providerContext.estimateTokens(message) }),
+        getPhaseByProviderName: runOptions.getPhaseByProviderName,
+        contextTrace: runOptions.contextTrace,
+      });
     },
   };
 }

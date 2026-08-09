@@ -31,13 +31,6 @@ export const ToolBindingSpec = z.object({
 });
 export type ToolBindingSpec = z.infer<typeof ToolBindingSpec>;
 
-export const AgentSpecModelHints = z.object({
-  preferredProviders: z.array(z.string().min(1)).optional(),
-  preferredModels: z.array(z.string().min(1)).optional(),
-  fallbackChain: z.array(z.string().min(1)).optional(),
-});
-export type AgentSpecModelHints = z.infer<typeof AgentSpecModelHints>;
-
 export const AgentSpecAuditConfig = z.object({
   redactionLevel: z.enum(['none', 'standard', 'strict']).optional(),
   pii: z.boolean().optional(),
@@ -52,7 +45,6 @@ export const AgentSpec = z.object({
   capabilities: z.array(AgentCapability),
   tools: z.array(ToolBindingSpec),
   contextPolicy: AgentSpecContextPolicy,
-  modelHints: AgentSpecModelHints.optional(),
   audit: AgentSpecAuditConfig.optional(),
   metadata: JsonRecord.optional(),
 });

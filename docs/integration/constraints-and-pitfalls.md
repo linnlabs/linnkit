@@ -55,9 +55,9 @@ npm config get @linnlabs:registry
 
 A 类（system / user 注入）走 fence 是最干净的路。B 类（per-tool 工具调用上下文）按 tool 自己的 schema/context/patch 表达，跟 fence 无关。C 类（运行时副作用、telemetry）走 telemetry port。三类互不替代。
 
-**Q：legacy `document_fragment` / `context_before` 字段我该不该用？**
+**Q：`document_fragment` / `context_before` 这类产品字段能进入 framework 吗？**
 
-**不该**。它们在 0.2.x 仍保留是为了存量 host 渐进迁移；新接入方一律走 fence 通道。
+**不能**。产品上下文必须由 Host 转成正式 fence；Linnkit 新请求、持久化和上下文构建不接受产品字段或旧消息 type。缺少迁移的数据应由接入方在启用当前合同前显式处理，framework 不提供运行时兼容。
 
 **Q：我能跳过 host-bound testkit，只用 linnkit 自带的 testkit 写测试吗？**
 
@@ -70,6 +70,10 @@ A 类（system / user 注入）走 fence 是最干净的路。B 类（per-tool �
 - `withLLMTelemetryContext` 内是否传了 `parentRunId`
 - LLM caller / tool runtime 是否包在 `withLLMTelemetryContext` 内
 - 你的 `RunCostCollector` 是否监听了 `scope.parentRunId` 而不是只看 `scope.runId`
+
+**Q：为什么 child 在单测正常，切 workspace、重建 runtime 或并发 host 后却写错 Store？**
+
+先检查生产 ToolContext 是否显式注入了 child invoker。child lifecycle、Audit、Telemetry 和 EventStore 如果分别通过 global getter 延迟获取，就可能来自不同批次的 runtime 装配。正确边界是 composition root 创建一套 scope 和一个 child invoker，再把该实例贯穿 root 与递归 child；缺少端口直接拒绝，不创建默认 Memory runtime。测试还必须使用两套 scope 并发验证，不能只在同一 singleton 内测试多个 run。
 
 **Q：`@linnlabs/linnkit/runtime-kernel` 导入报 "Missing tiktoken_bg.wasm"？**
 

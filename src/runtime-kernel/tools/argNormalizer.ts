@@ -1,6 +1,8 @@
 import type { ToolParameterProperty, ToolParameterSchema } from './toolContracts';
+import { Logger } from '../../shared/logger';
 
 type UnknownRecord = Record<string, unknown>;
+const logger = new Logger('ToolArgNormalizer');
 type NormalizeToolArgsOptions = {
   toolName?: string;
   path?: string;
@@ -31,7 +33,10 @@ function logJsonEncodedNormalization(
 ): void {
   const toolPrefix = options.toolName ? `${options.toolName}.` : '';
   const path = options.path ?? '<root>';
-  console.warn(`[ToolArgNormalizer] Normalized JSON-encoded ${expectedType} string for ${toolPrefix}${path}`);
+  logger.warn('normalized JSON-encoded tool argument', {
+    expectedType,
+    path: `${toolPrefix}${path}`,
+  });
 }
 
 function normalizeBoolean(v: unknown): unknown {

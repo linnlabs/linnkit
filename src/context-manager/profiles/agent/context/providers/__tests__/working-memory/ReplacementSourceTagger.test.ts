@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { AiMessage } from '../../../../../../../contracts';
+import { AiMessage } from '../../../../../../../contracts';
 import type { MessageProcessingState } from '../../base';
 import { ReplacementSourceTagger } from '../../working-memory/ReplacementSourceTagger';
 
@@ -9,14 +9,14 @@ function makeMessage(
   role: AiMessage['role'],
   type: AiMessage['type'],
 ): AiMessage {
-  return {
+  return AiMessage.parse({
     id,
     role,
     type,
     content: 'content',
     timestamp: Date.now(),
     metadata: {},
-  };
+  });
 }
 
 function makeState(message: AiMessage, index: number): MessageProcessingState {

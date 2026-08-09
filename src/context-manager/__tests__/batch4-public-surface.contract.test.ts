@@ -3,12 +3,12 @@ import * as contextManager from '..';
 import { runtimeKernel } from '../..';
 
 describe('context-manager Batch 4 public surface', () => {
-  it('exposes agent namespaces and freezes chat profile namespace exports', () => {
+  it('exposes agent namespaces and removes chat profile compatibility exports', () => {
     expect(contextManager.agentTasks.BaseAgentTask).toBeTypeOf('function');
     expect(contextManager.agentOrchestration.AgentMessageOrchestrator).toBeTypeOf('function');
     expect(contextManager.agentTools.ToolManager).toBeTypeOf('function');
-    expect(contextManager.BaseConversationalTask).toBeTypeOf('function');
-    expect(contextManager.ChatMessageOrchestrator).toBeTypeOf('function');
+    expect(contextManager).not.toHaveProperty('BaseConversationalTask');
+    expect(contextManager).not.toHaveProperty('ChatMessageOrchestrator');
     expect(contextManager).not.toHaveProperty('chatTasks');
     expect(contextManager).not.toHaveProperty('chatOrchestration');
     expect(contextManager).not.toHaveProperty('chatContracts');

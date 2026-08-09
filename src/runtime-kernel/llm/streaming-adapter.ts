@@ -1,22 +1,32 @@
 import type { AnyAgentEvent } from '../events/agentEvents';
-import { generateMessageId } from '../../shared/ids';
+import { generateAnswerSegmentId, generateRuntimeEventId } from '../../contracts';
 import type { AgentAiEngine } from '../../ports';
 import { CanonicalLlmUsage } from '../../contracts';
 import type { CanonicalLlmUsage as CanonicalLlmUsageType } from '../../contracts';
-import type { LlmCallOptions, LlmRequestMessage, LlmResponseContent } from './caller.types';
+import type { ToolCallId } from '../../contracts';
+import type { LlmCallOptions, LlmResponseContent } from './caller.types';
+import type { ResolvedLlmInputMessage } from '../../ports';
 import { ToolCallStreamAccumulator } from './streaming/toolCallStreamAccumulator';
 import { ThoughtStreamSegmenter } from './streaming/thoughtStreamSegmenter';
 import { assertToolCallsHaveValidJsonArguments, isRecord } from './sidecar-replay';
 import type { LlmCallResult } from './usage-telemetry';
 import { appendStreamingProviderReasoningDetails } from './reasoning-details';
+import { Logger } from '../../shared/logger';
+import { ErrorClassifier, type ErrorClassification } from '../../shared/errorClassifier';
+import { createLlmAgentErrorEvent } from './functions/createLlmAgentErrorEvent';
+import type { ToolCallStreamingPolicy } from '../tools/toolContracts';
+
+const logger = new Logger('LlmCaller');
 
 export interface CallLlmStreamParams {
   aiEngine: AgentAiEngine;
   modelId: string;
-  messages: LlmRequestMessage[];
+  messages: ResolvedLlmInputMessage[];
   options?: LlmCallOptions;
   eventHandler: (event: AnyAgentEvent) => void;
+  onErrorClassification?: (classification: ErrorClassification) => void;
   signal?: AbortSignal;
+  toolCallStreamingPolicies?: Readonly<Record<string, ToolCallStreamingPolicy>>;
 }
 
 export async function callLlmStream(params: CallLlmStreamParams): Promise<LlmCallResult> {
@@ -26,24 +36,20 @@ export async function callLlmStream(params: CallLlmStreamParams): Promise<LlmCal
     messages,
     options = {},
     eventHandler,
+    onErrorClassification,
     signal,
+    toolCallStreamingPolicies = {},
   } = params;
 
   let fullResponse = '';
   let streamError: Error | null = null;
   let reasoningDetails: unknown[] = [];
-  const streamAnswerId = generateMessageId();
+  const streamAnswerId = generateAnswerSegmentId();
   let streamChunkSeq = 0;
   let capturedUsage: unknown | undefined = undefined;
   let capturedCanonicalUsage: CanonicalLlmUsageType | undefined = undefined;
 
-  const toolAccumulator = new ToolCallStreamAccumulator([
-    'markdown_edit',
-    'text_to_image',
-    'ask_questions',
-    'ppt_plan',
-    'ppt_codegen',
-  ]);
+  const toolAccumulator = new ToolCallStreamAccumulator(toolCallStreamingPolicies);
   const thoughtSegmenter = new ThoughtStreamSegmenter();
 
   const emitThoughtComplete = (completed: ReturnType<ThoughtStreamSegmenter['finalize']>): void => {
@@ -51,7 +57,7 @@ export async function callLlmStream(params: CallLlmStreamParams): Promise<LlmCal
     eventHandler({
       type: 'thought',
       thought_message_id: completed.thoughtMessageId,
-      id: generateMessageId(),
+      id: generateRuntimeEventId(),
       timestamp: completed.timestamp,
       content: completed.content,
       is_complete: true,
@@ -62,11 +68,11 @@ export async function callLlmStream(params: CallLlmStreamParams): Promise<LlmCal
     });
   };
 
-  const emitToolCallPlaceholder = (toolCallId: string, toolName: string): void => {
+  const emitToolCallPlaceholder = (toolCallId: ToolCallId, toolName: string): void => {
     if (!toolCallId || !toolName) return;
     eventHandler({
       type: 'tool_process',
-      id: generateMessageId(),
+      id: generateRuntimeEventId(),
       timestamp: Date.now(),
       tool_name: toolName,
       tool_args: {},
@@ -83,7 +89,7 @@ export async function callLlmStream(params: CallLlmStreamParams): Promise<LlmCal
       type: 'stream_chunk',
       timestamp: Date.now(),
       content,
-      id: generateMessageId(),
+      id: generateRuntimeEventId(),
       answer_id: streamAnswerId,
       seq: streamChunkSeq++,
     });
@@ -117,16 +123,21 @@ export async function callLlmStream(params: CallLlmStreamParams): Promise<LlmCal
       const newReasoningDetails = Array.isArray(reasoning) ? reasoning : [reasoning];
       const previousReasoningDetails = reasoningDetails;
       const previousLength = previousReasoningDetails.length;
-      const compactedReasoningDetails = appendStreamingProviderReasoningDetails(reasoningDetails, newReasoningDetails);
+      const compactedReasoningDetails = appendStreamingProviderReasoningDetails(
+        reasoningDetails,
+        newReasoningDetails
+      );
       reasoningDetails = compactedReasoningDetails;
       const previousLastChanged =
-        previousLength > 0 && compactedReasoningDetails[previousLength - 1] !== previousReasoningDetails[previousLength - 1];
+        previousLength > 0 &&
+        compactedReasoningDetails[previousLength - 1] !==
+          previousReasoningDetails[previousLength - 1];
       const emitFromIndex = previousLastChanged ? previousLength - 1 : previousLength;
       const emittedReasoningDetails = compactedReasoningDetails.slice(Math.max(0, emitFromIndex));
       if (emittedReasoningDetails.length > 0) {
         eventHandler({
           type: 'provider_sidecar',
-          id: generateMessageId(),
+          id: generateRuntimeEventId(),
           timestamp: Date.now(),
           reasoning_details: emittedReasoningDetails,
         });
@@ -141,7 +152,7 @@ export async function callLlmStream(params: CallLlmStreamParams): Promise<LlmCal
         (toolCallId, toolName, args) => {
           eventHandler({
             type: 'tool_process',
-            id: generateMessageId(),
+            id: generateRuntimeEventId(),
             timestamp: Date.now(),
             tool_name: toolName,
             tool_args: args,
@@ -151,31 +162,34 @@ export async function callLlmStream(params: CallLlmStreamParams): Promise<LlmCal
             payload: { args },
             meta: { ephemeral: true },
           });
-        },
+        }
       );
     }
   };
 
   const onError = (error: Error): void => {
     streamError = error;
+    if (error.name === 'AbortError') {
+      logger.info('LLM 流收到 AbortError，不发布普通 error event', {
+        modelId,
+        reason: signal?.reason,
+      });
+      return;
+    }
+    const classification = ErrorClassifier.classify(error, { logPrefix: '[LlmCaller:stream]' });
+    onErrorClassification?.(classification);
     if (process.env.NODE_ENV !== 'production') {
-      console.error('[LlmCaller][callStream] onError fired', {
+      logger.error('callStream onError fired', {
         modelId,
         messageCount: Array.isArray(messages) ? messages.length : -1,
         errorMessage: error?.message,
       });
     }
-    eventHandler({
-      type: 'error',
-      error: error.message,
-      details: error.stack,
-      timestamp: Date.now(),
-      id: generateMessageId(),
-    });
+    eventHandler(createLlmAgentErrorEvent(error, classification));
   };
 
   const onFinish = (_reason: string): void => {
-    // onFinish 不发送事件，由 stream_end 信号处理。
+    // onFinish 不发送运行或传输终态；两者分别由 Host settlement 与 transport owner 处理。
   };
 
   const onThought = (thought: string): void => {
@@ -185,7 +199,7 @@ export async function callLlmStream(params: CallLlmStreamParams): Promise<LlmCal
     eventHandler({
       type: 'thought',
       thought_message_id: delta.thoughtMessageId,
-      id: generateMessageId(),
+      id: generateRuntimeEventId(),
       timestamp: delta.timestamp,
       content: '',
       delta: delta.delta,
@@ -207,35 +221,39 @@ export async function callLlmStream(params: CallLlmStreamParams): Promise<LlmCal
     }
   };
 
-  await aiEngine.chatCompletionStream(
-    modelId,
-    messages,
-    {
-      ...options,
-      signal,
-      stream_options: { include_usage: true },
-    },
-    onContent,
-    onError,
-    onFinish,
-    onThought,
-    onUsage,
-    onCanonicalUsage,
-  );
+  try {
+    await aiEngine.chatCompletionStream(
+      modelId,
+      messages,
+      {
+        ...options,
+        signal,
+        stream_options: { include_usage: true },
+      },
+      onContent,
+      onError,
+      onFinish,
+      onThought,
+      onUsage,
+      onCanonicalUsage
+    );
+  } finally {
+    // Provider 正常完成、回调报错和用户取消都结束了当前 thought 段。
+    // 必须在 provider 边界封口，不能让 Renderer 根据 transport/run 状态猜测。
+    emitThoughtComplete(thoughtSegmenter.finalize());
+  }
 
   if (streamError) {
     throw streamError;
   }
 
-  emitThoughtComplete(thoughtSegmenter.finalize());
-
   const mergedToolCalls = toolAccumulator.getToolCalls();
   assertToolCallsHaveValidJsonArguments(mergedToolCalls);
   if (
-    mergedToolCalls.length > 0
-    || reasoningDetails.length > 0
-    || capturedUsage !== undefined
-    || capturedCanonicalUsage !== undefined
+    mergedToolCalls.length > 0 ||
+    reasoningDetails.length > 0 ||
+    capturedUsage !== undefined ||
+    capturedCanonicalUsage !== undefined
   ) {
     return {
       content: fullResponse,

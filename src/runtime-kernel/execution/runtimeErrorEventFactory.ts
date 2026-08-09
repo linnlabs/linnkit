@@ -1,6 +1,6 @@
 import { ENGINE_ERROR_CODES, ErrorClassifier } from '../../shared/errorClassifier';
 import type { ErrorEvent } from '../../contracts';
-import { createErrorEvent } from '../../contracts';
+import { createErrorEvent, toSerializableJsonValue } from '../../contracts';
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -50,11 +50,8 @@ export function extractNestedProviderError(rawMessage: string): {
 }
 
 export interface CreateRuntimeErrorEventInput {
-  /**
-   * 可选：由调用方提供稳定 id（例如 generateMessageId()）。
-   * 若不提供，工厂会生成一个临时 id。
-   */
-  id?: string;
+  /** 由事实 owner 在调用本工厂前创建的稳定 Runtime event ID。 */
+  id: string;
   conversationId: string;
   turnId: string;
   error: unknown;
@@ -81,6 +78,11 @@ export interface CreateRuntimeErrorEventInput {
   detailsPatch?: Record<string, unknown>;
 }
 
+export type ClassifiedRuntimeErrorEvent = ErrorEvent & {
+  error_code: string;
+  retryable: boolean;
+};
+
 /**
  * 统一创建 RuntimeEvent(type='error')。
  *
@@ -89,7 +91,7 @@ export interface CreateRuntimeErrorEventInput {
  * - `error_code` 尽量稳定：优先上游结构化 type，否则 fallback 到分类结果；
  * - `retryable` 与 `details.classification` 使用同一份 classifier 输出，避免重复判断。
  */
-export function createRuntimeErrorEvent(input: CreateRuntimeErrorEventInput): ErrorEvent {
+export function createRuntimeErrorEvent(input: CreateRuntimeErrorEventInput): ClassifiedRuntimeErrorEvent {
   const rawMessage = input.error instanceof Error ? input.error.message : String(input.error);
   const errObj = input.error instanceof Error ? input.error : new Error(rawMessage);
 
@@ -109,16 +111,15 @@ export function createRuntimeErrorEvent(input: CreateRuntimeErrorEventInput): Er
   const retryable =
     typeof input.retryable === 'boolean' ? input.retryable : classification.recoverable;
 
-  return createErrorEvent(
-    // id 由调用方决定更灵活（这里用时间戳拼随机，避免引入 generateMessageId 依赖）
-    (input.id && input.id.trim().length > 0 ? input.id.trim() : undefined) ?? `err_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
+  const event = createErrorEvent(
+    input.id,
     input.conversationId,
     input.turnId,
     errorText,
     {
       error_code: errorCode,
       retryable,
-      details: {
+      details: toSerializableJsonValue({
         source: input.source,
         name: input.error instanceof Error ? input.error.name : undefined,
         stack: input.error instanceof Error ? input.error.stack : undefined,
@@ -126,7 +127,12 @@ export function createRuntimeErrorEvent(input: CreateRuntimeErrorEventInput): Er
         nested,
         classification,
         ...(input.detailsPatch ? input.detailsPatch : {}),
-      },
+      }),
     }
   );
+  return {
+    ...event,
+    error_code: errorCode,
+    retryable,
+  };
 }

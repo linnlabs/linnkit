@@ -1,4 +1,5 @@
-import type { RuntimeEvent } from '../../contracts';
+import { parseRoutedRuntimeEvent } from '../../contracts';
+import type { RoutedRuntimeEvent, RuntimeEvent } from '../../contracts';
 
 /**
  * 中文备注：
@@ -19,15 +20,15 @@ export type RuntimeEventUiProjectionKind =
   | 'thought'
   | 'final_answer'
   | 'final_answer_chunk'
+  | 'final_answer_reset'
   | 'tool_call_decision'
   | 'tool_process'
   | 'tool_output'
   | 'requires_user_interaction'
   | 'audit_envelope'
-  | 'todo_updated'
   | 'subrun_trace'
   | 'error'
-  | 'stream_end'
+  | 'run_execution_metrics'
   | 'history_summary'
   | 'checkpoint_history_summary'
   | 'unsupported';
@@ -41,6 +42,21 @@ export interface RuntimeEventLifecycleDecision {
   enterAgentContext: boolean;
   realtimeChannel: RuntimeEventRealtimeChannel;
 }
+
+/**
+ * 类型级永不回放到 UI 的 RuntimeEvent。
+ *
+ * 中文备注：
+ * - 这里只能放“仅凭 type 就能确定永不进入 UI 历史回放”的事件；
+ * - `hidden user_input` 这类需要看 payload / metadata 的逐事件规则不能放进来；
+ * - UI 历史分页会把这份清单下推到 SQL 层，避免巨型隐藏事件被 JSON.parse / 序列化。
+ */
+export const RUNTIME_EVENT_TYPES_NEVER_REPLAYED_TO_UI = [
+  'audit_envelope',
+  'final_answer_chunk',
+  'final_answer_reset',
+  'subrun_trace',
+] as const satisfies readonly RuntimeEvent['type'][];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
@@ -58,22 +74,16 @@ export function isToolProcessEvent<T extends { type: string }>(
   return event.type === 'tool_process';
 }
 
-export function isTodoUpdatedRuntimeEvent(
-  event: RuntimeEvent,
-): event is Extract<RuntimeEvent, { type: 'todo_updated' }> {
-  return event.type === 'todo_updated';
-}
-
 export function isSubRunTraceRuntimeEvent(
   event: RuntimeEvent,
 ): event is Extract<RuntimeEvent, { type: 'subrun_trace' }> {
   return event.type === 'subrun_trace';
 }
 
-export function isStreamEndRuntimeEvent(
+export function isRunExecutionMetricsRuntimeEvent(
   event: RuntimeEvent,
-): event is Extract<RuntimeEvent, { type: 'stream_end' }> {
-  return event.type === 'stream_end';
+): event is Extract<RuntimeEvent, { type: 'run_execution_metrics' }> {
+  return event.type === 'run_execution_metrics';
 }
 
 export function isRequiresUserInteractionRuntimeEvent(
@@ -112,8 +122,34 @@ export function isEmptyTerminalAssistantRuntimeEvent(event: RuntimeEvent): boole
   return event.content.trim().length === 0;
 }
 
+/**
+ * Conversation 主时间线只接纳 foreground run 明确声明为 conversation 可见的事实。
+ *
+ * child / auxiliary facts 仍可持久化并进入各自的消费链，但不能因为共用
+ * conversation_id 就被 durable UI read model 当作正文恢复。
+ */
+export function isConversationUiRuntimeEvent(event: RuntimeEvent): boolean {
+  return event.lane === 'foreground' && event.visibility === 'conversation';
+}
+
 export function shouldPersistRuntimeEvent(event: RuntimeEvent): boolean {
   return describeRuntimeEventLifecycle(event).persist;
+}
+
+/**
+ * EventStore 是 durable fact 边界。调用方若把实时进度直接写入存储，必须立即失败，
+ * 不能静默忽略，否则真实发布链的旁路会被掩盖。
+ */
+export function requirePersistableRuntimeEvent<T extends RuntimeEvent>(event: T): T {
+  if (!shouldPersistRuntimeEvent(event)) {
+    throw new Error(`RuntimeEvent ${event.id} (${event.type}) is not eligible for persistence.`);
+  }
+  return event;
+}
+
+export function requirePersistableRoutedRuntimeEvent(event: RuntimeEvent): RoutedRuntimeEvent {
+  requirePersistableRuntimeEvent(event);
+  return parseRoutedRuntimeEvent(event);
 }
 
 export function shouldReplayRuntimeEventToUi(event: RuntimeEvent): boolean {
@@ -155,6 +191,8 @@ export function getRuntimeEventUiProjectionKind(
       return 'final_answer';
     case 'final_answer_chunk':
       return 'final_answer_chunk';
+    case 'final_answer_reset':
+      return 'final_answer_reset';
     case 'tool_call_decision':
       return 'tool_call_decision';
     case 'tool_process':
@@ -165,14 +203,12 @@ export function getRuntimeEventUiProjectionKind(
       return 'requires_user_interaction';
     case 'audit_envelope':
       return 'audit_envelope';
-    case 'todo_updated':
-      return 'todo_updated';
     case 'subrun_trace':
       return 'subrun_trace';
     case 'error':
       return 'error';
-    case 'stream_end':
-      return 'stream_end';
+    case 'run_execution_metrics':
+      return 'run_execution_metrics';
     case 'history_summary':
       return isCheckpointHistorySummaryEvent(event)
         ? 'checkpoint_history_summary'
@@ -186,16 +222,20 @@ export function describeRuntimeEventLifecycle(
   event: RuntimeEvent,
 ): RuntimeEventLifecycleDecision {
   const uiProjectionKind = getRuntimeEventUiProjectionKind(event);
-  const persist = event.ephemeral !== true && !isToolProcessEvent(event);
+  const persist = event.ephemeral !== true
+    && !isToolProcessEvent(event)
+    && !isSubRunTraceRuntimeEvent(event);
 
-  const replayToUi =
+  const replayToUi = persist &&
+    isConversationUiRuntimeEvent(event) &&
     uiProjectionKind !== 'hidden' &&
     uiProjectionKind !== 'audit_envelope' &&
     uiProjectionKind !== 'final_answer_chunk' &&
+    uiProjectionKind !== 'final_answer_reset' &&
     uiProjectionKind !== 'unsupported';
 
   const enterAgentContext = (() => {
-    if (isTodoUpdatedRuntimeEvent(event)) {
+    if (uiProjectionKind === 'unsupported') {
       return false;
     }
 
@@ -203,7 +243,11 @@ export function describeRuntimeEventLifecycle(
       return false;
     }
 
-    if (isStreamEndRuntimeEvent(event)) {
+    if (isRunExecutionMetricsRuntimeEvent(event)) {
+      return false;
+    }
+
+    if (event.type === 'error') {
       return false;
     }
 
@@ -231,6 +275,10 @@ export function describeRuntimeEventLifecycle(
       return false;
     }
 
+    if (event.type === 'final_answer_reset') {
+      return false;
+    }
+
     if (isEmptyTerminalAssistantRuntimeEvent(event)) {
       return false;
     }
@@ -243,13 +291,14 @@ export function describeRuntimeEventLifecycle(
       case 'thought':
       case 'final_answer':
       case 'final_answer_chunk':
+      case 'final_answer_reset':
       case 'tool_call_decision':
       case 'tool_process':
       case 'tool_output':
       case 'requires_user_interaction':
-      case 'todo_updated':
       case 'subrun_trace':
       case 'error':
+      case 'run_execution_metrics':
         return 'event_bus_sse';
       case 'audit_envelope':
         return 'none';

@@ -27,6 +27,7 @@ import {
   buildToolInteractionGroupsFromStates,
   type ToolInteractionGroup,
 } from '../../utils/toolInteractionGroup';
+import { collectImageProtectedStateIndexes } from '../functions/imageInputProtection';
 
 const logger = new Logger('CheckpointSummarizationProvider');
 
@@ -39,42 +40,17 @@ function isRecord(v: unknown): v is UnknownRecord {
 }
 
 /**
- * 从 tool_output 消息的 content 中尝试解析 checkpoint 标记
- * 返回 summary 字符串或 null
- */
-function extractCheckpointSummary(content: string): string | null {
-  try {
-    const parsed = JSON.parse(content) as Record<string, unknown>;
-    // StructuredToolResult 格式：{ data: { _type, summary }, observation }
-    const data = parsed['data'];
-    if (data && typeof data === 'object' && !Array.isArray(data)) {
-      const rec = data as Record<string, unknown>;
-      if (rec['_type'] === CHECKPOINT_MARKER_TYPE && typeof rec['summary'] === 'string') {
-        return rec['summary'];
-      }
-    }
-    // 兼容直接格式
-    if (parsed['_type'] === CHECKPOINT_MARKER_TYPE && typeof parsed['summary'] === 'string') {
-      return parsed['summary'] as string;
-    }
-  } catch {
-    // content 不是 JSON，跳过
-  }
-  return null;
-}
-
-/**
  * 从 tool_output 消息中提取 checkpoint summary（严格模式）：
- * - 仅使用 metadata.raw_output（原始 JSON）
- * - 不解析 content，避免与 observation（给 AI 的纯文本）语义混淆
+ * - 仅使用 metadata.data 的正式结构化事实；
+ * - 不解析 content，避免与 observation（给 AI 的纯文本）语义混淆。
  */
 function extractCheckpointSummaryFromToolOutputMessage(message: {
   content?: unknown;
   metadata?: Record<string, unknown> | undefined;
 }): string | null {
-  const rawOutput = message.metadata?.['raw_output'];
-  if (typeof rawOutput === 'string') {
-    return extractCheckpointSummary(rawOutput);
+  const data = message.metadata?.['data'];
+  if (isRecord(data) && data['_type'] === CHECKPOINT_MARKER_TYPE && typeof data['summary'] === 'string') {
+    return data['summary'];
   }
 
   return null;
@@ -132,6 +108,7 @@ export class CheckpointSummarizationProvider extends BaseContextProvider {
     const keepSet = new Set<number>([
       ...checkpointGroup.messageIndexes,
       ...keepBefore,
+      ...collectImageProtectedStateIndexes(states),
     ]);
 
     // 2.2) 强制提升保留工具交互的 action：checkpoint 与其前两对工具对必须进入最终 messages

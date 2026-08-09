@@ -5,12 +5,12 @@ import type {
   AuditEvidence,
   AuditScope,
 } from '../../contracts';
+import { generateAuditEnvelopeId, runIdFromTurnId } from '../../contracts';
 import type { AuditPort } from '../../ports';
-import { generateAuditEnvelopeId } from '../../shared/ids';
 
 export interface EmitAuditEnvelopeParams {
-  runId?: string;
-  parentRunId?: string;
+  runId?: AuditScope['runId'];
+  parentRunId?: AuditScope['parentRunId'];
   actor?: AuditActor;
   action: string;
   decision?: AuditDecision;
@@ -19,10 +19,13 @@ export interface EmitAuditEnvelopeParams {
   scope: AuditScope;
 }
 
-function resolveRunId(params: EmitAuditEnvelopeParams): string {
-  const runId = params.runId ?? params.scope.runId ?? params.scope.turnId;
-  if (typeof runId === 'string' && runId.trim().length > 0) {
+function resolveRunId(params: EmitAuditEnvelopeParams): NonNullable<AuditScope['runId']> {
+  const runId = params.runId ?? params.scope.runId;
+  if (runId !== undefined) {
     return runId;
+  }
+  if (params.scope.turnId !== undefined) {
+    return runIdFromTurnId(params.scope.turnId);
   }
   throw new Error(`Audit action ${params.action} requires runId or scope.turnId`);
 }
@@ -36,7 +39,7 @@ function resolveRunId(params: EmitAuditEnvelopeParams): string {
  */
 export async function emitAuditEnvelope(
   auditPort: AuditPort,
-  params: EmitAuditEnvelopeParams,
+  params: EmitAuditEnvelopeParams
 ): Promise<void> {
   const runId = resolveRunId(params);
   await auditPort.emit({
@@ -64,7 +67,7 @@ export async function emitSandboxDecisionAudit(
     reason?: string;
     policy?: string;
     evidence?: AuditEvidence[];
-  },
+  }
 ): Promise<void> {
   await emitAuditEnvelope(auditPort, {
     action: 'sandbox.decide',

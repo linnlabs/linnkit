@@ -1,4 +1,5 @@
 import type { AiMessage } from '../../../contracts';
+import { Logger } from '../../../shared/logger';
 
 export interface ToolSummaryProvider {
   getTool(toolName: string): {
@@ -40,6 +41,11 @@ export abstract class BasePreprocessor implements IPreprocessor {
   abstract readonly name: string;
   abstract readonly description: string;
   abstract readonly priority: number;
+  private readonly logger: Logger;
+
+  protected constructor(loggerName?: string) {
+    this.logger = new Logger(loggerName ?? this.constructor.name);
+  }
 
   abstract process(
     messages: AiMessage[],
@@ -72,7 +78,7 @@ export abstract class BasePreprocessor implements IPreprocessor {
 
   protected debug(message: string, data?: Record<string, unknown>, context?: PreprocessorContext): void {
     if (context?.debugMode) {
-      console.log(`[${this.name}] ${message}`, data);
+      this.logger.debug(`[${this.name}] ${message}`, data);
     }
   }
 }

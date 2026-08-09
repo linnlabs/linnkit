@@ -1,10 +1,12 @@
-import type { AiMessage } from '../../contracts';
+import type { AiMessage, RuntimeResourceRef } from '../../contracts';
 import type { FenceRegistry } from './fences';
 import type { ChatMessage } from './contracts/chatLineMessage';
+import { Logger } from '../../shared/logger';
+
+const logger = new Logger('MessageFormatter');
 
 export interface MessageFormatOptions {
   nativeTools?: boolean;
-  mode?: 'agent' | 'chat';
   fenceRegistry?: FenceRegistry;
 }
 
@@ -13,10 +15,11 @@ export interface MessageFormatterOptions {
 }
 
 export type NativeToolCallingMessage =
-  | { role: 'system' | 'user'; content: string }
+  | { role: 'system'; content: string }
+  | { role: 'user'; content: string; attachments?: RuntimeResourceRef[] }
   | { role: 'assistant'; content: string; reasoning_details?: unknown[]; provider_empty_replay_field?: true }
   | { role: 'assistant'; content: string | null; tool_calls: unknown[]; reasoning_details?: unknown[]; provider_empty_replay_field?: true }
-  | { role: 'tool'; tool_call_id: string; content: string };
+  | { role: 'tool'; tool_call_id: string; content: string; attachments?: RuntimeResourceRef[] };
 
 class MessageFormatter {
   private readonly fenceRegistry?: FenceRegistry;
@@ -27,14 +30,14 @@ class MessageFormatter {
 
   public format(
     messages: AiMessage[],
-    options: { nativeTools: true; mode?: 'agent' | 'chat' },
+    options: { nativeTools: true },
   ): NativeToolCallingMessage[];
   public format(
     messages: AiMessage[],
-    options?: { nativeTools?: false; mode?: 'agent' | 'chat' },
+    options?: { nativeTools?: false },
   ): ChatMessage[];
   public format(messages: AiMessage[], options: MessageFormatOptions = {}): (ChatMessage | NativeToolCallingMessage)[] {
-    const processedMessages = options.mode === 'agent' ? messages : this.mergeThoughtAndAnswer(messages);
+    const processedMessages = options.nativeTools ? messages : this.mergeThoughtAndAnswer(messages);
     return processedMessages
       .map((msg) => this.formatSingleMessage(msg, options))
       .filter((msg): msg is ChatMessage | NativeToolCallingMessage => msg !== null);
@@ -118,6 +121,7 @@ class MessageFormatter {
           role: 'tool',
           tool_call_id: metadata.tool_call_id,
           content,
+          ...(message.attachments ? { attachments: message.attachments } : {}),
         };
       }
     }
@@ -131,18 +135,23 @@ class MessageFormatter {
 
     switch (type) {
       case 'system_prompt':
-      case 'user_input':
       case 'final_answer':
         return { role, content };
+      case 'user_input':
+        return {
+          role: 'user',
+          content,
+          ...(message.attachments ? { attachments: message.attachments } : {}),
+        };
       case 'context_injection': {
         const fenceKind = metadata?.fenceKind;
         if (!fenceKind) {
-          console.warn('[MessageFormatter] context_injection missing metadata.fenceKind, skipping.');
+          logger.warn('context_injection missing metadata.fenceKind, skipping');
           return null;
         }
         const descriptor = fenceRegistry?.get(fenceKind);
         if (!descriptor) {
-          console.warn(`[MessageFormatter] Fence kind "${fenceKind}" is not registered, skipping.`);
+          logger.warn('fence kind is not registered, skipping', { fenceKind });
           return null;
         }
         return {
@@ -181,7 +190,7 @@ class MessageFormatter {
       case 'task_completion':
         return { role, content };
       default:
-        console.warn(`[MessageFormatter] Unhandled message type for chat history: "${type}", skipping.`);
+        logger.warn('unhandled message type for chat history, skipping', { type });
         return null;
     }
   }
@@ -196,6 +205,6 @@ export function formatAgentLlmMessages(
   messages: AiMessage[],
   options: Pick<MessageFormatOptions, 'fenceRegistry'> = {},
 ): NativeToolCallingMessage[] {
-  return messageFormatter.format(messages, { nativeTools: true, mode: 'agent', ...options });
+  return messageFormatter.format(messages, { nativeTools: true, ...options });
 }
 export type LlmMessage = ChatMessage | NativeToolCallingMessage;

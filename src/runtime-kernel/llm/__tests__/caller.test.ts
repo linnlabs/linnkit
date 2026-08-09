@@ -16,6 +16,15 @@ const mockGetModelsByCapability = vi.fn();
 const mockGetModelsByUIVisibility = vi.fn();
 const mockGetModelById = vi.fn();
 
+type StreamParameters = Parameters<AgentAiEngine['chatCompletionStream']>;
+type StreamModelId = StreamParameters[0];
+type StreamMessages = StreamParameters[1];
+type StreamOptions = StreamParameters[2];
+type StreamOnContent = NonNullable<StreamParameters[3]>;
+type StreamOnError = NonNullable<StreamParameters[4]>;
+type StreamOnFinish = NonNullable<StreamParameters[5]>;
+type StreamOnThought = NonNullable<StreamParameters[6]>;
+
 function createModelCatalog(): ModelCatalogLike {
   return {
     getModelById: mockGetModelById,
@@ -24,14 +33,25 @@ function createModelCatalog(): ModelCatalogLike {
   };
 }
 
+function collectStreamChunkContents(events: readonly AnyAgentEvent[]): string[] {
+  return events.flatMap((event) => (event.type === 'stream_chunk' ? [event.content] : []));
+}
+
+function collectStreamResetEvents(events: readonly AnyAgentEvent[]) {
+  return events.filter(
+    (event): event is Extract<AnyAgentEvent, { type: 'stream_reset' }> =>
+      event.type === 'stream_reset',
+  );
+}
+
 describe('LlmCaller', () => {
   let llmCaller: LlmCaller;
   let aiEngine: AgentAiEngine;
   let modelCatalog: ModelCatalogLike;
   const testModelId = 'test-model';
   const testMessages: AiMessage[] = [
-    { 
-      role: 'user', 
+    {
+      role: 'user',
       type: 'user_input',
       content: 'Hello',
       id: 'msg_test_1',
@@ -47,15 +67,16 @@ describe('LlmCaller', () => {
     };
     modelCatalog = createModelCatalog();
     llmCaller = new LlmCaller({ aiEngine, modelCatalog });
-    
+
     // 默认 mock 行为
-    mockGetModelsByUIVisibility.mockReturnValue([
-      { id: 'default-model', name: 'Default Model' },
-    ]);
-    mockGetModelsByCapability.mockReturnValue([
-      { id: 'default-model', name: 'Default Model' },
-    ]);
-    mockGetModelById.mockReturnValue(undefined);
+    mockGetModelsByUIVisibility.mockReturnValue([{ id: 'default-model', name: 'Default Model' }]);
+    mockGetModelsByCapability.mockReturnValue([{ id: 'default-model', name: 'Default Model' }]);
+    mockGetModelById.mockImplementation((id: string) => ({
+      id,
+      enabled: true,
+      capabilities: ['chat'],
+      api_key: 'test-key',
+    }));
   });
 
   afterEach(() => {
@@ -121,11 +142,9 @@ describe('LlmCaller', () => {
       const result = await llmCaller.call(testModelId, testMessages);
 
       expect(result).toBe(mockResponse);
-      expect(mockChatCompletion).toHaveBeenCalledWith(
-        testModelId,
-        testMessages,
-        { signal: undefined }
-      );
+      expect(mockChatCompletion).toHaveBeenCalledWith(testModelId, testMessages, {
+        signal: undefined,
+      });
     });
 
     it('应该支持传递选项参数', async () => {
@@ -140,11 +159,10 @@ describe('LlmCaller', () => {
 
       await llmCaller.call(testModelId, testMessages, options);
 
-      expect(mockChatCompletion).toHaveBeenCalledWith(
-        testModelId,
-        testMessages,
-        { ...options, signal: undefined }
-      );
+      expect(mockChatCompletion).toHaveBeenCalledWith(testModelId, testMessages, {
+        ...options,
+        signal: undefined,
+      });
     });
 
     it('应该处理包含工具调用的响应', async () => {
@@ -216,11 +234,9 @@ describe('LlmCaller', () => {
       const abortController = new AbortController();
       await llmCaller.call(testModelId, testMessages, {}, abortController.signal);
 
-      expect(mockChatCompletion).toHaveBeenCalledWith(
-        testModelId,
-        testMessages,
-        { signal: abortController.signal }
-      );
+      expect(mockChatCompletion).toHaveBeenCalledWith(testModelId, testMessages, {
+        signal: abortController.signal,
+      });
     });
 
     it('应该在调用失败时抛出错误', async () => {
@@ -235,11 +251,18 @@ describe('LlmCaller', () => {
     it('应该成功进行流式调用', async () => {
       const mockResponse = 'Hello! How can I help you?';
       mockChatCompletionStream.mockImplementation(
-        async (modelId: any, messages: any, options: any, onContent: any, onError: any, onFinish: any) => {
+        async (
+          _modelId: StreamModelId,
+          _messages: StreamMessages,
+          _options: StreamOptions,
+          onContent: StreamOnContent,
+          _onError: StreamOnError,
+          _onFinish: StreamOnFinish,
+        ) => {
           onContent('Hello! ');
           onContent('How can ');
           onContent('I help you?');
-        }
+        },
       );
 
       const events: AnyAgentEvent[] = [];
@@ -247,24 +270,27 @@ describe('LlmCaller', () => {
         events.push(event);
       };
 
-      const result = await llmCaller.callStream(
-        testModelId,
-        testMessages,
-        {},
-        eventHandler
-      );
+      const result = await llmCaller.callStream(testModelId, testMessages, {}, eventHandler);
 
       expect(result).toBe('Hello! How can I help you?');
       expect(events.length).toBeGreaterThan(0);
-      expect(events.every(e => e.type === 'stream_chunk')).toBe(true);
+      expect(events.every((e) => e.type === 'stream_chunk')).toBe(true);
     });
 
     it('应该正确处理 thought 事件', async () => {
       mockChatCompletionStream.mockImplementation(
-        async (modelId: any, messages: any, options: any, onContent: any, onError: any, onFinish: any, onThought: any) => {
+        async (
+          _modelId: StreamModelId,
+          _messages: StreamMessages,
+          _options: StreamOptions,
+          onContent: StreamOnContent,
+          _onError: StreamOnError,
+          _onFinish: StreamOnFinish,
+          onThought: StreamOnThought,
+        ) => {
           onThought('Let me think...');
           onContent('Here is the answer.');
-        }
+        },
       );
 
       const events: AnyAgentEvent[] = [];
@@ -272,14 +298,9 @@ describe('LlmCaller', () => {
         events.push(event);
       };
 
-      await llmCaller.callStream(
-        testModelId,
-        testMessages,
-        {},
-        eventHandler
-      );
+      await llmCaller.callStream(testModelId, testMessages, {}, eventHandler);
 
-      const thoughtEvents = events.filter(e => e.type === 'thought');
+      const thoughtEvents = events.filter((e) => e.type === 'thought');
       expect(thoughtEvents.length).toBeGreaterThan(0);
       expect(thoughtEvents[0]).toHaveProperty('content');
     });
@@ -321,7 +342,12 @@ describe('LlmCaller', () => {
 
     it('应该累积工具调用增量', async () => {
       mockChatCompletionStream.mockImplementation(
-        async (modelId: any, messages: any, options: any, onContent: any) => {
+        async (
+          _modelId: StreamModelId,
+          _messages: StreamMessages,
+          _options: StreamOptions,
+          onContent: StreamOnContent,
+        ) => {
           // 模拟流式工具调用
           onContent({
             tool_calls: [
@@ -332,7 +358,7 @@ describe('LlmCaller', () => {
               },
             ],
           });
-          
+
           onContent({
             tool_calls: [
               {
@@ -341,7 +367,7 @@ describe('LlmCaller', () => {
               },
             ],
           });
-          
+
           onContent({
             tool_calls: [
               {
@@ -350,15 +376,12 @@ describe('LlmCaller', () => {
               },
             ],
           });
-        }
+        },
       );
 
       const events: AnyAgentEvent[] = [];
-      const result = await llmCaller.callStream(
-        testModelId,
-        testMessages,
-        {},
-        (event) => events.push(event)
+      const result = await llmCaller.callStream(testModelId, testMessages, {}, (event) =>
+        events.push(event),
       );
 
       expect(typeof result).toBe('object');
@@ -379,18 +402,17 @@ describe('LlmCaller', () => {
           _modelId: unknown,
           _messages: unknown,
           _options: unknown,
-          onContent: (content: string | { reasoning_details?: unknown[]; content?: string }) => void,
+          onContent: (
+            content: string | { reasoning_details?: unknown[]; content?: string },
+          ) => void,
         ) => {
           onContent({ reasoning_details: reasoningDetails });
         },
       );
 
       const events: unknown[] = [];
-      const result = await llmCaller.callStream(
-        testModelId,
-        testMessages,
-        {},
-        (event) => events.push(event),
+      const result = await llmCaller.callStream(testModelId, testMessages, {}, (event) =>
+        events.push(event),
       );
 
       expect(result).toEqual({
@@ -412,51 +434,71 @@ describe('LlmCaller', () => {
           _modelId: unknown,
           _messages: unknown,
           _options: unknown,
-          onContent: (content: string | { reasoning_details?: unknown[]; content?: string }) => void,
+          onContent: (
+            content: string | { reasoning_details?: unknown[]; content?: string },
+          ) => void,
         ) => {
           onContent({
             reasoning_details: [
-              { provider: 'example-reasoner', type: 'reasoning_content', reasoning_content: 'Need' },
+              {
+                provider: 'example-reasoner',
+                type: 'reasoning_content',
+                reasoning_content: 'Need',
+              },
             ],
           });
           onContent({
             reasoning_details: [
-              { provider: 'example-reasoner', type: 'reasoning_content', reasoning_content: ' to inspect.' },
+              {
+                provider: 'example-reasoner',
+                type: 'reasoning_content',
+                reasoning_content: ' to inspect.',
+              },
             ],
           });
         },
       );
 
       const events: Array<{ type?: string; reasoning_details?: unknown[] }> = [];
-      const result = await llmCaller.callStream(
-        testModelId,
-        testMessages,
-        {},
-        (event) => events.push(event as { type?: string; reasoning_details?: unknown[] }),
+      const result = await llmCaller.callStream(testModelId, testMessages, {}, (event) =>
+        events.push(event as { type?: string; reasoning_details?: unknown[] }),
       );
 
       expect(result).toEqual({
         content: '',
         tool_calls: [],
         reasoning_details: [
-          { provider: 'example-reasoner', type: 'reasoning_content', reasoning_content: 'Need to inspect.' },
+          {
+            provider: 'example-reasoner',
+            type: 'reasoning_content',
+            reasoning_content: 'Need to inspect.',
+          },
         ],
       });
       const providerSidecars = events.filter((event) => event.type === 'provider_sidecar');
       expect(providerSidecars[providerSidecars.length - 1]?.reasoning_details).toEqual([
-        { provider: 'example-reasoner', type: 'reasoning_content', reasoning_content: 'Need to inspect.' },
+        {
+          provider: 'example-reasoner',
+          type: 'reasoning_content',
+          reasoning_content: 'Need to inspect.',
+        },
       ]);
     });
 
     it('流式 tool_call arguments 若最终不是合法 JSON，不应返回半截 tool_calls', async () => {
       mockChatCompletionStream.mockImplementation(
-        async (_modelId: unknown, _messages: unknown, _options: unknown, onContent: (content: unknown) => void) => {
+        async (
+          _modelId: unknown,
+          _messages: unknown,
+          _options: unknown,
+          onContent: (content: unknown) => void,
+        ) => {
           onContent({
             tool_calls: [
               {
                 index: 0,
                 id: 'call_broken',
-                function: { name: 'ppt_codegen' },
+                function: { name: 'code_generation_tool' },
               },
             ],
           });
@@ -465,27 +507,32 @@ describe('LlmCaller', () => {
             tool_calls: [
               {
                 index: 0,
-                function: { arguments: '{"code":"const slide = createSlide();' },
+                function: { arguments: '{"code":"const value = computeValue();' },
               },
             ],
           });
-        }
+        },
       );
 
-      await expect(
-        llmCaller.callStream(testModelId, testMessages, {}, vi.fn())
-      ).rejects.toThrow(/Stream ended with invalid tool_call\.arguments/);
+      await expect(llmCaller.callStream(testModelId, testMessages, {}, vi.fn())).rejects.toThrow(
+        /Stream ended with invalid tool_call\.arguments/,
+      );
     });
 
-    it('ppt_codegen 在流式调用时应尽早发出占位 tool_process', async () => {
+    it('声明 placeholder policy 的工具应尽早发出占位 tool_process', async () => {
       mockChatCompletionStream.mockImplementation(
-        async (_modelId: unknown, _messages: unknown, _options: unknown, onContent: (content: unknown) => void) => {
+        async (
+          _modelId: unknown,
+          _messages: unknown,
+          _options: unknown,
+          onContent: (content: unknown) => void,
+        ) => {
           onContent({
             tool_calls: [
               {
                 index: 0,
-                id: 'call_ppt_codegen_1',
-                function: { name: 'ppt_codegen' },
+                id: 'call_code_generation_1',
+                function: { name: 'code_generation_tool' },
               },
             ],
           });
@@ -498,56 +545,107 @@ describe('LlmCaller', () => {
               },
             ],
           });
-        }
+        },
       );
 
       const events: AnyAgentEvent[] = [];
-      await llmCaller.callStream(testModelId, testMessages, {}, (event) => events.push(event));
+      await llmCaller.callStream(
+        testModelId,
+        testMessages,
+        {},
+        (event) => events.push(event),
+        undefined,
+        { toolCallStreamingPolicies: { code_generation_tool: { emitPlaceholder: true } } },
+      );
 
       const placeholderEvent = events.find((event) => {
         if (event.type !== 'tool_process') return false;
-        return event.tool_name === 'ppt_codegen'
-          && event.tool_call_id === 'call_ppt_codegen_1'
-          && event.phase === 'start'
-          && event.status === 'loading';
+        return (
+          event.tool_name === 'code_generation_tool' &&
+          event.tool_call_id === 'call_code_generation_1' &&
+          event.phase === 'start' &&
+          event.status === 'loading'
+        );
       });
 
       expect(placeholderEvent).toBeDefined();
     });
 
-    it('ppt_plan 在流式调用时应尽早发出占位 tool_process', async () => {
+    it('未声明流式 policy 的工具不发布未接纳的占位或参数快照', async () => {
       mockChatCompletionStream.mockImplementation(
-        async (_modelId: unknown, _messages: unknown, _options: unknown, onContent: (content: unknown) => void) => {
+        async (
+          _modelId: unknown,
+          _messages: unknown,
+          _options: unknown,
+          onContent: (content: unknown) => void,
+        ) => {
           onContent({
             tool_calls: [
               {
                 index: 0,
-                id: 'call_ppt_plan_1',
-                function: { name: 'ppt_plan' },
+                id: 'call_unadmitted_1',
+                function: { name: 'external_tool', arguments: '{"value":"draft"}' },
               },
             ],
           });
-
-          onContent({
-            tool_calls: [
-              {
-                index: 0,
-                function: { arguments: '{"title":"Deck","pages":[{"title":"封面","content":"一句话说明页面内容。"}]}' },
-              },
-            ],
-          });
-        }
+        },
       );
 
       const events: AnyAgentEvent[] = [];
       await llmCaller.callStream(testModelId, testMessages, {}, (event) => events.push(event));
 
+      expect(events.filter((event) => event.type === 'tool_process')).toEqual([]);
+    });
+
+    it('另一项声明 policy 的工具也独立获得占位事件', async () => {
+      mockChatCompletionStream.mockImplementation(
+        async (
+          _modelId: unknown,
+          _messages: unknown,
+          _options: unknown,
+          onContent: (content: unknown) => void,
+        ) => {
+          onContent({
+            tool_calls: [
+              {
+                index: 0,
+                id: 'call_planning_1',
+                function: { name: 'planning_tool' },
+              },
+            ],
+          });
+
+          onContent({
+            tool_calls: [
+              {
+                index: 0,
+                function: {
+                  arguments: '{"goal":"inspect","steps":[{"name":"read input"}]}',
+                },
+              },
+            ],
+          });
+        },
+      );
+
+      const events: AnyAgentEvent[] = [];
+      await llmCaller.callStream(
+        testModelId,
+        testMessages,
+        {},
+        (event) => events.push(event),
+        undefined,
+        { toolCallStreamingPolicies: { planning_tool: { emitPlaceholder: true } } },
+      );
+
       const placeholderEvent = events.find((event) => {
         if (event.type !== 'tool_process') return false;
-        return event.tool_name === 'ppt_plan'
-          && event.tool_call_id === 'call_ppt_plan_1'
-          && event.phase === 'start'
-          && event.status === 'loading';
+        return (
+          event.tool_name === 'planning_tool' &&
+          event.tool_call_id === 'call_planning_1' &&
+          event.phase === 'start' &&
+          event.status === 'loading'
+        );
       });
 
       expect(placeholderEvent).toBeDefined();
@@ -559,7 +657,7 @@ describe('LlmCaller', () => {
           _modelId: unknown,
           _messages: unknown,
           _options: unknown,
-          onContent: (c: unknown) => void
+          onContent: (c: unknown) => void,
         ) => {
           // Gemini 兼容：signature 通常只出现在当前 step 的第一个 tool_call 上
           onContent({
@@ -568,9 +666,9 @@ describe('LlmCaller', () => {
                 index: 0,
                 id: 'call_gemini_1',
                 function: { name: 'check_weather' },
-                extra_content: { google: { thought_signature: '<Signature_A>' } }
-              }
-            ]
+                extra_content: { google: { thought_signature: '<Signature_A>' } },
+              },
+            ],
           });
 
           // 后续增量参数
@@ -582,15 +680,10 @@ describe('LlmCaller', () => {
               },
             ],
           });
-        }
+        },
       );
 
-      const result = await llmCaller.callStream(
-        testModelId,
-        testMessages,
-        {},
-        vi.fn()
-      );
+      const result = await llmCaller.callStream(testModelId, testMessages, {}, vi.fn());
 
       expect(typeof result).toBe('object');
       if (typeof result !== 'object' || !result || !('tool_calls' in result)) {
@@ -637,14 +730,14 @@ describe('LlmCaller', () => {
           _modelId: unknown,
           _messages: unknown,
           _options: unknown,
-          onContent: (c: unknown) => void
+          onContent: (c: unknown) => void,
         ) => {
           onContent({
             tool_calls: [
               {
                 index: 0,
                 id: 'call_vendor_1',
-                function: { name: 'workspace_read' },
+                function: { name: 'document_lookup_tool' },
                 extra_content: {
                   deepseek: { replay_marker: 'opaque' },
                   google: { thought_signature: '<Signature_A>', other_opaque: 'kept' },
@@ -664,15 +757,10 @@ describe('LlmCaller', () => {
               },
             ],
           });
-        }
+        },
       );
 
-      const result = await llmCaller.callStream(
-        testModelId,
-        testMessages,
-        {},
-        vi.fn()
-      );
+      const result = await llmCaller.callStream(testModelId, testMessages, {}, vi.fn());
 
       expect(typeof result).toBe('object');
       if (typeof result !== 'object' || !result || !('tool_calls' in result)) {
@@ -698,18 +786,24 @@ describe('LlmCaller', () => {
     it('应该处理流式调用中的错误', async () => {
       const mockError = new Error('Stream error');
       mockChatCompletionStream.mockImplementation(
-        async (modelId: any, messages: any, options: any, onContent: any, onError: any) => {
+        async (
+          _modelId: StreamModelId,
+          _messages: StreamMessages,
+          _options: StreamOptions,
+          _onContent: StreamOnContent,
+          onError: StreamOnError,
+        ) => {
           onError(mockError);
-        }
+        },
       );
 
       const events: AnyAgentEvent[] = [];
-      
+
       await expect(
-        llmCaller.callStream(testModelId, testMessages, {}, (event) => events.push(event))
+        llmCaller.callStream(testModelId, testMessages, {}, (event) => events.push(event)),
       ).rejects.toThrow('Stream error');
 
-      const errorEvents = events.filter(e => e.type === 'error');
+      const errorEvents = events.filter((e) => e.type === 'error');
       expect(errorEvents.length).toBeGreaterThan(0);
     });
 
@@ -724,7 +818,7 @@ describe('LlmCaller', () => {
         testMessages,
         {},
         eventHandler,
-        abortController.signal
+        abortController.signal,
       );
 
       expect(mockChatCompletionStream).toHaveBeenCalledWith(
@@ -736,13 +830,18 @@ describe('LlmCaller', () => {
         expect.any(Function),
         expect.any(Function),
         expect.any(Function),
-        expect.any(Function)
+        expect.any(Function),
       );
     });
 
     it('应该过滤掉无效的工具调用', async () => {
       mockChatCompletionStream.mockImplementation(
-        async (modelId: any, messages: any, options: any, onContent: any) => {
+        async (
+          _modelId: StreamModelId,
+          _messages: StreamMessages,
+          _options: StreamOptions,
+          onContent: StreamOnContent,
+        ) => {
           onContent({
             tool_calls: [
               {
@@ -757,15 +856,10 @@ describe('LlmCaller', () => {
               },
             ],
           });
-        }
+        },
       );
 
-      const result = await llmCaller.callStream(
-        testModelId,
-        testMessages,
-        {},
-        vi.fn()
-      );
+      const result = await llmCaller.callStream(testModelId, testMessages, {}, vi.fn());
 
       expect(typeof result).toBe('object');
       if (typeof result === 'object' && Array.isArray(result.tool_calls)) {
@@ -788,7 +882,7 @@ describe('LlmCaller', () => {
 
     it('应该在失败后重试', async () => {
       const llmCallerWithRetry = new LlmCaller({ maxRetries: 2, aiEngine, modelCatalog });
-      
+
       mockChatCompletion
         .mockRejectedValueOnce(new Error('Network error'))
         .mockResolvedValueOnce('Success after retry');
@@ -800,16 +894,21 @@ describe('LlmCaller', () => {
     });
 
     it('应该在达到最大重试次数后失败', async () => {
-      const llmCallerWithRetry = new LlmCaller({ maxRetries: 2, retryDelayMs: 10, aiEngine, modelCatalog });
-      
+      const llmCallerWithRetry = new LlmCaller({
+        maxRetries: 2,
+        retryDelayMs: 10,
+        aiEngine,
+        modelCatalog,
+      });
+
       // 使用网络错误，这样会重试
       const mockError = new Error('Network timeout');
       mockError.name = 'NetworkError';
       mockChatCompletion.mockRejectedValue(mockError);
 
-      await expect(
-        llmCallerWithRetry.callWithRetries(testModelId, testMessages)
-      ).rejects.toThrow('Network timeout');
+      await expect(llmCallerWithRetry.callWithRetries(testModelId, testMessages)).rejects.toThrow(
+        'Network timeout',
+      );
 
       expect(mockChatCompletion).toHaveBeenCalledTimes(3); // 原始调用 + 2次重试
     });
@@ -822,7 +921,7 @@ describe('LlmCaller', () => {
         aiEngine,
         modelCatalog,
       });
-      
+
       mockChatCompletion
         .mockResolvedValueOnce('   ') // 空白响应
         .mockResolvedValueOnce('Valid response');
@@ -834,15 +933,25 @@ describe('LlmCaller', () => {
     });
 
     it('应该支持流式调用的重试', async () => {
-      const llmCallerWithRetry = new LlmCaller({ maxRetries: 1, retryDelayMs: 10, aiEngine, modelCatalog });
-      
+      const llmCallerWithRetry = new LlmCaller({
+        maxRetries: 1,
+        retryDelayMs: 10,
+        aiEngine,
+        modelCatalog,
+      });
+
       // 第一次调用：抛出网络错误
       mockChatCompletionStream
         .mockRejectedValueOnce(new Error('Connection timeout'))
         .mockImplementationOnce(
-          async (modelId: any, messages: any, options: any, onContent: any) => {
+          async (
+            _modelId: StreamModelId,
+            _messages: StreamMessages,
+            _options: StreamOptions,
+            onContent: StreamOnContent,
+          ) => {
             onContent('Success');
-          }
+          },
         );
 
       const eventHandler = vi.fn();
@@ -850,27 +959,93 @@ describe('LlmCaller', () => {
         testModelId,
         testMessages,
         {},
-        eventHandler
+        eventHandler,
       );
 
       expect(result).toBe('Success');
       // 🔥 关键语义：重试期间不应向上游透传 error 事件，否则 UI 会误判流已结束
-      const errorCalls = eventHandler.mock.calls.filter(call => call?.[0]?.type === 'error');
+      const errorCalls = eventHandler.mock.calls.filter((call) => call?.[0]?.type === 'error');
       expect(errorCalls.length).toBe(0);
     });
 
-    it('流式 tool_call.arguments 非法时应按可重试错误自动重试', async () => {
-      const llmCallerWithRetry = new LlmCaller({ maxRetries: 1, retryDelayMs: 1, aiEngine, modelCatalog });
+    it('流式重试时应实时透传 chunk，并在重试前发出 stream_reset 丢弃失败 attempt', async () => {
+      const llmCallerWithRetry = new LlmCaller({
+        maxRetries: 1,
+        retryDelayMs: 1,
+        aiEngine,
+        modelCatalog,
+      });
 
       mockChatCompletionStream
         .mockImplementationOnce(
-          async (_modelId: unknown, _messages: unknown, _options: unknown, onContent: (content: unknown) => void) => {
+          async (
+            _modelId: unknown,
+            _messages: unknown,
+            _options: unknown,
+            onContent: (content: string) => void,
+            onError: (error: Error) => void,
+          ) => {
+            onContent('失败前半段');
+            onError(new Error('Connection timeout'));
+          },
+        )
+        .mockImplementationOnce(
+          async (
+            _modelId: unknown,
+            _messages: unknown,
+            _options: unknown,
+            onContent: (content: string) => void,
+          ) => {
+            onContent('最终成功内容');
+          },
+        );
+
+      const events: AnyAgentEvent[] = [];
+      const result = await llmCallerWithRetry.callWithRetries(
+        testModelId,
+        testMessages,
+        {},
+        (event) => events.push(event),
+      );
+
+      expect(result).toBe('最终成功内容');
+      expect(mockChatCompletionStream).toHaveBeenCalledTimes(2);
+      expect(collectStreamChunkContents(events)).toEqual(['失败前半段', '最终成功内容']);
+      expect(events.filter((event) => event.type === 'error')).toHaveLength(0);
+
+      const resetEvents = collectStreamResetEvents(events);
+      expect(resetEvents).toHaveLength(1);
+      const failedChunk = events.find(
+        (event) => event.type === 'stream_chunk' && event.content === '失败前半段',
+      );
+      expect(failedChunk?.type).toBe('stream_chunk');
+      if (failedChunk?.type === 'stream_chunk') {
+        expect(resetEvents[0]?.answer_id).toBe(failedChunk.answer_id);
+      }
+    });
+
+    it('流式 tool_call.arguments 非法时应按可重试错误自动重试', async () => {
+      const llmCallerWithRetry = new LlmCaller({
+        maxRetries: 1,
+        retryDelayMs: 1,
+        aiEngine,
+        modelCatalog,
+      });
+
+      mockChatCompletionStream
+        .mockImplementationOnce(
+          async (
+            _modelId: unknown,
+            _messages: unknown,
+            _options: unknown,
+            onContent: (content: unknown) => void,
+          ) => {
             onContent({
               tool_calls: [
                 {
                   index: 0,
                   id: 'call_broken',
-                  function: { name: 'ppt_plan' },
+                  function: { name: 'planning_tool' },
                 },
               ],
             });
@@ -878,20 +1053,27 @@ describe('LlmCaller', () => {
               tool_calls: [
                 {
                   index: 0,
-                  function: { arguments: '{"title":"下一代储能技术商业化路径分析","pages":[{"title":"封面页"' },
+                  function: {
+                    arguments: '{"goal":"inspect input","steps":[{"name":"read source"',
+                  },
                 },
               ],
             });
-          }
+          },
         )
         .mockImplementationOnce(
-          async (_modelId: unknown, _messages: unknown, _options: unknown, onContent: (content: unknown) => void) => {
+          async (
+            _modelId: unknown,
+            _messages: unknown,
+            _options: unknown,
+            onContent: (content: unknown) => void,
+          ) => {
             onContent({
               tool_calls: [
                 {
                   index: 0,
                   id: 'call_ok',
-                  function: { name: 'ppt_plan' },
+                  function: { name: 'planning_tool' },
                 },
               ],
             });
@@ -901,12 +1083,12 @@ describe('LlmCaller', () => {
                   index: 0,
                   function: {
                     arguments:
-                      '{"title":"下一代储能技术商业化路径分析","pages":[{"title":"封面页","elements":["主标题","副标题"]}]}',
+                      '{"goal":"inspect input","steps":[{"name":"read source","inputs":["primary","secondary"]}]}',
                   },
                 },
               ],
             });
-          }
+          },
         );
 
       const eventHandler = vi.fn();
@@ -936,6 +1118,7 @@ describe('LlmCaller', () => {
             billing_mode: 'cloud',
             enable_client_retry: false,
             api_key: 'cloud-key',
+            capabilities: ['chat'],
           };
         }
         if (id === quotaFallbackModelId) {
@@ -945,6 +1128,7 @@ describe('LlmCaller', () => {
             billing_mode: 'cloud',
             enable_client_retry: false,
             api_key: 'fallback-key',
+            capabilities: ['chat'],
           };
         }
         return undefined;
@@ -956,7 +1140,7 @@ describe('LlmCaller', () => {
           _messages: AiMessage[],
           _options: Record<string, unknown>,
           onContent?: (content: string) => void,
-          onError?: (error: Error) => void
+          onError?: (error: Error) => void,
         ) => {
           if (modelId === cloudModelId) {
             onContent?.('前半段');
@@ -970,17 +1154,17 @@ describe('LlmCaller', () => {
           }
 
           throw new Error(`unexpected model: ${modelId}`);
-        }
+        },
       );
 
-      const eventHandler = vi.fn();
+      const events: AnyAgentEvent[] = [];
       const result = await llmCaller.callWithRetries(
         cloudModelId,
         testMessages,
         { cloud_quota_fallback_model_id: quotaFallbackModelId },
-        eventHandler,
+        (event) => events.push(event),
         undefined,
-        onCloudQuotaFallbackApplied,
+        { onCloudQuotaFallbackApplied },
       );
 
       expect(result).toBe('已切换到 deepseek 继续执行');
@@ -990,8 +1174,9 @@ describe('LlmCaller', () => {
       expect(onCloudQuotaFallbackApplied).toHaveBeenCalledTimes(1);
       expect(onCloudQuotaFallbackApplied).toHaveBeenCalledWith(quotaFallbackModelId);
 
-      const errorCalls = eventHandler.mock.calls.filter(call => call?.[0]?.type === 'error');
-      expect(errorCalls.length).toBe(0);
+      expect(collectStreamChunkContents(events)).toEqual(['前半段', '已切换到 deepseek 继续执行']);
+      expect(collectStreamResetEvents(events)).toHaveLength(1);
+      expect(events.filter((event) => event.type === 'error')).toHaveLength(0);
     });
 
     it('云端模型即使禁用客户端重试，也应对损坏的 tool_call.arguments 做本地兜底重试', async () => {
@@ -1005,6 +1190,7 @@ describe('LlmCaller', () => {
             billing_mode: 'cloud',
             enable_client_retry: false,
             api_key: 'cloud-key',
+            capabilities: ['chat'],
           };
         }
         return undefined;
@@ -1012,13 +1198,18 @@ describe('LlmCaller', () => {
 
       mockChatCompletionStream
         .mockImplementationOnce(
-          async (_modelId: unknown, _messages: unknown, _options: unknown, onContent: (content: unknown) => void) => {
+          async (
+            _modelId: unknown,
+            _messages: unknown,
+            _options: unknown,
+            onContent: (content: unknown) => void,
+          ) => {
             onContent({
               tool_calls: [
                 {
                   index: 0,
                   id: 'call_broken_cloud',
-                  function: { name: 'ppt_plan' },
+                  function: { name: 'planning_tool' },
                 },
               ],
             });
@@ -1030,16 +1221,21 @@ describe('LlmCaller', () => {
                 },
               ],
             });
-          }
+          },
         )
         .mockImplementationOnce(
-          async (_modelId: unknown, _messages: unknown, _options: unknown, onContent: (content: unknown) => void) => {
+          async (
+            _modelId: unknown,
+            _messages: unknown,
+            _options: unknown,
+            onContent: (content: unknown) => void,
+          ) => {
             onContent({
               tool_calls: [
                 {
                   index: 0,
                   id: 'call_ok_cloud',
-                  function: { name: 'ppt_plan' },
+                  function: { name: 'planning_tool' },
                 },
               ],
             });
@@ -1047,47 +1243,58 @@ describe('LlmCaller', () => {
               tool_calls: [
                 {
                   index: 0,
-                  function: { arguments: '{"title":"修复后参数","pages":[{"title":"封面页"}]}' },
+                  function: { arguments: '{"goal":"recovered","steps":[{"name":"continue"}]}' },
                 },
               ],
             });
-          }
+          },
         );
 
-      const result = await llmCaller.callWithRetries(
-        cloudModelId,
-        testMessages,
-        {},
-        vi.fn(),
-      );
+      const result = await llmCaller.callWithRetries(cloudModelId, testMessages, {}, vi.fn());
 
       expect(typeof result).toBe('object');
       expect(mockChatCompletionStream).toHaveBeenCalledTimes(2);
     });
 
     it('应该仅在最终失败时才向上游发出一次 error（流式重试场景）', async () => {
-      const llmCallerWithRetry = new LlmCaller({ maxRetries: 1, retryDelayMs: 1, aiEngine, modelCatalog });
+      const llmCallerWithRetry = new LlmCaller({
+        maxRetries: 1,
+        retryDelayMs: 1,
+        aiEngine,
+        modelCatalog,
+      });
 
       const mockError = new Error('Rate limited');
       mockChatCompletionStream.mockImplementation(
-        async (modelId: any, messages: any, options: any, onContent: any, onError: any) => {
+        async (
+          _modelId: StreamModelId,
+          _messages: StreamMessages,
+          _options: StreamOptions,
+          _onContent: StreamOnContent,
+          onError: StreamOnError,
+        ) => {
           onError(mockError);
-        }
+        },
       );
 
       const eventHandler = vi.fn();
 
       await expect(
-        llmCallerWithRetry.callWithRetries(testModelId, testMessages, {}, eventHandler)
+        llmCallerWithRetry.callWithRetries(testModelId, testMessages, {}, eventHandler),
       ).rejects.toThrow('Rate limited');
 
-      const errorCalls = eventHandler.mock.calls.filter(call => call?.[0]?.type === 'error');
+      const errorCalls = eventHandler.mock.calls.filter((call) => call?.[0]?.type === 'error');
       expect(errorCalls.length).toBe(1);
     });
 
     it('应该在取消信号触发时立即停止', async () => {
-      const llmCallerWithRetry = new LlmCaller({ maxRetries: 3, retryDelayMs: 100, aiEngine, modelCatalog });
-      
+      const llmCallerWithRetry = new LlmCaller({
+        maxRetries: 3,
+        retryDelayMs: 100,
+        aiEngine,
+        modelCatalog,
+      });
+
       const abortController = new AbortController();
       mockChatCompletion.mockRejectedValue(new Error('Network error'));
 
@@ -1100,36 +1307,39 @@ describe('LlmCaller', () => {
           testMessages,
           {},
           undefined,
-          abortController.signal
-        )
+          abortController.signal,
+        ),
       ).rejects.toThrow(/cancelled|abort/i);
     });
 
     it('应该正确分类不可重试的错误', async () => {
       const llmCallerWithRetry = new LlmCaller({ maxRetries: 2, aiEngine, modelCatalog });
-      
+
       // 模拟一个不可重试的错误（如权限错误）
       const authError = new Error('Invalid API key');
       authError.name = 'AuthenticationError';
       mockChatCompletion.mockRejectedValue(authError);
 
-      await expect(
-        llmCallerWithRetry.callWithRetries(testModelId, testMessages)
-      ).rejects.toThrow('Invalid API key');
+      await expect(llmCallerWithRetry.callWithRetries(testModelId, testMessages)).rejects.toThrow(
+        'Invalid API key',
+      );
 
       // 不应该重试
       expect(mockChatCompletion).toHaveBeenCalledTimes(1);
     });
 
     it('应该处理速率限制错误并使用更长延迟', async () => {
-      const llmCallerWithRetry = new LlmCaller({ maxRetries: 1, retryDelayMs: 10, aiEngine, modelCatalog });
-      
+      const llmCallerWithRetry = new LlmCaller({
+        maxRetries: 1,
+        retryDelayMs: 10,
+        aiEngine,
+        modelCatalog,
+      });
+
       const rateLimitError = new Error('Rate limit exceeded');
       rateLimitError.name = 'RateLimitError';
-      
-      mockChatCompletion
-        .mockRejectedValueOnce(rateLimitError)
-        .mockResolvedValueOnce('Success');
+
+      mockChatCompletion.mockRejectedValueOnce(rateLimitError).mockResolvedValueOnce('Success');
 
       const startTime = Date.now();
       const result = await llmCallerWithRetry.callWithRetries(testModelId, testMessages);
@@ -1180,17 +1390,25 @@ describe('LlmCaller', () => {
 
     it('应该在流式调用中忽略空的 thought', async () => {
       mockChatCompletionStream.mockImplementation(
-        async (modelId: any, messages: any, options: any, onContent: any, onError: any, onFinish: any, onThought: any) => {
+        async (
+          _modelId: StreamModelId,
+          _messages: StreamMessages,
+          _options: StreamOptions,
+          onContent: StreamOnContent,
+          _onError: StreamOnError,
+          _onFinish: StreamOnFinish,
+          onThought: StreamOnThought,
+        ) => {
           onThought(''); // 空 thought
           onThought('   '); // 空白 thought
           onContent('Actual content');
-        }
+        },
       );
 
       const events: AnyAgentEvent[] = [];
       await llmCaller.callStream(testModelId, testMessages, {}, (event) => events.push(event));
 
-      const thoughtEvents = events.filter(e => e.type === 'thought');
+      const thoughtEvents = events.filter((e) => e.type === 'thought');
       // 空的 thought 应该被忽略（根据实现中的 if (!thought) return;）
       expect(thoughtEvents.length).toBe(0);
     });
@@ -1200,18 +1418,16 @@ describe('LlmCaller', () => {
     it('应该能够处理多个并发调用', async () => {
       mockChatCompletion.mockImplementation(async () => {
         // 模拟网络延迟
-        await new Promise(resolve => setTimeout(resolve, 10));
+        await new Promise((resolve) => setTimeout(resolve, 10));
         return 'Response';
       });
 
-      const promises = Array.from({ length: 10 }, () =>
-        llmCaller.call(testModelId, testMessages)
-      );
+      const promises = Array.from({ length: 10 }, () => llmCaller.call(testModelId, testMessages));
 
       const results = await Promise.all(promises);
 
       expect(results).toHaveLength(10);
-      expect(results.every(r => r === 'Response')).toBe(true);
+      expect(results.every((r) => r === 'Response')).toBe(true);
       expect(mockChatCompletion).toHaveBeenCalledTimes(10);
     });
 
@@ -1235,7 +1451,7 @@ describe('LlmCaller', () => {
       expect(mockChatCompletion).toHaveBeenCalledWith(
         testModelId,
         largeMessages,
-        expect.any(Object)
+        expect.any(Object),
       );
     });
   });

@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { AgentSpec, EventEnvelope, RuntimeEvent } from '../../../contracts';
+import { routeRuntimeEvent, RunIdSchema } from '../../../contracts';
+import type {
+  AgentSpec,
+  EventEnvelope,
+  RoutedRuntimeEvent,
+  RuntimeEvent,
+} from '../../../contracts';
 import type { AuditPort } from '../../../ports';
 import { EventBus } from '../../execution/event-bus';
 import { MemoryEventStore } from '../../graph-engine/event-store/memoryEventStore';
@@ -23,17 +29,32 @@ const request = {
   promptKey: 'deep_research_leader',
 } satisfies RunRequestSnapshot;
 
-function createRuntimeEvent(id: string, content: string): RuntimeEvent {
-  return {
-    type: 'thought',
-    id,
-    conversation_id: 'conv-1',
-    turn_id: 'turn-1',
-    timestamp: 100,
-    version: 1,
-    content,
-    is_complete: false,
-  };
+function createRuntimeEvent(id: string, content: string): RoutedRuntimeEvent {
+  return routeRuntimeEvent(
+    {
+      type: 'thought',
+      id,
+      conversation_id: 'conv-1',
+      turn_id: 'turn-1',
+      timestamp: 100,
+      version: 1,
+      content,
+      is_complete: false,
+    },
+    {
+      run_id: 'run-1',
+      lane: 'foreground',
+      visibility: 'conversation',
+    }
+  );
+}
+
+function createRuntimeEventForRun(id: string, runId: string): RoutedRuntimeEvent {
+  return routeRuntimeEvent(createRuntimeEvent(id, id), {
+    run_id: runId,
+    lane: 'foreground',
+    visibility: 'conversation',
+  });
 }
 
 function wrapEvent(event: RuntimeEvent, seq: number): EventEnvelope<RuntimeEvent> {
@@ -46,7 +67,10 @@ function wrapEvent(event: RuntimeEvent, seq: number): EventEnvelope<RuntimeEvent
   };
 }
 
-async function collectEvents(iterable: AsyncIterable<RuntimeEvent>, count: number): Promise<RuntimeEvent[]> {
+async function collectEvents(
+  iterable: AsyncIterable<RuntimeEvent>,
+  count: number
+): Promise<RuntimeEvent[]> {
   const events: RuntimeEvent[] = [];
   for await (const event of iterable) {
     events.push(event);
@@ -58,14 +82,14 @@ async function collectEvents(iterable: AsyncIterable<RuntimeEvent>, count: numbe
 }
 
 async function nextTask(): Promise<void> {
-  await new Promise<void>((resolve) => {
+  await new Promise<void>(resolve => {
     setTimeout(resolve, 0);
   });
 }
 
 function createRunRecord(overrides: Partial<RunRecord> = {}): RunRecord {
   return {
-    runId: 'run-1',
+    runId: RunIdSchema.parse('run-1'),
     conversationId: 'conv-1',
     agentSpecId: agentSpec.id,
     status: 'running',
@@ -131,7 +155,7 @@ describe('DefaultRunHandle', () => {
 
     expect(abortController.signal.aborted).toBe(true);
     expect(abortController.signal.reason).toBe('用户取消');
-    await expect(registryStore.load('run-1')).resolves.toMatchObject({
+    await expect(registryStore.load(RunIdSchema.parse('run-1'))).resolves.toMatchObject({
       status: 'cancelled',
       errorIfAny: {
         errorCode: 'RUN_CANCELLED',
@@ -142,30 +166,59 @@ describe('DefaultRunHandle', () => {
     expect(onCancelled).toHaveBeenCalledWith('run-1', { reason: '用户取消', forceCleanup: false });
   });
 
+  it('取消请求完成后，执行器可补全同一 cancelled 终态的实际进度且不重复取消副作用', async () => {
+    const emit = vi.fn<AuditPort['emit']>();
+    const { handle, registryStore, onCancelled } = await createHandle({ auditPort: { emit } });
+
+    await handle.markRunning({ currentNode: 'llm' });
+    await handle.cancel({ reason: '用户取消', forceCleanup: false });
+    await handle.cancel(
+      { reason: 'child settled', forceCleanup: false },
+      {
+        currentNode: 'cancelled',
+        iterationsUsed: 15,
+      }
+    );
+
+    await expect(registryStore.load(RunIdSchema.parse('run-1'))).resolves.toMatchObject({
+      status: 'cancelled',
+      currentNode: 'cancelled',
+      iterationsUsed: 15,
+      errorIfAny: {
+        errorCode: 'RUN_CANCELLED',
+        message: '用户取消',
+      },
+    });
+    expect(onCancelled).toHaveBeenCalledTimes(1);
+    expect(emit).toHaveBeenCalledTimes(1);
+  });
+
   it('cancel 发出标准 AuditEnvelope', async () => {
     const emit = vi.fn<AuditPort['emit']>();
     const { handle } = await createHandle({ auditPort: { emit } });
 
     await handle.cancel({ reason: '用户取消', forceCleanup: true, timeout: 50 });
 
-    expect(emit).toHaveBeenCalledWith(expect.objectContaining({
-      runId: 'run-1',
-      action: 'run.cancel',
-      actor: { kind: 'host' },
-      decision: expect.objectContaining({
-        outcome: 'cancelled',
-        reason: '用户取消',
-        metadata: {
-          forceCleanup: true,
-          timeout: 50,
-        },
-      }),
-      scope: expect.objectContaining({
-        conversationId: 'conv-1',
+    expect(emit).toHaveBeenCalledWith(
+      expect.objectContaining({
         runId: 'run-1',
-        agentSpecId: 'deep_research_leader',
-      }),
-    }));
+        action: 'run.cancel',
+        actor: { kind: 'host' },
+        decision: expect.objectContaining({
+          outcome: 'cancelled',
+          reason: '用户取消',
+          metadata: {
+            forceCleanup: true,
+            timeout: 50,
+          },
+        }),
+        scope: expect.objectContaining({
+          conversationId: 'conv-1',
+          runId: 'run-1',
+          agentSpecId: 'deep_research_leader',
+        }),
+      })
+    );
   });
 
   it('observe 能收到 EventBus 的实时 RuntimeEvent', async () => {
@@ -182,45 +235,34 @@ describe('DefaultRunHandle', () => {
     ]);
   });
 
+  it('observe 实时路径按 runId 过滤共享 EventBus 事件', async () => {
+    const { handle, eventBus } = await createHandle();
+    const collectPromise = collectEvents(handle.observe(), 1);
+
+    await nextTask();
+    eventBus.publish(wrapEvent(createRuntimeEventForRun('evt-other', 'run-other'), 1));
+    await nextTask();
+    eventBus.publish(wrapEvent(createRuntimeEventForRun('evt-own', 'run-1'), 2));
+
+    await expect(collectPromise).resolves.toEqual([createRuntimeEventForRun('evt-own', 'run-1')]);
+  });
+
   it('observe(includePersisted=true) 先回放持久化事件，再接实时事件', async () => {
     const { handle, eventBus, eventStore } = await createHandle();
-    await eventStore.append('conv-1', {
-      eventId: 'p-1',
-      timestamp: 1,
-      conversationId: 'conv-1',
-      runId: 'run-1',
+    await eventStore.append({
+      eventStoreId: 'p-1',
       event: createRuntimeEvent('evt-p1', '历史一'),
     });
-    await eventStore.append('conv-1', {
-      eventId: 'p-2',
-      timestamp: 2,
-      conversationId: 'conv-1',
-      runId: 'run-other',
-      event: createRuntimeEvent('evt-other', '别的 run'),
+    await eventStore.append({
+      eventStoreId: 'p-2',
+      event: createRuntimeEventForRun('evt-other', 'run-other'),
     });
-    await eventStore.append('conv-1', {
-      eventId: 'p-3',
-      timestamp: 3,
-      conversationId: 'conv-1',
-      runId: 'run-1',
+    await eventStore.append({
+      eventStoreId: 'p-3',
       event: createRuntimeEvent('evt-p2', '历史二'),
     });
-    await eventStore.append('conv-1', {
-      eventId: 'p-4',
-      timestamp: 4,
-      conversationId: 'conv-1',
-      runId: 'legacy-turn-id',
-      event: {
-        ...createRuntimeEvent('evt-p3', '嵌套 run_context 历史'),
-        metadata: {
-          run_context: {
-            runId: 'run-1',
-          },
-        },
-      },
-    });
 
-    const collectPromise = collectEvents(handle.observe({ includePersisted: true }), 4);
+    const collectPromise = collectEvents(handle.observe({ includePersisted: true }), 3);
 
     await nextTask();
     eventBus.publish(wrapEvent(createRuntimeEvent('evt-live', '实时'), 1));
@@ -228,14 +270,6 @@ describe('DefaultRunHandle', () => {
     await expect(collectPromise).resolves.toEqual([
       createRuntimeEvent('evt-p1', '历史一'),
       createRuntimeEvent('evt-p2', '历史二'),
-      {
-        ...createRuntimeEvent('evt-p3', '嵌套 run_context 历史'),
-        metadata: {
-          run_context: {
-            runId: 'run-1',
-          },
-        },
-      },
       createRuntimeEvent('evt-live', '实时'),
     ]);
   });
@@ -252,11 +286,11 @@ describe('DefaultRunHandle', () => {
     expect(costCollector.snapshot).toHaveBeenCalledWith('run-1');
   });
 
-  it('markRunning/markCompleted/markFailed 写入 RunRecord 生命周期状态', async () => {
+  it('markRunning/markAwaitingUser/markCompleted 写入 RunRecord 生命周期状态', async () => {
     const { handle, registryStore } = await createHandle();
 
     await handle.markRunning({ currentNode: 'llm' });
-    await expect(registryStore.load('run-1')).resolves.toMatchObject({
+    await expect(registryStore.load(RunIdSchema.parse('run-1'))).resolves.toMatchObject({
       status: 'running',
       currentNode: 'llm',
     });
@@ -267,7 +301,7 @@ describe('DefaultRunHandle', () => {
       eventId: 'wait-event-1',
       reason: '需要用户确认',
     });
-    const awaitingRecord = await registryStore.load('run-1');
+    const awaitingRecord = await registryStore.load(RunIdSchema.parse('run-1'));
     expect(awaitingRecord).toMatchObject({
       status: 'awaiting_user',
       currentNode: 'wait_user',
@@ -283,7 +317,7 @@ describe('DefaultRunHandle', () => {
     expect(awaitingRecord?.pausedAt).toEqual(expect.any(Number));
 
     await handle.markRunning({ currentNode: 'llm' });
-    await expect(registryStore.load('run-1')).resolves.toMatchObject({
+    await expect(registryStore.load(RunIdSchema.parse('run-1'))).resolves.toMatchObject({
       status: 'running',
       currentNode: 'llm',
       pausedAt: undefined,
@@ -291,19 +325,23 @@ describe('DefaultRunHandle', () => {
     });
 
     await handle.markCompleted({ currentNode: 'answer', iterationsUsed: 4 });
-    await expect(registryStore.load('run-1')).resolves.toMatchObject({
+    await expect(registryStore.load(RunIdSchema.parse('run-1'))).resolves.toMatchObject({
       status: 'completed',
       currentNode: 'answer',
       iterationsUsed: 4,
       errorIfAny: undefined,
     });
+  });
+
+  it('markFailed 写入 failed 终态', async () => {
+    const { handle, registryStore } = await createHandle();
 
     await handle.markFailed({
       errorCode: 'LLM_ERROR',
       message: '模型请求失败',
       recoverable: true,
     });
-    await expect(registryStore.load('run-1')).resolves.toMatchObject({
+    await expect(registryStore.load(RunIdSchema.parse('run-1'))).resolves.toMatchObject({
       status: 'failed',
       errorIfAny: {
         errorCode: 'LLM_ERROR',
@@ -311,6 +349,36 @@ describe('DefaultRunHandle', () => {
         recoverable: true,
       },
     });
+  });
+
+  it('终态 Run 不允许被后续生命周期写入反向覆写', async () => {
+    const { handle, registryStore, abortController, onCancelled } = await createHandle();
+
+    await handle.markCompleted({ currentNode: 'answer', iterationsUsed: 4 });
+    const completedRecord = await registryStore.load(RunIdSchema.parse('run-1'));
+    expect(completedRecord).toMatchObject({
+      status: 'completed',
+      currentNode: 'answer',
+      iterationsUsed: 4,
+      errorIfAny: undefined,
+    });
+
+    await handle.markAwaitingUser({
+      currentNode: 'wait_user',
+      iterationsUsed: 5,
+      eventId: 'wait-after-complete',
+      reason: '完成后迟到的等待事件',
+    });
+    await handle.markFailed({
+      errorCode: 'LATE_ERROR',
+      message: '完成后的迟到错误',
+      recoverable: false,
+    });
+    await handle.cancel({ reason: '完成后的迟到取消', forceCleanup: true });
+
+    expect(abortController.signal.aborted).toBe(true);
+    expect(onCancelled).not.toHaveBeenCalled();
+    await expect(registryStore.load(RunIdSchema.parse('run-1'))).resolves.toEqual(completedRecord);
   });
 
   it('spec/request getter 返回注册时的快照，不受外部对象后续修改影响', async () => {

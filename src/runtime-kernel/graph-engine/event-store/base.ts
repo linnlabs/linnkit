@@ -1,34 +1,40 @@
-import type { RuntimeEvent } from '../../../contracts';
+import type { RoutedRuntimeEvent } from '../../../contracts';
 
 export type PersistedEvent = {
-  eventId: string;
-  timestamp: number;
-  conversationId: string;
-  runId?: string;
-  event: RuntimeEvent;
+  /** EventStore 内用于稳定分页的单调游标，不等同于 RuntimeEvent.id。 */
+  eventStoreId: string;
+  event: RoutedRuntimeEvent;
 };
 
 export type EventRangeOptions = {
-  fromEventId?: string;
-  toEventId?: string;
+  fromEventStoreId?: string;
+  toEventStoreId?: string;
   limit?: number;
 };
 
 export interface EventStore {
-  append(conversationId: string, event: PersistedEvent): Promise<void>;
+  append(event: PersistedEvent): Promise<void>;
   range(conversationId: string, opts?: EventRangeOptions): Promise<PersistedEvent[]>;
-  latestEventId(conversationId: string): Promise<string | null>;
-  truncate?(conversationId: string, opts: { beforeEventId?: string; beforeMs?: number }): Promise<void>;
+  latestEventStoreId(conversationId: string): Promise<string | null>;
+  truncate?(conversationId: string, opts: { beforeEventStoreId?: string; beforeMs?: number }): Promise<void>;
 }
 
-export function createMonotonicEventIdFactory(
+export function requireEventStoreId(eventStoreId: string): string {
+  if (eventStoreId.trim().length === 0) {
+    throw new Error('PersistedEvent.eventStoreId must be a non-empty storage cursor.');
+  }
+  return eventStoreId;
+}
+
+export function createMonotonicEventStoreIdFactory(
   nowProvider: () => number = () => Date.now(),
 ): () => string {
   let lastTimestamp = 0;
   let counter = 0;
 
   return () => {
-    const timestamp = nowProvider();
+    // 存储游标必须服从进程内发布顺序；系统时钟回拨不能让历史分页倒退。
+    const timestamp = Math.max(nowProvider(), lastTimestamp);
     if (timestamp === lastTimestamp) {
       counter += 1;
     } else {

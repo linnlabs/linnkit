@@ -1,5 +1,4 @@
-import { generateMessageId } from '../../../../shared/ids';
-import type { AiMessage } from '../../../../contracts';
+import { generateAiMessageId, type AiMessage } from '../../../../contracts';
 import {
   BasePreprocessor,
   PreprocessorContext,
@@ -11,6 +10,7 @@ import {
   findCurrentRunStartIndex,
   type ToolInteractionGroup,
 } from '../utils/toolInteractionGroup';
+import { PREPROCESSOR_PRIORITY } from '../../../shared/preprocessors/priority';
 
 export interface ToolReplayProtocolGuardOptions {
   policy?: ToolReplayProtocolPolicy;
@@ -63,7 +63,7 @@ function buildDegradedToolReplayMessage(group: ToolInteractionGroup<AiMessage>):
   }
 
   return {
-    id: generateMessageId(),
+    id: generateAiMessageId(),
     role: 'assistant',
     type: 'final_answer',
     content: lines.join('\n\n'),
@@ -111,7 +111,7 @@ export class ToolReplayProtocolGuardPreprocessor extends BasePreprocessor {
 
   constructor(options: ToolReplayProtocolGuardOptions = {}) {
     super();
-    this.priority = options.priority ?? 0.5;
+    this.priority = options.priority ?? PREPROCESSOR_PRIORITY.toolReplayProtocolGuard;
     this.explicitPolicy = options.policy;
   }
 

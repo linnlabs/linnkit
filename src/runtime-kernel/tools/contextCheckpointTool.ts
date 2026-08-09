@@ -42,7 +42,7 @@ export interface ContextCheckpointToolOptions {
    */
   summaryMaxLength?: number;
   /**
-   * host 额外参数 schema，例如 taskstate / references。
+   * host 额外参数 schema，例如 task metadata / references。
    */
   extraParameters?: Record<string, ToolParameterProperty>;
   /**
@@ -127,7 +127,7 @@ function buildDefaultObservation(summary: string): string {
  *
  * 中文备注：
  * - 它只负责输出 linnkit 能识别的 checkpoint marker；
- * - TaskState / SharedMemory / 外部文档写入属于 host 能力，可通过 hook 扩展；
+ * - 任务状态或外部持久化属于 host 能力，可通过 hook 扩展；
  * - host 不注册这个工具时，主动 checkpoint 行为不会启用。
  */
 export class ContextCheckpointTool extends BaseTool<ContextCheckpointToolArgs, string> {

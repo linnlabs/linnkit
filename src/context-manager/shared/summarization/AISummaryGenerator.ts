@@ -5,25 +5,28 @@
 
 import type { MessageProcessingState } from '../providers/base';
 import type {
-  GenerateRequest,
-  GenerateResponse,
-} from '../contracts/chatLineMessage';
+  SummaryGenerationRequest,
+  SummaryGenerationResponse,
+} from '../contracts/summaryGeneration';
 import type { AiMessage } from '../../../contracts';
+import type { CanonicalLlmUsage } from '../../../contracts';
 import type { SummarizationProviderContext } from './config';
 
+export interface SummaryGenerationResult {
+  summary: string;
+  modelId: string;
+  canonicalUsage?: CanonicalLlmUsage;
+}
+
 export interface SummarizationOptions {
-  maxSummaryTokens: number;
-  targetCompressionRatio?: number;
   /**
    * 执行摘要的已注册 agent/chat ID。
    *
    * 中文备注：linnkit 不持有 prompt 正文，也不直接决定模型调用；这里只携带注册引用，
    * 真正的 prompt 构建与模型策略由 host 的注册表解释。
-   */
+  */
   agentId: string;
   modelId: string | null;
-  fallbackModelId?: string | null;
-  language: 'zh' | 'en' | 'auto';
   failureBehavior?: 'fail-fast' | 'continue-if-within-budget';
   /** 内部调参与测试注入，默认保持生产重试行为。 */
   maxRetries?: number;
@@ -33,13 +36,11 @@ export interface SummarizationOptions {
 
 export class AISummaryGenerator {
   private readonly defaultOptions: SummarizationOptions;
-  private readonly fallbackModelId: string | null;
   private readonly MAX_RETRIES: number;
   private readonly RETRY_DELAY_MS: number;
 
   constructor(options: SummarizationOptions) {
     this.defaultOptions = options;
-    this.fallbackModelId = options.fallbackModelId ?? null;
     this.MAX_RETRIES = normalizePositiveInteger(options.maxRetries, 3);
     this.RETRY_DELAY_MS = normalizeNonNegativeInteger(options.retryDelayMs, 1000);
   }
@@ -52,11 +53,11 @@ export class AISummaryGenerator {
       data: Record<string, unknown>,
       context: SummarizationProviderContext,
     ) => void,
-  ): Promise<string> {
-    const effectiveGenerate = context.generate;
-    if (!effectiveGenerate) {
+  ): Promise<SummaryGenerationResult> {
+    const generateSummary = context.generateSummary;
+    if (!generateSummary) {
       throw new Error(
-        '[AISummaryGenerator] ProviderContext.generate is required. ' +
+        '[AISummaryGenerator] ProviderContext.generateSummary is required. ' +
         'Inject summarization generation from host or profile orchestration.'
       );
     }
@@ -74,11 +75,10 @@ export class AISummaryGenerator {
       messageCount: candidates.length,
       textLength: conversationText.length,
       primaryModel: this.defaultOptions.modelId,
-      fallbackModel: this.fallbackModelId,
     }, context);
 
     const primaryResult = await this.tryGenerateSummaryWithRetries(
-      effectiveGenerate,
+      generateSummary,
       conversationText,
       this.defaultOptions.modelId,
       this.MAX_RETRIES,
@@ -87,47 +87,21 @@ export class AISummaryGenerator {
     );
 
     if (primaryResult.success) {
-      return primaryResult.summary!;
+      return primaryResult.result;
     }
 
-    if (!this.fallbackModelId) {
-      throw new Error(`摘要生成失败（无可用降级模型）。主模型(${this.defaultOptions.modelId})错误: ${primaryResult.error}`);
-    }
-
-    debugFn('⚠️ 主模型摘要失败，尝试降级到备用模型', {
+    debugFn('❌ 摘要模型重试后仍失败，摘要化终止', {
       primaryModel: this.defaultOptions.modelId,
-      fallbackModel: this.fallbackModelId,
       primaryError: primaryResult.error,
     }, context);
 
-    const fallbackResult = await this.tryGenerateSummaryWithRetries(
-      effectiveGenerate,
-      conversationText,
-      this.fallbackModelId,
-      this.MAX_RETRIES,
-      context,
-      debugFn
-    );
-
-    if (fallbackResult.success) {
-      return fallbackResult.summary!;
-    }
-
-    debugFn('❌ 主模型和备用模型均失败，摘要化终止', {
-      primaryModel: this.defaultOptions.modelId,
-      fallbackModel: this.fallbackModelId,
-      primaryError: primaryResult.error,
-      fallbackError: fallbackResult.error,
-    }, context);
-
-    throw new Error(
-      `摘要生成完全失败。主模型(${this.defaultOptions.modelId})错误: ${primaryResult.error}; ` +
-      `备用模型(${this.fallbackModelId})错误: ${fallbackResult.error}`
-    );
+    throw new Error(`摘要生成失败。同一模型(${this.defaultOptions.modelId})重试后仍失败: ${primaryResult.error}`);
   }
 
   private async tryGenerateSummaryWithRetries(
-    generate: (request: GenerateRequest) => Promise<GenerateResponse>,
+    generateSummary: (
+      request: SummaryGenerationRequest,
+    ) => Promise<SummaryGenerationResponse>,
     conversationText: string,
     modelId: string,
     maxRetries: number,
@@ -137,7 +111,7 @@ export class AISummaryGenerator {
       data: Record<string, unknown>,
       context: SummarizationProviderContext,
     ) => void,
-  ): Promise<{ success: true; summary: string } | { success: false; error: string }> {
+  ): Promise<{ success: true; result: SummaryGenerationResult } | { success: false; error: string }> {
     let lastError: Error | null = null;
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
@@ -148,14 +122,14 @@ export class AISummaryGenerator {
           maxRetries,
         }, context);
 
-        const summaryRequest: GenerateRequest = {
-          promptKey: this.defaultOptions.agentId,
+        const summaryRequest: SummaryGenerationRequest = {
+          agentId: this.defaultOptions.agentId,
           modelId,
-          prompt: conversationText,
+          content: conversationText,
         };
 
-        const response = await generate(summaryRequest);
-        const summary = response.generatedText;
+        const response = await generateSummary(summaryRequest);
+        const summary = response.summary;
 
         if (!summary.trim()) {
           throw new Error('AI返回了空的摘要内容');
@@ -165,9 +139,17 @@ export class AISummaryGenerator {
           modelId,
           attempt,
           summaryLength: summary.length,
+          hasCanonicalUsage: response.canonicalUsage !== undefined,
         }, context);
 
-        return { success: true, summary: summary.trim() };
+        return {
+          success: true,
+          result: {
+            summary: summary.trim(),
+            modelId,
+            ...(response.canonicalUsage ? { canonicalUsage: response.canonicalUsage } : {}),
+          },
+        };
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
         debugFn(`❌ 摘要生成失败 (模型: ${modelId}, 第${attempt}/${maxRetries}次)`, {

@@ -10,7 +10,8 @@ import {
   type LlmNodeAction,
 } from './llmNode.state';
 import { LlmNodeEventBridge, type TickEvent } from './llmNode.eventBridge';
-import type { RuntimeEvent } from '../../../contracts';
+import { parseRuntimeEvents, type RuntimeEvent } from '../../../contracts';
+import { requireRuntimeIdentity } from '../tick-pipeline/helpers';
 
 const logger = new Logger('LlmNode');
 
@@ -22,10 +23,7 @@ const logger = new Logger('LlmNode');
  * - 默认依赖装配放到工厂里，方便测试替换，也降低构造函数耦合。
  */
 export interface LlmNodeReasoner {
-  tick(
-    input: TickInput,
-    eventHandler?: (event: TickEvent) => void,
-  ): Promise<TickOutput>;
+  tick(input: TickInput, eventHandler?: (event: TickEvent) => void): Promise<TickOutput>;
 }
 
 export interface LlmNodeDependencies {
@@ -47,18 +45,25 @@ export class LlmNode implements GraphNode {
     });
 
     const graphLocal = readGraphAgentLocal(state.local);
-    const { conversationId, request, toolContext, summarizationCallbacks, sseSink, signal, history } = graphLocal;
+    const {
+      conversationId,
+      request,
+      toolContext,
+      summarizationCallbacks,
+      runtimeEventSink,
+      signal,
+      history,
+    } = graphLocal;
     logger.info('[LlmNode] 已加载历史事件', {
       historyCount: history.length,
       hasSummarizationCallbacks: Boolean(summarizationCallbacks),
     });
 
-    const turnId = graphLocal.turnId ?? `turn_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-
     if (!request) {
       logger.warn('Request object is missing, yielding.');
       return { kind: 'yield', events: [] };
     }
+    const turnId = requireRuntimeIdentity(graphLocal.turnId, 'turnId');
 
     // ── 阶段/请求解析 ──
 
@@ -68,7 +73,7 @@ export class LlmNode implements GraphNode {
 
     const finalStepForcedTools = graphLocal.executorLocal?.finalStepForcedTools;
     const forcedTools = Array.isArray(finalStepForcedTools)
-      ? finalStepForcedTools.filter((toolName) => typeof toolName === 'string' && toolName.length > 0)
+      ? finalStepForcedTools.filter(toolName => typeof toolName === 'string' && toolName.length > 0)
       : [];
 
     const effectiveRequest = forceFinalAnswer
@@ -80,7 +85,10 @@ export class LlmNode implements GraphNode {
 
     // ── 状态 reducer ──
 
-    let nodeState = initLlmNodeState({ answerId: graphLocal.answerId, chunkSeq: graphLocal.chunkSeq });
+    let nodeState = initLlmNodeState({
+      answerId: graphLocal.answerId,
+      chunkSeq: graphLocal.chunkSeq,
+    });
     const dispatch = (action: LlmNodeAction) => {
       nodeState = llmNodeReducer(nodeState, action);
     };
@@ -90,23 +98,33 @@ export class LlmNode implements GraphNode {
     const bridge = new LlmNodeEventBridge({
       getState: () => nodeState,
       dispatch,
-      sseSink,
+      runtimeEventSink,
       conversationId,
       turnId,
     });
 
     // ── 执行 tick ──
 
-    const { decision, newEvents } = await this.reasoner.tick({
-      request: effectiveRequest,
-      toolContext,
-      stream: true,
-      history,
-      signal,
-      forceFinalAnswer,
-      executorLocal,
-      summarizationCallbacks,
-    }, bridge.handle);
+    let tickOutput: TickOutput;
+    try {
+      tickOutput = await this.reasoner.tick(
+        {
+          request: effectiveRequest,
+          toolContext,
+          stream: true,
+          history,
+          signal,
+          forceFinalAnswer,
+          executorLocal,
+          summarizationCallbacks,
+        },
+        bridge.handle
+      );
+    } catch (error) {
+      bridge.finalizePartialAnswer();
+      throw error;
+    }
+    const { decision, executorLocalPatch, contextTrace } = tickOutput;
 
     // ── 决策 dispatch ──
 
@@ -135,15 +153,21 @@ export class LlmNode implements GraphNode {
 
     // ── 一次性回写 state.local ──
 
-    const patch = buildLocalPatch(nodeState, { conversationId, turnId, history, newEvents });
+    const patch = buildLocalPatch(nodeState, {
+      conversationId,
+      turnId,
+      history,
+      executorLocal,
+      executorLocalPatch,
+      contextTrace,
+    });
     state.local = { ...(state.local || {}), ...patch };
 
-    const combinedEvents = [...newEvents, ...nodeState.streamRuntimeEvents];
+    const combinedEvents = [...nodeState.streamRuntimeEvents];
 
     logger.info('[LlmNode] 历史事件已更新', {
       previousCount: history.length,
-      nextCount: (patch.history as RuntimeEvent[]).length,
-      newEventCount: newEvents.length,
+      nextCount: parseRuntimeEvents(patch.history).length,
       streamedEventCount: nodeState.streamRuntimeEvents.length,
     });
 
@@ -162,7 +186,7 @@ export class LlmNode implements GraphNode {
         return { kind: 'route', nextNodeId: 'tool', events: combinedEvents };
       }
       case 'final_answer': {
-        return { kind: 'route', nextNodeId: 'answer', events: combinedEvents };
+        return { kind: 'yield', events: combinedEvents };
       }
       case 'wait_user': {
         return { kind: 'route', nextNodeId: 'wait_user', events: combinedEvents };

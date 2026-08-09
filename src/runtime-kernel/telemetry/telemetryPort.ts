@@ -25,6 +25,8 @@ export type TelemetryEvent =
       usage?: NormalizedLlmUsage;
       canonicalUsage?: CanonicalLlmUsage;
       tokenLedgerEntry?: LlmUsageTokenLedgerEntry;
+      phase?: 'main' | 'context-internal';
+      purpose?: string;
       scope: TelemetryScope;
     }
   | {
@@ -38,7 +40,6 @@ export type TelemetryEvent =
   | {
       kind: Extract<TelemetryEventKind, 'context_build'>;
       modelId: string;
-      mode: 'agent' | 'chat';
       tokenEstimate: ContextBuildTokenEstimate;
       tokenComponents?: ContextTokenComponent[];
       tokenLedgerEntry?: ContextComponentTokenLedgerEntry;

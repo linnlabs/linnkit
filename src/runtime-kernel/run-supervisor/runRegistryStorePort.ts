@@ -8,8 +8,9 @@ export type RunStatus =
   | 'cancelled';
 
 export type ListRunsFilter = {
+  conversationId?: string;
   status?: RunStatus | RunStatus[];
-  parentRunId?: string;
+  parentRunId?: RunId;
   agentSpecId?: string;
   startedAfter?: number;
   startedBefore?: number;
@@ -18,9 +19,9 @@ export type ListRunsFilter = {
 };
 
 export type RunRecord = {
-  runId: string;
+  runId: RunId;
   conversationId: string;
-  parentRunId?: string;
+  parentRunId?: RunId;
   agentSpecId?: string;
   status: RunStatus;
   currentNode?: string;
@@ -36,7 +37,8 @@ export type RunRecord = {
 
 export interface RunRegistryStore {
   save(record: RunRecord): Promise<void>;
-  load(runId: string): Promise<RunRecord | null>;
+  load(runId: RunId): Promise<RunRecord | null>;
   list(filter?: ListRunsFilter): Promise<{ runs: RunRecord[]; nextCursor?: string }>;
-  delete(runId: string): Promise<void>;
+  delete(runId: RunId): Promise<void>;
 }
+import type { RunId } from '../../contracts';

@@ -19,12 +19,40 @@ describe('DefaultTokenizerPort', () => {
     const config = {
       avgCharsPerToken: 2,
       toolCallOverhead: 17,
+      preferModelIdWhenEncodingMissing: false,
     };
 
     const tokenizer = createDefaultTokenizerPort(config);
 
-    expect(tokenizer.estimateMessage(message, 'ignored')).toBe(
+    expect(tokenizer.estimateMessage(message, 'gpt-4o-mini')).toBe(
       TokenCalculator.estimateMessageTokens(message, config),
+    );
+  });
+
+  it('uses modelId for default encoding selection when no encoding is configured', () => {
+    const tokenizer = createDefaultTokenizerPort({
+      avgCharsPerToken: 2,
+    });
+
+    expect(tokenizer.estimateText('hello world', 'gpt-4o-mini')).toBe(
+      TokenCalculator.estimateTokens('hello world', {
+        encoding: 'gpt-4o-mini',
+        avgCharsPerToken: 2,
+      }),
+    );
+  });
+
+  it('keeps explicit encoding ahead of modelId', () => {
+    const tokenizer = createDefaultTokenizerPort({
+      encoding: 'cl100k_base',
+      avgCharsPerToken: 2,
+    });
+
+    expect(tokenizer.estimateText('hello world', 'gpt-4o-mini')).toBe(
+      TokenCalculator.estimateTokens('hello world', {
+        encoding: 'cl100k_base',
+        avgCharsPerToken: 2,
+      }),
     );
   });
 });

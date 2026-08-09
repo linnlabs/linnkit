@@ -1,7 +1,6 @@
-import type { MessageProcessingState, ProviderContext } from '../base';
+import type { MessageProcessingState } from '../base';
 import type { ToolInteractionGroup } from '../../../utils/toolInteractionGroup';
 import type { ToolPairMatcher } from './ToolPairMatcher';
-import type { ToolPairTruncator } from './ToolPairTruncator';
 import type { DebugFn } from './types';
 
 /**
@@ -9,23 +8,20 @@ import type { DebugFn } from './types';
  *
  * 中文备注：
  * - P1、P3 都要保证 tool_call 与 tool_output 成对保留；
- * - 这里集中处理“直接装入 / 截断后装入 / 截断后仍超限”的协议细节。
+ * - 这里集中处理“预算内直接装入 / 保护窗口内超预算仍原样装入”的协议细节。
  */
 export function keepToolGroup(params: {
   group: ToolInteractionGroup<MessageProcessingState>;
   processedIds: Set<string>;
   currentTokens: number;
   budgetLimit: number;
-  estimateTokens: ProviderContext['estimateTokens'];
   matcher: ToolPairMatcher;
-  truncator: ToolPairTruncator;
   debug: DebugFn;
   directStrategy: string;
-  truncatedStrategy: string;
   directLog: string;
-  truncatedLog: string;
-  truncationFailedLog: string;
-  stopWhenTruncatedDoesNotFit: boolean;
+  overBudgetLog: string;
+  stopWhenOverBudget: boolean;
+  forceKeepWhenOverBudget?: boolean;
 }): {
   tokensUsed: number;
   processedCount: number;
@@ -38,25 +34,18 @@ export function keepToolGroup(params: {
     processedIds,
     currentTokens,
     budgetLimit,
-    estimateTokens,
     matcher,
-    truncator,
     debug,
   } = params;
   let tokensUsed = 0;
   let processedCount = 0;
   const strategiesApplied: string[] = [];
 
-  const fit = matcher.canFitToolPair(group, currentTokens, budgetLimit, debug);
+  const fit = matcher.canFitToolPair(group, currentTokens, budgetLimit);
   if (fit.canFit) {
-    for (const pairState of fit.pair) {
-      if (pairState.action === 'skip') {
-        markWorkingMemory(pairState);
-        tokensUsed += pairState.tokens;
-        processedCount++;
-      }
-      processedIds.add(pairState.message.id);
-    }
+    const marked = markToolGroup(group, processedIds);
+    tokensUsed += marked.tokensUsed;
+    processedCount += marked.processedCount;
     strategiesApplied.push(params.directStrategy);
     debug(params.directLog, {
       anchorId: group.anchorId,
@@ -66,52 +55,62 @@ export function keepToolGroup(params: {
     return { tokensUsed, processedCount, strategiesApplied, kept: true, stop: false };
   }
 
-  const truncationResult = truncator.truncate(group, estimateTokens, debug);
-  if (!truncationResult.success) {
-    debug(params.truncationFailedLog, {
+  if (params.forceKeepWhenOverBudget) {
+    const marked = markToolGroup(group, processedIds);
+    strategiesApplied.push(`${params.directStrategy}_forced`);
+    debug(params.overBudgetLog, {
       anchorId: group.anchorId,
       pairSize: group.messages.length,
-      tokens: group.messages.reduce((sum, state) => sum + state.tokens, 0),
+      pairTokens: fit.totalTokens,
+      budgetLimit,
     });
-    return { tokensUsed, processedCount, strategiesApplied, kept: false, stop: false };
-  }
-
-  const fitAfterTruncation = matcher.canFitToolPair(group, currentTokens, budgetLimit, debug);
-  if (!fitAfterTruncation.canFit) {
-    if (params.stopWhenTruncatedDoesNotFit) {
-      debug('💰 截断后仍无法装入预算，停止继续保留更旧工具对（保持结构一致）', {
-        pairTokens: fitAfterTruncation.totalTokens,
-        budgetLimit,
-      });
-    }
     return {
-      tokensUsed,
-      processedCount,
+      tokensUsed: marked.tokensUsed,
+      processedCount: marked.processedCount,
       strategiesApplied,
-      kept: false,
-      stop: params.stopWhenTruncatedDoesNotFit,
+      kept: true,
+      stop: params.stopWhenOverBudget,
     };
   }
 
-  for (const pairState of fitAfterTruncation.pair) {
-    if (pairState.action === 'skip') {
-      markWorkingMemory(pairState);
-      tokensUsed += pairState.tokens;
-      processedCount++;
-    }
-    processedIds.add(pairState.message.id);
+  if (params.stopWhenOverBudget) {
+    debug('💰 工具组无法装入预算，停止继续保留更旧工具组（保持结构一致）', {
+      pairTokens: fit.totalTokens,
+      budgetLimit,
+    });
   }
-  strategiesApplied.push(params.truncatedStrategy);
-  debug(params.truncatedLog, {
-    anchorId: group.anchorId,
-    pairSize: fitAfterTruncation.pair.length,
-    tokens: fitAfterTruncation.totalTokens,
-    truncatedTokens: truncationResult.tokensSaved,
-  });
-  return { tokensUsed, processedCount, strategiesApplied, kept: true, stop: false };
+  return {
+    tokensUsed,
+    processedCount,
+    strategiesApplied,
+    kept: false,
+    stop: params.stopWhenOverBudget,
+  };
 }
 
 export function markWorkingMemory(state: MessageProcessingState): void {
   state.action = 'keep_working_memory';
   state.phase = 'WORKING_MEMORY';
+}
+
+function markToolGroup(
+  group: ToolInteractionGroup<MessageProcessingState>,
+  processedIds: Set<string>,
+): {
+  tokensUsed: number;
+  processedCount: number;
+} {
+  let tokensUsed = 0;
+  let processedCount = 0;
+
+  for (const state of group.messages) {
+    if (state.action === 'skip') {
+      markWorkingMemory(state);
+      tokensUsed += state.tokens;
+      processedCount++;
+    }
+    processedIds.add(state.message.id);
+  }
+
+  return { tokensUsed, processedCount };
 }

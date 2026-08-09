@@ -4,10 +4,15 @@ import {
   buildErrorLocalState,
   buildRequireUserLocalState,
   buildSuccessLocalState,
-  buildSuccessOutputPayload,
   extractToolControlInfo,
   readStructuredObservation,
+  validateStructuredToolResultContract,
 } from '../toolNode.stateTransitions';
+import { createToolOutputEvent, createUserInputEvent, ToolCallIdSchema } from '../../../../contracts';
+
+function createHistoryEvent(id: string) {
+  return createUserInputEvent(id, 'conv_1', 'turn_1', `content:${id}`);
+}
 
 describe('toolNode.stateTransitions', () => {
   it('应提取 structuredObservation 与 tool control', () => {
@@ -17,6 +22,7 @@ describe('toolNode.stateTransitions', () => {
         requireUser: true,
         questionnaireId: 'q_1',
         resumeStrategy: 'continue',
+        finalAnswer: 'final report',
       },
     };
 
@@ -25,19 +31,92 @@ describe('toolNode.stateTransitions', () => {
       requireUser: true,
       questionnaireId: 'q_1',
       resumeStrategy: 'continue',
+      finalAnswer: 'final report',
     });
   });
 
-  it('应构造 success output payload 并写入 idempotency metadata', () => {
-    const payload = buildSuccessOutputPayload('raw-output', { data: { ok: true } });
-    expect(payload).toEqual({
-      output: 'raw-output',
-      result: { data: { ok: true } },
+  it('应强制校验 data 与非空 observation', () => {
+    expect(
+      validateStructuredToolResultContract({ data: { ok: true }, observation: '完成' })
+    ).toEqual({
+      ok: true,
+      result: { data: { ok: true }, observation: '完成' },
+      observation: '完成',
+    });
+    expect(validateStructuredToolResultContract({ data: { ok: true } })).toEqual({
+      ok: false,
+      reason: '工具成功结果缺少非空字符串 observation。',
+    });
+    expect(validateStructuredToolResultContract({ observation: '完成' })).toEqual({
+      ok: false,
+      reason: '工具成功结果缺少必填字段 data。',
+    });
+    expect(validateStructuredToolResultContract('plain text')).toEqual({
+      ok: false,
+      reason: '工具成功结果必须是 JSON 对象。',
+    });
+  });
+
+  it('应严格校验有序 modelInput selections', () => {
+    const valid = {
+      data: { ok: true },
+      observation: '已读取图片',
+      modelInput: {
+        attachments: [
+          { id: 'selection_1', uri: 'asset://assets/asset_1', label: 'diagram.png' },
+          { id: 'selection_2', uri: 'asset://assets/asset_1' },
+        ],
+      },
+    };
+
+    expect(validateStructuredToolResultContract(valid)).toEqual({
+      ok: true,
+      result: valid,
+      observation: '已读取图片',
+      modelInputAttachments: valid.modelInput.attachments,
     });
 
-    const runtimeEvent: Record<string, unknown> = {};
+    expect(
+      validateStructuredToolResultContract({
+        ...valid,
+        modelInput: {
+          attachments: [
+            { id: 'selection_1', uri: 'asset://assets/asset_1' },
+            { id: 'selection_1', uri: 'asset://assets/asset_2' },
+          ],
+        },
+      })
+    ).toEqual({
+      ok: false,
+      reason: 'modelInput attachment selection id 重复: selection_1',
+    });
+
+    expect(
+      validateStructuredToolResultContract({
+        ...valid,
+        modelInput: {
+          attachments: [
+            { id: 'selection_1', uri: 'asset://assets/asset_1', path: '/tmp/image.png' },
+          ],
+        },
+      })
+    ).toEqual({
+      ok: false,
+      reason: 'modelInput.attachments[0] 必须是 strict selection。',
+    });
+  });
+
+  it('应把 idempotency 状态写入 canonical tool_output', () => {
+    const runtimeEvent = createToolOutputEvent(
+      'output-1',
+      'conv-1',
+      'turn-1',
+      'search',
+      'call-1',
+      { status: 'success', observation: 'done', data: { ok: true } },
+    );
     applyToolOutputIdempotencyMetadata({
-      runtimeToolOutput: runtimeEvent as never,
+      runtimeToolOutput: runtimeEvent,
       execIdempotency: { key: 'idem_1', cacheHit: true },
     });
 
@@ -54,23 +133,24 @@ describe('toolNode.stateTransitions', () => {
     };
 
     const nextLocal = buildRequireUserLocalState({
-      local: { history: [{ id: 'h1' }] },
+      local: { history: [createHistoryEvent('h1')] },
       parsed,
-      toolCallId: 'call_1',
-      toolName: 'ask_questions',
+      toolCallId: ToolCallIdSchema.parse('call_1'),
+      toolName: 'interactive_form',
       remainingCalls: [],
       conversationId: 'conv_1',
       turnId: 'turn_1',
-      runtimeEvents: [{ id: 'evt_1' } as never],
+      runtimeEvents: [createHistoryEvent('evt_1')],
     });
 
     expect(nextLocal.pendingInteractionSpec).toEqual({
       requireUser: true,
       question: '继续吗？',
+      form: parsed,
       toolCallId: 'call_1',
-      toolName: 'ask_questions',
+      toolName: 'interactive_form',
     });
-    expect((nextLocal.history as unknown[])).toHaveLength(2);
+    expect(nextLocal.history as unknown[]).toHaveLength(2);
   });
 
   it('应支持无 questionnaireId 的 requireUser 工具进入 wait_user', () => {
@@ -87,7 +167,7 @@ describe('toolNode.stateTransitions', () => {
     const nextLocal = buildRequireUserLocalState({
       local: { history: [] },
       parsed,
-      toolCallId: 'call_ppt_plan_1',
+      toolCallId: ToolCallIdSchema.parse('call_ppt_plan_1'),
       toolName: 'ppt_plan',
       remainingCalls: [],
       conversationId: 'conv_1',
@@ -98,6 +178,7 @@ describe('toolNode.stateTransitions', () => {
     expect(nextLocal.pendingInteractionSpec).toEqual({
       requireUser: true,
       resumeStrategy: 'continue',
+      form: parsed,
       toolCallId: 'call_ppt_plan_1',
       toolName: 'ppt_plan',
     });
@@ -108,12 +189,12 @@ describe('toolNode.stateTransitions', () => {
       local: {
         answerId: 'ans_1',
         chunkSeq: 4,
-        history: [{ id: 'h1' }],
+        history: [createHistoryEvent('h1')],
       },
       remainingCalls: ['next'],
       conversationId: 'conv_1',
       turnId: 'turn_1',
-      runtimeEvents: [{ id: 'evt_1' } as never],
+      runtimeEvents: [createHistoryEvent('evt_1')],
     });
 
     expect('answerId' in successLocal).toBe(false);
@@ -123,16 +204,16 @@ describe('toolNode.stateTransitions', () => {
     const errorLocal = buildErrorLocalState({
       local: {
         _consecutiveToolProtocolErrors: 3,
-        history: [{ id: 'h1' }],
+        history: [createHistoryEvent('h1')],
       },
       remainingCalls: [],
       conversationId: 'conv_1',
       turnId: 'turn_1',
-      runtimeEvents: [{ id: 'evt_2' } as never],
+      runtimeEvents: [createHistoryEvent('evt_2')],
       nextProtocolErrorCount: 0,
     });
 
     expect('_consecutiveToolProtocolErrors' in errorLocal).toBe(false);
-    expect((errorLocal.history as unknown[])).toHaveLength(2);
+    expect(errorLocal.history as unknown[]).toHaveLength(2);
   });
 });

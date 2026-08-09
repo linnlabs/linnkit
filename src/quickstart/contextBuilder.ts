@@ -6,19 +6,22 @@ import type {
 import type { LlmRequestMessage } from '../ports';
 import type { RuntimeEvent } from '../contracts';
 import type { DefinedAgent } from './types';
+import { buildQuickstartContextTrace } from './functions/contextTrace';
 
 function runtimeEventToMessage(event: RuntimeEvent): LlmRequestMessage | undefined {
   switch (event.type) {
     case 'user_input':
       return { role: 'user', content: event.content };
     case 'final_answer':
-      return { role: 'assistant', content: event.content };
+      return event.completion_reason === 'terminal'
+        ? { role: 'assistant', content: event.content }
+        : undefined;
     case 'tool_output':
       if (typeof event.tool_call_id === 'string') {
         return {
           role: 'tool',
           tool_call_id: event.tool_call_id,
-          content: typeof event.output === 'string' ? event.output : JSON.stringify(event.output ?? event.payload ?? {}),
+          content: event.observation,
         };
       }
       return undefined;
@@ -47,18 +50,17 @@ export class QuickstartContextBuilder implements GraphExecutorContextBuilder {
       .filter((message): message is LlmRequestMessage => message !== undefined);
 
     return {
-      mode: 'agent',
       llmMessages: [
         { role: 'system', content: this.agent.systemPrompt },
         ...historyMessages,
         { role: 'user', content: input.request.query },
       ],
       summaryEvents: [],
-      contextTrace: {
-        kind: 'quickstart_context_trace',
+      contextTrace: buildQuickstartContextTrace({
         agentId: this.agent.spec.id,
         messageCount: historyMessages.length + 2,
-      },
+        contextPolicy: this.agent.spec.contextPolicy,
+      }),
     };
   }
 }

@@ -1,4 +1,8 @@
 import { createEmptyModelCatalog, type ModelCatalogLike } from './modelCatalog';
+import {
+  evaluateModelInputCompatibility,
+  type ModelInputRequirement,
+} from './input-capabilities';
 
 export interface ModelResolverOptions {
   fallbackModelPreferredOrder?: readonly string[];
@@ -7,7 +11,10 @@ export interface ModelResolverOptions {
 
 export interface ModelResolverLike {
   resolveModelId(requestedModelId?: string): string;
-  pickFallbackChatModel(excludedModelIds: Set<string>): string | null;
+  pickFallbackChatModel(
+    excludedModelIds: Set<string>,
+    requirement: ModelInputRequirement,
+  ): string | null;
 }
 
 const isRecord = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
@@ -72,11 +79,15 @@ export class ModelResolver implements ModelResolverLike {
    * - 必须已解析到 api_key（否则必然失败）
    * - 尽量避开 openrouter（减少被路由到受限上游的概率）
    */
-  pickFallbackChatModel(excludedModelIds: Set<string>): string | null {
+  pickFallbackChatModel(
+    excludedModelIds: Set<string>,
+    requirement: ModelInputRequirement,
+  ): string | null {
     const chatModels = this.modelCatalog.getModelsByCapability('chat') || [];
 
     const enabled = chatModels
       .filter((model) => getBoolean(model, 'enabled') !== false)
+      .filter((model) => evaluateModelInputCompatibility(model, requirement).compatible)
       .filter((model) => {
         const key = getString(model, 'api_key');
         return typeof key === 'string' && key.length > 0;

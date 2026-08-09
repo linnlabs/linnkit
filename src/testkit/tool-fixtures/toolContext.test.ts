@@ -1,24 +1,21 @@
 import { describe, expect, it } from 'vitest';
 import { createToolContextFixture } from './toolContext';
 import type { RuntimeEvent } from '../../contracts';
+import { createToolOutputEvent } from '../../contracts';
 
 function makeEvent(id: string): RuntimeEvent {
-  return {
-    type: 'tool_output',
+  return createToolOutputEvent(
     id,
-    conversation_id: 'conv_fixture',
-    turn_id: 'turn_fixture',
-    timestamp: Date.now(),
-    version: 1,
-    tool_name: 'fixture_tool',
-    tool_call_id: `call_${id}`,
-    status: 'success',
-    output: '{}',
-  };
+    'conv_fixture',
+    'turn_fixture',
+    'fixture_tool',
+    `call_${id}`,
+    { status: 'success', observation: 'fixture result', data: {} }
+  );
 }
 
 describe('createToolContextFixture', () => {
-  it('应优先暴露显式 working/persisted history，而不是要求测试手搓兼容 getter', () => {
+  it('应暴露显式 working/persisted history', () => {
     const persistedHistory = [makeEvent('persisted_1')];
     const workingHistory = [makeEvent('working_1')];
 
@@ -31,6 +28,5 @@ describe('createToolContextFixture', () => {
 
     expect(context.conversationView?.getPersistedHistoryEvents()).toBe(persistedHistory);
     expect(context.conversationView?.getWorkingHistoryEvents()).toBe(workingHistory);
-    expect(context.getConversationHistoryEvents?.()).toBe(workingHistory);
   });
 });

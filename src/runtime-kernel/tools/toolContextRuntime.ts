@@ -1,16 +1,15 @@
 import type { ToolContextConversationView } from './conversationView';
 import type { ToolExecutionContext } from './toolExecutionContext';
-import type { RuntimeEvent } from '../../contracts';
+import type { RunId, RuntimeEvent, ToolCallId } from '../../contracts';
 
 type RuntimeEventSource = () => ReadonlyArray<RuntimeEvent>;
 
 export interface ToolContextExecutionMeta {
   conversationId?: string;
   turnId?: string;
-  runId?: string;
-  parentRunId?: string;
-  parentToolCallId?: string;
-  citationOffset?: number;
+  runId?: RunId;
+  parentRunId?: RunId;
+  parentToolCallId?: ToolCallId;
 }
 
 export interface ToolContextRuntimeBinding {
@@ -25,42 +24,45 @@ export interface ToolContextRuntimeBinding {
 
 export const TOOL_CONTEXT_RUNTIME_RESERVED_KEYS = [
   'conversationView',
-  'getConversationHistoryEvents',
+  'userQuery',
+  'modelId',
   'conversationId',
   'turnId',
   'runId',
   'parentRunId',
+  'childRunDepth',
   'parentToolCallId',
-  'citationOffset',
 ] as const;
 
-const TOOL_CONTEXT_RUNTIME_BINDING_KEY = '__tool_context_runtime_binding__';
+const runtimeBindings = new WeakMap<ToolExecutionContext, ToolContextRuntimeBinding>();
 
-function toEventSource(source: ReadonlyArray<RuntimeEvent> | RuntimeEventSource): RuntimeEventSource {
+function toEventSource(
+  source: ReadonlyArray<RuntimeEvent> | RuntimeEventSource
+): RuntimeEventSource {
   if (typeof source === 'function') {
     return source;
   }
   return () => source;
 }
 
-function syncExecutionMetaToContext(context: ToolExecutionContext, meta: ToolContextExecutionMeta): void {
+function syncExecutionMetaToContext(
+  context: ToolExecutionContext,
+  meta: ToolContextExecutionMeta
+): void {
   if (typeof meta.conversationId === 'string') {
     context.conversationId = meta.conversationId;
   }
   if (typeof meta.turnId === 'string') {
     context.turnId = meta.turnId;
   }
-  if (typeof meta.runId === 'string') {
+  if (meta.runId !== undefined) {
     context.runId = meta.runId;
   }
-  if (typeof meta.parentRunId === 'string') {
+  if (meta.parentRunId !== undefined) {
     context.parentRunId = meta.parentRunId;
   }
-  if (typeof meta.parentToolCallId === 'string') {
+  if (meta.parentToolCallId !== undefined) {
     context.parentToolCallId = meta.parentToolCallId;
-  }
-  if (typeof meta.citationOffset === 'number' && Number.isFinite(meta.citationOffset)) {
-    context.citationOffset = meta.citationOffset;
   }
 }
 
@@ -83,13 +85,13 @@ function createRuntimeBinding(params: {
     conversationView,
     getWorkingHistoryEvents: () => conversationView.getWorkingHistoryEvents(),
     getPersistedHistoryEvents: () => conversationView.getPersistedHistoryEvents(),
-    setWorkingHistorySource: (source) => {
+    setWorkingHistorySource: source => {
       workingHistorySource = toEventSource(source);
     },
-    setPersistedHistorySource: (source) => {
+    setPersistedHistorySource: source => {
       persistedHistorySource = toEventSource(source);
     },
-    bindExecutionMeta: (meta) => {
+    bindExecutionMeta: meta => {
       executionMeta = {
         ...executionMeta,
         ...meta,
@@ -107,22 +109,7 @@ function createRuntimeBinding(params: {
 }
 
 function readBinding(context: ToolExecutionContext): ToolContextRuntimeBinding | undefined {
-  const maybeBinding = (context as Record<string, unknown>)[TOOL_CONTEXT_RUNTIME_BINDING_KEY];
-  return isRuntimeBinding(maybeBinding) ? maybeBinding : undefined;
-}
-
-function isRuntimeBinding(value: unknown): value is ToolContextRuntimeBinding {
-  if (!value || typeof value !== 'object') {
-    return false;
-  }
-  return (
-    typeof (value as ToolContextRuntimeBinding).getWorkingHistoryEvents === 'function' &&
-    typeof (value as ToolContextRuntimeBinding).getPersistedHistoryEvents === 'function' &&
-    typeof (value as ToolContextRuntimeBinding).setWorkingHistorySource === 'function' &&
-    typeof (value as ToolContextRuntimeBinding).setPersistedHistorySource === 'function' &&
-    typeof (value as ToolContextRuntimeBinding).bindExecutionMeta === 'function' &&
-    typeof (value as ToolContextRuntimeBinding).readExecutionMeta === 'function'
-  );
+  return runtimeBindings.get(context);
 }
 
 function pickDefaultHistorySource(params: {
@@ -138,9 +125,11 @@ function pickDefaultHistorySource(params: {
   return [];
 }
 
-function exposeCompatibilitySurface(context: ToolExecutionContext, binding: ToolContextRuntimeBinding): void {
+function exposeRuntimeSurface(
+  context: ToolExecutionContext,
+  binding: ToolContextRuntimeBinding
+): void {
   context.conversationView = binding.conversationView;
-  context.getConversationHistoryEvents = () => binding.getWorkingHistoryEvents();
 }
 
 export function ensureToolContextRuntimeCapability(params: {
@@ -153,32 +142,24 @@ export function ensureToolContextRuntimeCapability(params: {
 
   if (!binding) {
     const existingConversationView = params.context.conversationView;
-    const existingHistoryGetter = params.context.getConversationHistoryEvents;
     binding = createRuntimeBinding({
       context: params.context,
       persistedHistory: pickDefaultHistorySource({
         preferred: params.persistedHistory,
-        fallback: () =>
-          existingConversationView?.getPersistedHistoryEvents() ??
-          existingHistoryGetter?.() ??
-          [],
+        fallback: existingConversationView
+          ? () => existingConversationView.getPersistedHistoryEvents()
+          : undefined,
       }),
       workingHistory: pickDefaultHistorySource({
         preferred: params.workingHistory,
-        fallback: () =>
-          existingConversationView?.getWorkingHistoryEvents() ??
-          existingHistoryGetter?.() ??
-          [],
+        fallback: existingConversationView
+          ? () => existingConversationView.getWorkingHistoryEvents()
+          : undefined,
       }),
       executionMeta: params.executionMeta,
     });
 
-    Object.defineProperty(params.context, TOOL_CONTEXT_RUNTIME_BINDING_KEY, {
-      value: binding,
-      enumerable: false,
-      configurable: true,
-      writable: false,
-    });
+    runtimeBindings.set(params.context, binding);
   } else {
     if (params.persistedHistory !== undefined) {
       binding.setPersistedHistorySource(params.persistedHistory);
@@ -191,26 +172,28 @@ export function ensureToolContextRuntimeCapability(params: {
     }
   }
 
-  exposeCompatibilitySurface(params.context, binding);
+  exposeRuntimeSurface(params.context, binding);
   return binding;
 }
 
-export function getToolContextRuntimeBinding(context: ToolExecutionContext): ToolContextRuntimeBinding | undefined {
+export function getToolContextRuntimeBinding(
+  context: ToolExecutionContext
+): ToolContextRuntimeBinding | undefined {
   return readBinding(context);
 }
 
 export function copyToolContextRuntimeCapability(
   source: ToolExecutionContext,
-  target: ToolExecutionContext,
-): ToolContextRuntimeBinding | undefined {
+  target: ToolExecutionContext
+): ToolContextRuntimeBinding {
   const sourceBinding = readBinding(source);
   if (!sourceBinding) {
-    return undefined;
+    throw new Error('Cannot derive ToolContext before runtime capability admission.');
   }
 
   const existingTargetBinding = readBinding(target);
   if (existingTargetBinding) {
-    exposeCompatibilitySurface(target, existingTargetBinding);
+    exposeRuntimeSurface(target, existingTargetBinding);
     return existingTargetBinding;
   }
 
@@ -223,39 +206,32 @@ export function copyToolContextRuntimeCapability(
     executionMeta: sourceBinding.readExecutionMeta(),
   });
 
-  Object.defineProperty(target, TOOL_CONTEXT_RUNTIME_BINDING_KEY, {
-    value: targetBinding,
-    enumerable: false,
-    configurable: true,
-    writable: false,
-  });
+  runtimeBindings.set(target, targetBinding);
 
-  exposeCompatibilitySurface(target, targetBinding);
+  exposeRuntimeSurface(target, targetBinding);
   return targetBinding;
 }
 
-export function readToolContextWorkingHistory(context: ToolExecutionContext): ReadonlyArray<RuntimeEvent> {
-  if (context.conversationView) {
-    return context.conversationView.getWorkingHistoryEvents();
+export function readToolContextWorkingHistory(
+  context: ToolExecutionContext
+): ReadonlyArray<RuntimeEvent> {
+  if (!context.conversationView) {
+    throw new Error('ToolContext working history requires an admitted conversationView.');
   }
-  if (typeof context.getConversationHistoryEvents === 'function') {
-    return context.getConversationHistoryEvents() ?? [];
-  }
-  return [];
+  return context.conversationView.getWorkingHistoryEvents();
 }
 
-export function readToolContextPersistedHistory(context: ToolExecutionContext): ReadonlyArray<RuntimeEvent> {
-  if (context.conversationView) {
-    return context.conversationView.getPersistedHistoryEvents();
+export function readToolContextPersistedHistory(
+  context: ToolExecutionContext
+): ReadonlyArray<RuntimeEvent> {
+  if (!context.conversationView) {
+    throw new Error('ToolContext persisted history requires an admitted conversationView.');
   }
-  if (typeof context.getConversationHistoryEvents === 'function') {
-    return context.getConversationHistoryEvents() ?? [];
-  }
-  return [];
+  return context.conversationView.getPersistedHistoryEvents();
 }
 
 export function stripRuntimeReservedToolContextPatch(
-  patch: Partial<ToolExecutionContext> | Record<string, unknown> | undefined,
+  patch: Partial<ToolExecutionContext> | Record<string, unknown> | undefined
 ): Record<string, unknown> {
   if (!patch) {
     return {};

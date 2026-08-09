@@ -1,5 +1,4 @@
 import type { AgentProfileRequest } from '../contracts';
-import { ConversationSession } from './ConversationSession';
 import { 
   AGENT_CONTEXT_BUILDER_CONFIG,
   AgentBuildPhase,
@@ -20,19 +19,43 @@ import {
   buildContextResult,
   generateContextRecommendations,
 } from '../../../shared/context-result';
+import { getAgentBuildPhaseByProviderName } from './functions/providerPhase';
 import { ContextTraceCollector, type ContextTrace } from '../../../shared/context-trace';
 import { buildContextTokenComponents } from '../../../shared/context-token-components';
-import type { GenerateRequest, GenerateResponse } from '../../chat/contracts';
+import type {
+  SummaryGenerationRequest,
+  SummaryGenerationResponse,
+} from '../../../shared/contracts/summaryGeneration';
 import type {
   AgentSpecContextPolicy,
   AgentSpecContextTracePolicy,
   AiMessage,
   ContextBuildTokenEstimate,
   ContextTokenComponent,
+  InternalLlmCallUsage,
   RuntimeEvent,
+  TokenCountConfidence,
+  TokenCountSource,
   TokenRoute,
 } from '../../../../contracts';
-import type { TokenCounterPort, TokenizerPort } from '../../../../ports';
+import type {
+  ImageInputAdmissionEvidence,
+  LlmImageInputEstimatorPort,
+  TokenCounterPort,
+  TokenizerPort,
+} from '../../../../ports';
+import type { RemoteTokenCountTrace } from '../../../shared/providers/base';
+import type { SummarizationProtectedRange } from '../../../shared/summarization/config';
+import {
+  LLM_IMAGE_INPUT_ERROR_CODES,
+  LlmImageInputError,
+} from '../../../../shared/llmImageInputError';
+import { buildImageProtectedMessageRanges } from './functions/imageInputProtection';
+
+interface ContextBuildTokenUsageMeasurement {
+  source: TokenCountSource;
+  confidence: TokenCountConfidence;
+}
 
 /**
  * Agent 专用的 Provider 上下文
@@ -40,6 +63,7 @@ import type { TokenCounterPort, TokenizerPort } from '../../../../ports';
  */
 export interface AgentProviderContext extends ProviderContext {
   agentRequest: AgentProfileRequest;
+  summarizationProtectedRanges?: readonly SummarizationProtectedRange[];
 }
 
 /**
@@ -53,6 +77,8 @@ export interface ContextBuildResult {
   tokenUsage: {
     used: number;
     remaining: number;
+    source: TokenCountSource;
+    confidence: TokenCountConfidence;
   };
   
   /** 处理统计信息 */
@@ -89,6 +115,16 @@ export interface ContextBuildResult {
 
   /** 构建期上下文分项 token 估算，用于 trace、账本与 host 面板后端。 */
   tokenComponents?: ContextTokenComponent[];
+
+  /**
+   * context pipeline 内部 LLM 调用 usage。
+   *
+   * 中文备注：例如历史摘要调用模型生成 summary。它属于审计/账本旁路数据，
+   * 不进入 messages，也不写入 RuntimeEvent，避免污染模型上下文和事件时间线。
+   */
+  internalLlmCalls?: InternalLlmCallUsage[];
+  /** provider attempt 用来按 active profile 复核 final context 的短生命周期预算证据。 */
+  imageInputAdmissionEvidence?: ImageInputAdmissionEvidence;
 }
 
 /**
@@ -125,6 +161,7 @@ export class AgentContextManager extends ContextManagerBase<
       AgentContextBuilderConfig,
       ContextProviderRegistry
     >['tokenCalibration'];
+    imageInputEstimator?: LlmImageInputEstimatorPort;
   } = {}) {
     super(options as ContextManagerBaseOptions<
       AgentContextBuilderConfig,
@@ -148,12 +185,13 @@ export class AgentContextManager extends ContextManagerBase<
    */
   async buildContextFromPreprocessedMessages(
     request: AgentProfileRequest,
-    conversationSession: ConversationSession,
     preprocessedMessages: AiMessage[],
     totalBudget: number,
     callbacks?: SummarizationCallbacks,
     phaseOverride?: AgentBuildPhase,  // 保留参数兼容性，但不再使用
-    generate?: (request: GenerateRequest) => Promise<GenerateResponse>,
+    generateSummary?: (
+      request: SummaryGenerationRequest,
+    ) => Promise<SummaryGenerationResponse>,
     traceOptions?: {
       policy?: AgentSpecContextTracePolicy;
       effectiveContextPolicy?: AgentSpecContextPolicy;
@@ -189,8 +227,9 @@ export class AgentContextManager extends ContextManagerBase<
           };
         },
         summarizationCallbacks: callbacks,
-        generate,
-        agentRequest: request
+        generateSummary,
+        agentRequest: request,
+        summarizationProtectedRanges: buildImageProtectedMessageRanges(preprocessedMessages),
       };
       const contextTrace = ContextTraceCollector.create({
         policy: traceOptions?.policy,
@@ -201,23 +240,31 @@ export class AgentContextManager extends ContextManagerBase<
       });
 
       // 核心流程：编排各个Provider按优先级处理预处理过的消息
-      const { finalMessages, finalTokens, strategiesApplied, events, states } =
+      const { finalMessages, finalTokens, strategiesApplied, events, internalLlmCalls, states } =
         await this.runPipeline({
           messages: preprocessedMessages,
           totalBudget,
           buildStats,
           providerContext: enhancedContext,
-          getPhaseByProviderName: providerName => this.getPhaseByProviderName(providerName),
+          getPhaseByProviderName: getAgentBuildPhaseByProviderName,
           contextTrace,
         });
+      this.assertImageContextWithinBudget(finalMessages, finalTokens, totalBudget);
       const remoteCount = await this.countMessagesWithRemoteCounter({
         messages: finalMessages,
         localEstimateTokens: finalTokens,
       });
       contextTrace?.recordRemoteTokenCount(remoteCount.trace);
-      const tokenComponents = buildContextTokenComponents(states);
+      const tokenComponents = buildContextTokenComponents(
+        states,
+        message => this.estimateImageInputs(message),
+      );
       contextTrace?.recordTokenComponents(tokenComponents);
       const tokenEstimate = this.buildContextTokenEstimate(finalMessages, finalTokens);
+      const imageInputAdmissionEvidence = this.buildImageInputAdmissionEvidence(
+        finalMessages,
+        totalBudget,
+      );
       
       const endTime = performance.now();
       buildStats.totalTime = endTime - startTime;
@@ -244,33 +291,26 @@ export class AgentContextManager extends ContextManagerBase<
         preprocessedMessages.length,
         strategiesApplied,
         buildStats,
+        this.buildTokenUsageMeasurement(remoteCount.trace),
         events,
         contextTrace?.build(finalMessages, finalTokens),
         tokenEstimate,
         tokenComponents,
+        internalLlmCalls,
+        imageInputAdmissionEvidence,
       );
 
     } catch (error) {
       this.debug('❌ [Agent上下文管理器] 上下文构建失败', { error });
-      throw new Error(`Agent context building failed: ${error}`);
+      throw error instanceof Error
+        ? error
+        : new Error(`Agent context building failed: ${String(error)}`);
     }
   }
 
   // ------------------- 核心Provider编排方法 -------------------
 
   // ------------------- 辅助方法 -------------------
-
-  /**
-   * 根据Provider名称获取对应的阶段名称
-   */
-  private getPhaseByProviderName(providerName: string): AgentBuildPhase | null {
-    const phaseMap: Record<string, AgentBuildPhase> = {
-      'CoreContextProvider': AgentBuildPhase.CORE_CONTEXT,
-      'WorkingMemoryProvider': AgentBuildPhase.WORKING_MEMORY,
-      'SummarizationProvider': AgentBuildPhase.SUMMARIZATION
-    };
-    return phaseMap[providerName] || null;
-  }
 
   private initializeBuildStats(startTime: number, originalMessageCount: number): AgentContextBuildStats {
     return {
@@ -308,10 +348,13 @@ export class AgentContextManager extends ContextManagerBase<
     originalCount: number,
     strategiesApplied: string[],
     buildStats: AgentContextBuildStats,
+    tokenUsageMeasurement: ContextBuildTokenUsageMeasurement,
     events: RuntimeEvent[] = [],  // 🔥 新增：事件列表
     contextTrace?: ContextTrace,
     tokenEstimate?: ContextBuildTokenEstimate,
     tokenComponents?: ContextTokenComponent[],
+    internalLlmCalls?: InternalLlmCallUsage[],
+    imageInputAdmissionEvidence?: ImageInputAdmissionEvidence,
   ): ContextBuildResult {
     const recommendations = this.generateRecommendations(buildStats, totalBudget);
     return buildContextResult({
@@ -325,11 +368,78 @@ export class AgentContextManager extends ContextManagerBase<
       estimateTokens: message => this.estimateTokens(message),
       coreTypes: this.config.CORE_MESSAGE_TYPES,
       recommendations,
+      tokenUsageMeasurement,
       events,
       contextTrace,
       tokenEstimate,
       tokenComponents,
+      internalLlmCalls,
+      imageInputAdmissionEvidence,
     });
+  }
+
+  private buildImageInputAdmissionEvidence(
+    finalMessages: readonly AiMessage[],
+    inputBudget: number,
+  ): ImageInputAdmissionEvidence | undefined {
+    let nonImageEstimatedTokens = 0;
+    let initialProfileId: string | undefined;
+    const attachments: ImageInputAdmissionEvidence['attachments'][number][] = [];
+
+    finalMessages.forEach((message, messageIndex) => {
+      const imageInputs = this.estimateImageInputs(message);
+      const imageTokens = imageInputs.reduce(
+        (total, attachment) => total + attachment.estimatedTokens,
+        0,
+      );
+      nonImageEstimatedTokens += Math.max(0, this.estimateTokens(message) - imageTokens);
+      for (const imageInput of imageInputs) {
+        if (initialProfileId && initialProfileId !== imageInput.profileId) {
+          throw new Error('Image input estimator returned multiple profiles for one active model.');
+        }
+        initialProfileId = imageInput.profileId;
+        attachments.push({
+          messageIndex,
+          attachmentIndex: imageInput.attachmentIndex,
+          id: imageInput.attachmentId,
+          resourceId: imageInput.resourceId,
+          placement: imageInput.placement,
+          estimatedTokens: imageInput.estimatedTokens,
+        });
+      }
+    });
+
+    if (!initialProfileId || attachments.length === 0) return undefined;
+    return {
+      inputBudget,
+      nonImageEstimatedTokens,
+      initialProfileId,
+      attachments,
+    };
+  }
+
+  private assertImageContextWithinBudget(
+    finalMessages: readonly AiMessage[],
+    finalTokens: number,
+    inputBudget: number,
+  ): void {
+    const imageInputs = finalMessages.flatMap(message => this.estimateImageInputs(message));
+    if (imageInputs.length === 0 || finalTokens <= inputBudget) return;
+    const firstImage = imageInputs[0];
+    throw new LlmImageInputError(
+      LLM_IMAGE_INPUT_ERROR_CODES.CONTEXT_BUDGET_EXCEEDED,
+      'Image-protected context exceeds the active input budget.',
+      {
+        active_model_id: firstImage.activeModelId,
+        placement: firstImage.placement,
+        attachment_id: firstImage.attachmentId,
+        resource_id: firstImage.resourceId,
+        profile_id: firstImage.profileId,
+        limit_kind: 'context_tokens',
+        actual_value: finalTokens,
+        limit_value: inputBudget,
+      },
+    );
   }
 
   private buildContextTokenEstimate(
@@ -345,6 +455,21 @@ export class AgentContextManager extends ContextManagerBase<
       confidence: 'estimate',
     };
   }
+
+  private buildTokenUsageMeasurement(trace: RemoteTokenCountTrace): ContextBuildTokenUsageMeasurement {
+    if (trace.applied && trace.source && trace.confidence) {
+      return {
+        source: trace.source,
+        confidence: trace.confidence,
+      };
+    }
+
+    return {
+      source: 'local-estimate',
+      confidence: 'estimate',
+    };
+  }
+
   /**
    * 生成优化建议
    */

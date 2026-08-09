@@ -12,14 +12,10 @@ import { noopAudit } from '../audit/noopAudit';
 import type { AuditPort } from '../../ports';
 import { createDefaultTokenizerPort } from '../../shared/defaultTokenizerPort';
 import type { TokenizerPort } from '../../ports';
-import type { ToolCatalogPort, ToolPresentationPort } from '../tools/ports';
+import type { ToolCatalogPort } from '../tools/ports';
 import { Logger } from '../../shared/logger';
 import type { GraphExecutorContextBuilder } from './executorContextBuilder';
-import {
-  resolveConversationIdForRuntimeEvents,
-  readNonEmptyString,
-} from './tick-pipeline/helpers';
-import { contextAuditMiddleware } from './tick-pipeline/middlewares/contextAuditMiddleware';
+import { readNonEmptyString, requireRuntimeIdentity } from './tick-pipeline/helpers';
 import { llmTelemetryMiddleware } from './tick-pipeline/middlewares/llmTelemetryMiddleware';
 import { runModelLockMiddleware } from './tick-pipeline/middlewares/runModelLockMiddleware';
 import { runTickPipeline } from './tick-pipeline/runTickPipeline';
@@ -37,12 +33,7 @@ import type {
   TickStage,
 } from './tick-pipeline/types';
 
-export type {
-  AgentStepDecision,
-  TickEvent,
-  TickInput,
-  TickOutput,
-} from './tick-pipeline/types';
+export type { AgentStepDecision, TickEvent, TickInput, TickOutput } from './tick-pipeline/types';
 
 const logger = new Logger('GraphAgentExecutor');
 
@@ -53,11 +44,9 @@ export interface GraphAgentExecutorOptions {
 }
 
 export interface GraphAgentExecutorToolRuntime
-  extends Pick<ToolCatalogPort, 'getToolSchemas'>,
-    Pick<ToolPresentationPort, 'getDisplayOptions'> {}
+  extends Pick<ToolCatalogPort, 'getToolSchemas' | 'getToolDefinition'> {}
 
-export interface GraphAgentExecutorLlmCaller
-  extends Pick<LlmCaller, 'callWithRetries'> {}
+export interface GraphAgentExecutorLlmCaller extends Pick<LlmCaller, 'callWithRetries'> {}
 
 export interface GraphAgentExecutorDependencies extends GraphAgentExecutorOptions {
   llmCaller: GraphAgentExecutorLlmCaller;
@@ -85,9 +74,7 @@ export class GraphAgentExecutor {
   private readonly stages: TickStage[];
   private readonly middlewares: TickAroundMiddleware[];
 
-  constructor(
-    dependencies: GraphAgentExecutorDependencies,
-  ) {
+  constructor(dependencies: GraphAgentExecutorDependencies) {
     this.llmCaller = dependencies.llmCaller;
     this.toolRuntime = dependencies.toolRuntime;
     this.contextBuilder = dependencies.contextBuilder;
@@ -115,25 +102,15 @@ export class GraphAgentExecutor {
       createExecuteLlmStage({
         llmCaller: this.llmCaller,
       }),
-      createBuildDecisionStage({
-        toolPresentation: this.toolRuntime,
-      }),
+      createBuildDecisionStage(),
     ];
-    this.middlewares = [
-      contextAuditMiddleware,
-      llmTelemetryMiddleware,
-      runModelLockMiddleware,
-    ];
+    this.middlewares = [llmTelemetryMiddleware, runModelLockMiddleware];
   }
 
-  async tick(
-    input: TickInput,
-    eventHandler?: (event: TickEvent) => void,
-  ): Promise<TickOutput> {
+  async tick(input: TickInput, eventHandler?: (event: TickEvent) => void): Promise<TickOutput> {
     const ctx: TickPipelineContext = {
       input,
       eventHandler,
-      newEvents: [],
       request: input.request,
       history: input.history,
       signal: input.signal,
@@ -142,11 +119,12 @@ export class GraphAgentExecutor {
       summarizationCallbacks: input.summarizationCallbacks,
       modelId: '',
       toolSchemas: [],
+      toolCallStreamingPolicies: {},
+      toolModelInputRequirement: undefined,
       llmOptions: {},
       llmMessages: [],
-      mode: input.request.mode === 'chat' ? 'chat' : 'agent',
-      conversationId: resolveConversationIdForRuntimeEvents(input.toolContext),
-      turnId: readNonEmptyString(input.toolContext?.turnId) ?? `turn_${Date.now()}`,
+      conversationId: requireRuntimeIdentity(input.toolContext?.conversationId, 'conversationId'),
+      turnId: requireRuntimeIdentity(input.toolContext?.turnId, 'turnId'),
       telemetry: this.telemetryPort,
       audit: this.auditPort,
       tokenizer: this.tokenizer,
@@ -154,7 +132,6 @@ export class GraphAgentExecutor {
 
     logger.info('[GraphAgentExecutor] tick 调用', {
       stream: input.stream === true,
-      mode: ctx.mode,
       hasEventHandler: Boolean(eventHandler),
       hasSummarizationCallbacks: Boolean(input.summarizationCallbacks),
     });
@@ -163,7 +140,8 @@ export class GraphAgentExecutor {
 
     return {
       decision: ctx.decision ?? { kind: 'yield' },
-      newEvents: ctx.newEvents,
+      executorLocalPatch: ctx.executorLocalPatch,
+      contextTrace: ctx.contextTrace,
     };
   }
 }

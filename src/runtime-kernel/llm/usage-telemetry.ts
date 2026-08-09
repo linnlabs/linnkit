@@ -1,7 +1,8 @@
 import type { AgentAiEngine } from '../../ports';
 import { CanonicalLlmUsage } from '../../contracts';
 import type { CanonicalLlmUsage as CanonicalLlmUsageType } from '../../contracts';
-import type { LlmCallOptions, LlmRequestMessage, ToolCall } from './caller.types';
+import type { LlmCallOptions, ToolCall } from './caller.types';
+import type { ResolvedLlmInputMessage } from '../../ports';
 import { isRecord, toToolCalls } from './sidecar-replay';
 
 export type LlmCallResult =
@@ -22,7 +23,7 @@ function parseCanonicalUsage(value: unknown): CanonicalLlmUsageType | undefined 
 export async function callPlainCompletion(
   aiEngine: AgentAiEngine,
   modelId: string,
-  messages: LlmRequestMessage[],
+  messages: ResolvedLlmInputMessage[],
   options: LlmCallOptions = {},
   signal?: AbortSignal,
 ): Promise<LlmCallResult> {

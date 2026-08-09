@@ -1,10 +1,10 @@
-import type { MessageProcessingState, ProviderContext } from '../base';
+import type { MessageProcessingState } from '../base';
 import {
   buildToolInteractionGroupsFromStates,
 } from '../../../utils/toolInteractionGroup';
 import type { ToolPairMatcher } from './ToolPairMatcher';
-import type { ToolPairTruncator } from './ToolPairTruncator';
 import type { ReplacementSourceTagger } from './ReplacementSourceTagger';
+import { keepToolGroup } from './ToolGroupKeeper';
 import type { DebugFn, WorkingMemoryRetentionResult } from './types';
 
 /**
@@ -19,9 +19,7 @@ export function promoteMostRecentToolPair(params: {
   processedIds: Set<string>;
   currentTokens: number;
   budgetLimit: number;
-  estimateTokens: ProviderContext['estimateTokens'];
   matcher: ToolPairMatcher;
-  truncator: ToolPairTruncator;
   tagger: ReplacementSourceTagger;
   debug: DebugFn;
 }): WorkingMemoryRetentionResult {
@@ -30,9 +28,7 @@ export function promoteMostRecentToolPair(params: {
     processedIds,
     currentTokens,
     budgetLimit,
-    estimateTokens,
     matcher,
-    truncator,
     tagger,
     debug,
   } = params;
@@ -47,45 +43,22 @@ export function promoteMostRecentToolPair(params: {
 
   tagger.tagReplacementSources(group.messages, allStates);
 
-  const fit = matcher.canFitToolPair(group, currentTokens, budgetLimit, debug);
-  if (fit.canFit) {
-    for (const state of fit.pair) {
-      if (state.action === 'skip') {
-        state.action = 'keep_working_memory';
-        state.phase = 'WORKING_MEMORY';
-        tokensUsed += state.tokens;
-        processedCount++;
-      }
-      processedIds.add(state.message.id);
-    }
-    strategiesApplied.push('post_tool_call_priority');
-    debug('✅ POST_TOOL_CALL：优先保留最近工具交互对', { pairTokens: fit.totalTokens });
-    return { tokensUsed, processedCount, strategiesApplied };
-  }
-
-  const truncated = truncator.truncate(group, estimateTokens, debug);
-  if (!truncated.success) {
-    return { tokensUsed, processedCount, strategiesApplied };
-  }
-
-  const fitAfterTruncation = matcher.canFitToolPair(group, currentTokens, budgetLimit, debug);
-  if (!fitAfterTruncation.canFit) {
-    return { tokensUsed, processedCount, strategiesApplied };
-  }
-
-  for (const state of fitAfterTruncation.pair) {
-    if (state.action === 'skip') {
-      state.action = 'keep_working_memory';
-      state.phase = 'WORKING_MEMORY';
-      tokensUsed += state.tokens;
-      processedCount++;
-    }
-    processedIds.add(state.message.id);
-  }
-  strategiesApplied.push('post_tool_call_truncation');
-  debug('✅ POST_TOOL_CALL：截断后优先保留最近工具交互对', {
-    pairTokens: fitAfterTruncation.totalTokens,
+  const kept = keepToolGroup({
+    group,
+    processedIds,
+    currentTokens,
+    budgetLimit,
+    matcher,
+    debug,
+    directStrategy: 'post_tool_call_priority',
+    directLog: '✅ POST_TOOL_CALL：优先保留最近工具交互对',
+    overBudgetLog: '⚠️ POST_TOOL_CALL：最近工具交互对超出预算，仍原样保留',
+    stopWhenOverBudget: true,
+    forceKeepWhenOverBudget: true,
   });
 
+  tokensUsed += kept.tokensUsed;
+  processedCount += kept.processedCount;
+  strategiesApplied.push(...kept.strategiesApplied);
   return { tokensUsed, processedCount, strategiesApplied };
 }

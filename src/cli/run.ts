@@ -16,7 +16,7 @@ function readEventText(event: RuntimeEvent): string | undefined {
   if (event.type === 'final_answer_chunk') {
     return event.content;
   }
-  if (event.type === 'tool_call') {
+  if (event.type === 'tool_call_decision' && event.phase === 'start') {
     return `\n[tool] ${event.tool_name}\n`;
   }
   if (event.type === 'tool_output') {

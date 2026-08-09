@@ -7,6 +7,7 @@ import { CheckpointSummarizationProvider } from '../CheckpointSummarizationProvi
 import type { MessageProcessingState, ProviderContext } from '../base';
 import { CHECKPOINT_MARKER_TYPE } from '../../../../../shared/checkpointMarker';
 import type { AiMessage } from '../../../../../../contracts';
+import { ToolCallIdSchema } from '../../../../../../contracts';
 
 /** 生成唯一 ID */
 let idCounter = 0;
@@ -29,7 +30,10 @@ function makeMsg(overrides: Partial<AiMessage> & { role: string; type?: string }
   } as AiMessage;
 }
 
-function makeToolPair(toolName: string, toolOutputContent: string): { call: AiMessage; out: AiMessage; toolCallId: string } {
+function makeToolPair(
+  toolName: string,
+  toolOutputContent: string
+): { call: AiMessage; out: AiMessage; toolCallId: string } {
   const toolCallId = makeToolCallId();
   const call = makeMsg({
     role: 'assistant',
@@ -38,7 +42,7 @@ function makeToolPair(toolName: string, toolOutputContent: string): { call: AiMe
     metadata: {
       tool_calls: [
         {
-          id: toolCallId,
+          id: ToolCallIdSchema.parse(toolCallId),
           type: 'function',
           function: { name: toolName, arguments: '{}' },
         },
@@ -49,13 +53,20 @@ function makeToolPair(toolName: string, toolOutputContent: string): { call: AiMe
     role: 'tool',
     type: 'tool_output',
     content: toolOutputContent,
-    metadata: { tool_call_id: toolCallId, tool_name: toolName },
+    metadata: {
+      tool_call_id: ToolCallIdSchema.parse(toolCallId),
+      tool_name: toolName,
+      data: { value: toolOutputContent },
+    },
   });
   return { call, out, toolCallId };
 }
 
 /** 创建 MessageProcessingState */
-function makeState(msg: AiMessage, action: MessageProcessingState['action'] = 'keep_working_memory'): MessageProcessingState {
+function makeState(
+  msg: AiMessage,
+  action: MessageProcessingState['action'] = 'keep_working_memory'
+): MessageProcessingState {
   return {
     message: msg,
     originalIndex: 0,
@@ -64,15 +75,9 @@ function makeState(msg: AiMessage, action: MessageProcessingState['action'] = 'k
   };
 }
 
-/** 创建包含 checkpoint 标记的 tool_output content */
-function makeCheckpointContent(summary: string): string {
-  return JSON.stringify({
-    data: {
-      _type: CHECKPOINT_MARKER_TYPE,
-      summary,
-    },
-    observation: 'Context checkpoint created.',
-  });
+/** 创建 checkpoint 工具的正式结构化数据。 */
+function makeCheckpointData(summary: string): Record<string, string> {
+  return { _type: CHECKPOINT_MARKER_TYPE, summary };
 }
 
 /** 最小化 ProviderContext */
@@ -115,10 +120,10 @@ describe('CheckpointSummarizationProvider', () => {
     const tool4 = makeToolPair('tool_4', 'tool_4 result');
     const checkpoint = makeToolPair('context_checkpoint', 'Context checkpoint created.');
 
-    // checkpoint tool_output 必须携带 raw_output marker（严格协议）
+    // checkpoint tool_output 必须携带正式 data marker（严格协议）
     checkpoint.out.metadata = {
       ...(checkpoint.out.metadata ?? {}),
-      raw_output: makeCheckpointContent('Phase A done. Next: Phase B'),
+      data: makeCheckpointData('Phase A done. Next: Phase B'),
     };
 
     // 构建 10 条消息 + 1 个 checkpoint
@@ -147,60 +152,68 @@ describe('CheckpointSummarizationProvider', () => {
     expect(result.events).toBeUndefined();
 
     // 验证保留了 system_prompt
-    const hasSystem = result.states.some((s) => s.message.role === 'system' && s.message.content === 'system prompt');
+    const hasSystem = result.states.some(
+      s => s.message.role === 'system' && s.message.content === 'system prompt'
+    );
     expect(hasSystem).toBe(true);
 
     // 验证保留了最近 2 轮工具交互（tool_3 和 tool_4）
     const toolOutputContents = result.states
-      .filter((s) => s.message.type === 'tool_output')
-      .map((s) => s.message.content);
+      .filter(s => s.message.type === 'tool_output')
+      .map(s => s.message.content);
     expect(toolOutputContents).toContain('tool_3 result');
     expect(toolOutputContents).toContain('tool_4 result');
 
     // checkpoint 本身的 tool_output 必须保留在最终结果中（作为正常工具消息）
-    const hasCheckpointToolOutput = result.states.some((s) => {
+    const hasCheckpointToolOutput = result.states.some(s => {
       if (s.message.type !== 'tool_output') return false;
       const meta = s.message.metadata as Record<string, unknown> | undefined;
-      const raw = meta?.['raw_output'];
-      return typeof raw === 'string' && raw.includes(CHECKPOINT_MARKER_TYPE);
+      const data = meta?.['data'];
+      return typeof data === 'object' && data !== null && Reflect.get(data, '_type') === CHECKPOINT_MARKER_TYPE;
     });
     expect(hasCheckpointToolOutput).toBe(true);
 
     // 不应新增 history_summary 消息
-    const hasSummaryMessage = result.states.some((s) => s.message.type === 'history_summary');
+    const hasSummaryMessage = result.states.some(s => s.message.type === 'history_summary');
     expect(hasSummaryMessage).toBe(false);
   });
 
   it('按 keepPairsBefore 保留 checkpoint 前指定数量的工具对', async () => {
     const configurableProvider = new CheckpointSummarizationProvider({ keepPairsBefore: 4 });
-    const tools = Array.from({ length: 5 }, (_, index) => makeToolPair(`tool_${index + 1}`, `tool_${index + 1} result`));
+    const tools = Array.from({ length: 5 }, (_, index) =>
+      makeToolPair(`tool_${index + 1}`, `tool_${index + 1} result`)
+    );
     const checkpoint = makeToolPair('context_checkpoint', 'Context checkpoint created.');
     checkpoint.out.metadata = {
       ...(checkpoint.out.metadata ?? {}),
-      raw_output: makeCheckpointContent('Keep four pairs before checkpoint'),
+      data: makeCheckpointData('Keep four pairs before checkpoint'),
     };
     const states: MessageProcessingState[] = [
       makeState(makeMsg({ role: 'system', content: 'system prompt' }), 'keep_core'),
       makeState(makeMsg({ role: 'user', content: 'old task' })),
-      ...tools.flatMap((tool) => [makeState(tool.call), makeState(tool.out)]),
+      ...tools.flatMap(tool => [makeState(tool.call), makeState(tool.out)]),
       makeState(checkpoint.call),
       makeState(checkpoint.out),
     ];
 
     const result = await configurableProvider.provide(states, 100000, makeProviderContext());
     const keptToolOutputs = result.states
-      .filter((state) => state.message.type === 'tool_output' && state.action === 'keep_working_memory')
-      .map((state) => state.message.content);
+      .filter(
+        state => state.message.type === 'tool_output' && state.action === 'keep_working_memory'
+      )
+      .map(state => state.message.content);
 
     expect(result.strategiesApplied).toContain('checkpoint_trim_before');
     expect(keptToolOutputs).not.toContain('tool_1 result');
-    expect(keptToolOutputs).toEqual(expect.arrayContaining([
-      'tool_2 result',
-      'tool_3 result',
-      'tool_4 result',
-      'tool_5 result',
-      'Context checkpoint created.',
-    ]));
+    expect(keptToolOutputs).toEqual(
+      expect.arrayContaining([
+        'tool_2 result',
+        'tool_3 result',
+        'tool_4 result',
+        'tool_5 result',
+        'Context checkpoint created.',
+      ])
+    );
   });
 
   it('按 triggerToolName 识别自定义 checkpoint 工具名', async () => {
@@ -211,7 +224,7 @@ describe('CheckpointSummarizationProvider', () => {
     const customCheckpoint = makeToolPair('phase_checkpoint', 'Phase checkpoint created.');
     customCheckpoint.out.metadata = {
       ...(customCheckpoint.out.metadata ?? {}),
-      raw_output: makeCheckpointContent('Custom checkpoint summary'),
+      data: makeCheckpointData('Custom checkpoint summary'),
     };
     const states: MessageProcessingState[] = [
       makeState(makeMsg({ role: 'system', content: 'system prompt' }), 'keep_core'),
@@ -223,8 +236,12 @@ describe('CheckpointSummarizationProvider', () => {
     ];
 
     const result = await configurableProvider.provide(states, 100000, makeProviderContext());
-    const checkpointCall = result.states.find((state) => state.message.id === customCheckpoint.call.id);
-    const checkpointOutput = result.states.find((state) => state.message.id === customCheckpoint.out.id);
+    const checkpointCall = result.states.find(
+      state => state.message.id === customCheckpoint.call.id
+    );
+    const checkpointOutput = result.states.find(
+      state => state.message.id === customCheckpoint.out.id
+    );
 
     expect(result.strategiesApplied).toContain('checkpoint_trim_before');
     expect(checkpointCall?.action).toBe('keep_working_memory');
@@ -235,7 +252,7 @@ describe('CheckpointSummarizationProvider', () => {
     const customCheckpoint = makeToolPair('phase_checkpoint', 'Phase checkpoint created.');
     customCheckpoint.out.metadata = {
       ...(customCheckpoint.out.metadata ?? {}),
-      raw_output: makeCheckpointContent('Custom checkpoint summary'),
+      data: makeCheckpointData('Custom checkpoint summary'),
     };
     const states: MessageProcessingState[] = [
       makeState(makeMsg({ role: 'system', content: 'system prompt' }), 'keep_core'),
@@ -246,8 +263,12 @@ describe('CheckpointSummarizationProvider', () => {
     const result = await provider.provide(states, 100000, makeProviderContext());
 
     expect(result.strategiesApplied).toHaveLength(0);
-    expect(result.states.find((state) => state.message.id === customCheckpoint.call.id)?.action).toBe('skip');
-    expect(result.states.find((state) => state.message.id === customCheckpoint.out.id)?.action).toBe('skip');
+    expect(result.states.find(state => state.message.id === customCheckpoint.call.id)?.action).toBe(
+      'skip'
+    );
+    expect(result.states.find(state => state.message.id === customCheckpoint.out.id)?.action).toBe(
+      'skip'
+    );
   });
 
   it('旧 history_summary 会被裁剪为 skip', async () => {
@@ -255,7 +276,7 @@ describe('CheckpointSummarizationProvider', () => {
     const checkpoint = makeToolPair('context_checkpoint', 'Context checkpoint created.');
     checkpoint.out.metadata = {
       ...(checkpoint.out.metadata ?? {}),
-      raw_output: makeCheckpointContent('Summary after old summary'),
+      data: makeCheckpointData('Summary after old summary'),
     };
     const states: MessageProcessingState[] = [
       makeState(makeMsg({ role: 'system', content: 'system prompt' }), 'keep_core'),
@@ -274,7 +295,7 @@ describe('CheckpointSummarizationProvider', () => {
     expect(result.events).toBeUndefined();
 
     // 裁剪发生后，旧 history_summary 必须被降级为 skip（不会进入最终 LLM messages）
-    const summaryStates = result.states.filter((s) => s.message.type === 'history_summary');
+    const summaryStates = result.states.filter(s => s.message.type === 'history_summary');
     expect(summaryStates.length).toBe(1);
     expect(summaryStates[0].action).toBe('skip');
   });
@@ -283,7 +304,7 @@ describe('CheckpointSummarizationProvider', () => {
     const checkpoint = makeToolPair('context_checkpoint', 'Context checkpoint created.');
     checkpoint.out.metadata = {
       ...(checkpoint.out.metadata ?? {}),
-      raw_output: makeCheckpointContent('Quick summary'),
+      data: makeCheckpointData('Quick summary'),
     };
     const states: MessageProcessingState[] = [
       makeState(makeMsg({ role: 'system', content: 'system prompt' }), 'keep_core'),
@@ -296,16 +317,21 @@ describe('CheckpointSummarizationProvider', () => {
     expect(result.strategiesApplied).toHaveLength(0);
     expect(result.events).toBeUndefined();
     // 不应新增 summary 消息
-    expect(result.states.some((s) => s.message.type === 'history_summary')).toBe(false);
-    expect(result.states.some((s) => s.message.role === 'system' && s.message.type !== 'history_summary')).toBe(true);
+    expect(result.states.some(s => s.message.type === 'history_summary')).toBe(false);
+    expect(
+      result.states.some(s => s.message.role === 'system' && s.message.type !== 'history_summary')
+    ).toBe(true);
   });
 
-  it('content 为 observation 文本时，可从 metadata.raw_output 识别 checkpoint', async () => {
+  it('content 为 observation 文本时，从 metadata.data 识别 checkpoint', async () => {
     const tool1 = makeToolPair('tool_1', 'tool_1 result');
-    const checkpoint = makeToolPair('context_checkpoint', '✅ Context checkpoint created. On the next processing cycle, conversation history will be cleaned.');
+    const checkpoint = makeToolPair(
+      'context_checkpoint',
+      '✅ Context checkpoint created. On the next processing cycle, conversation history will be cleaned.'
+    );
     checkpoint.out.metadata = {
       ...(checkpoint.out.metadata ?? {}),
-      raw_output: makeCheckpointContent('Summary from raw_output marker'),
+      data: makeCheckpointData('Summary from data marker'),
     };
     const states: MessageProcessingState[] = [
       makeState(makeMsg({ role: 'system', content: 'system prompt' }), 'keep_core'),
@@ -323,8 +349,11 @@ describe('CheckpointSummarizationProvider', () => {
     expect(result.events).toBeUndefined();
   });
 
-  it('raw_output 缺失时，即使 content 是 checkpoint JSON 也不触发（严格协议）', async () => {
-    const checkpoint = makeToolPair('context_checkpoint', makeCheckpointContent('Should not be detected without raw_output'));
+  it('data marker 缺失时，即使 content 看起来像 checkpoint 也不触发', async () => {
+    const checkpoint = makeToolPair(
+      'context_checkpoint',
+      JSON.stringify(makeCheckpointData('Should not be detected without data marker'))
+    );
     const states: MessageProcessingState[] = [
       makeState(makeMsg({ role: 'system', content: 'system prompt' }), 'keep_core'),
       makeState(checkpoint.call),
@@ -342,7 +371,7 @@ describe('CheckpointSummarizationProvider', () => {
     const checkpoint = makeToolPair('context_checkpoint', 'Context checkpoint created.');
     checkpoint.out.metadata = {
       ...(checkpoint.out.metadata ?? {}),
-      raw_output: makeCheckpointContent('Checkpoint summary'),
+      data: makeCheckpointData('Checkpoint summary'),
     };
     const states: MessageProcessingState[] = [
       makeState(makeMsg({ role: 'system', content: 'system prompt' }), 'keep_core'),
@@ -359,15 +388,63 @@ describe('CheckpointSummarizationProvider', () => {
     // 但仍应提升 keepSet 中的工具对到 keep_working_memory
     expect(result.strategiesApplied).toHaveLength(0);
 
-    const keptTool1Call = result.states.find((s) => s.message.content === 'call tool_1');
-    const keptTool1Out = result.states.find((s) => s.message.content === 'tool_1 result');
-    const keptTool2Call = result.states.find((s) => s.message.content === 'call tool_2');
-    const keptTool2Out = result.states.find((s) => s.message.content === 'tool_2 result');
+    const keptTool1Call = result.states.find(s => s.message.content === 'call tool_1');
+    const keptTool1Out = result.states.find(s => s.message.content === 'tool_1 result');
+    const keptTool2Call = result.states.find(s => s.message.content === 'call tool_2');
+    const keptTool2Out = result.states.find(s => s.message.content === 'tool_2 result');
 
     expect(keptTool1Call?.action).toBe('keep_working_memory');
     expect(keptTool1Out?.action).toBe('keep_working_memory');
     expect(keptTool2Call?.action).toBe('keep_working_memory');
     expect(keptTool2Out?.action).toBe('keep_working_memory');
+  });
+
+  it('checkpoint 会保留更早的含图工具交互整组，不拆散 tool_calls 与 tool_output', async () => {
+    const imageTool = makeToolPair('inspect_image', 'image result');
+    const imageToolOutput: AiMessage = {
+      id: imageTool.out.id,
+      role: 'tool',
+      type: 'tool_output',
+      content: imageTool.out.content,
+      timestamp: imageTool.out.timestamp,
+      metadata: imageTool.out.metadata,
+      attachments: [
+        {
+          id: 'attachment-1',
+          kind: 'image',
+          resourceId: 'asset-1',
+          mediaType: 'image/png',
+          byteLength: 128,
+          width: 16,
+          height: 8,
+          sha256: 'a'.repeat(64),
+        },
+      ],
+    };
+    const checkpoint = makeToolPair('context_checkpoint', 'Context checkpoint created.');
+    checkpoint.out.metadata = {
+      ...(checkpoint.out.metadata ?? {}),
+      data: makeCheckpointData('Checkpoint after image inspection'),
+    };
+    const providerWithoutRecentPairs = new CheckpointSummarizationProvider({ keepPairsBefore: 0 });
+    const oldUser = makeMsg({ role: 'user', type: 'user_input', content: 'old task' });
+    const states: MessageProcessingState[] = [
+      makeState(oldUser),
+      makeState(imageTool.call, 'skip'),
+      makeState(imageToolOutput, 'skip'),
+      makeState(checkpoint.call, 'skip'),
+      makeState(checkpoint.out, 'skip'),
+    ];
+
+    const result = await providerWithoutRecentPairs.provide(states, 100000, makeProviderContext());
+
+    expect(result.states.find(state => state.message.id === oldUser.id)?.action).toBe('skip');
+    expect(result.states.find(state => state.message.id === imageTool.call.id)?.action).toBe(
+      'keep_working_memory'
+    );
+    expect(result.states.find(state => state.message.id === imageToolOutput.id)?.action).toBe(
+      'keep_working_memory'
+    );
   });
 
   it('同一组中混合 checkpoint 与普通工具时，整组按 checkpoint 组保留', async () => {
@@ -380,12 +457,12 @@ describe('CheckpointSummarizationProvider', () => {
       metadata: {
         tool_calls: [
           {
-            id: mixedToolCallId,
+            id: ToolCallIdSchema.parse(mixedToolCallId),
             type: 'function',
             function: { name: 'context_checkpoint', arguments: '{}' },
           },
           {
-            id: 'call_mixed_normal',
+            id: ToolCallIdSchema.parse('call_mixed_normal'),
             type: 'function',
             function: { name: 'tool_normal', arguments: '{}' },
           },
@@ -397,9 +474,9 @@ describe('CheckpointSummarizationProvider', () => {
       type: 'tool_output',
       content: 'Context checkpoint created.',
       metadata: {
-        tool_call_id: mixedToolCallId,
+        tool_call_id: ToolCallIdSchema.parse(mixedToolCallId),
         tool_name: 'context_checkpoint',
-        raw_output: makeCheckpointContent('Mixed checkpoint summary'),
+        data: makeCheckpointData('Mixed checkpoint summary'),
       },
     });
     const mixedNormalOut = makeMsg({
@@ -407,8 +484,9 @@ describe('CheckpointSummarizationProvider', () => {
       type: 'tool_output',
       content: 'tool_normal result',
       metadata: {
-        tool_call_id: 'call_mixed_normal',
+        tool_call_id: ToolCallIdSchema.parse('call_mixed_normal'),
         tool_name: 'tool_normal',
+        data: { value: 'tool_normal result' },
       },
     });
 
@@ -422,9 +500,11 @@ describe('CheckpointSummarizationProvider', () => {
     ];
 
     const result = await provider.provide(states, 100000, makeProviderContext());
-    const keptMixedAssistant = result.states.find((state) => state.message.id === mixedAssistant.id);
-    const keptMixedCheckpointOut = result.states.find((state) => state.message.id === mixedCheckpointOut.id);
-    const keptMixedNormalOut = result.states.find((state) => state.message.id === mixedNormalOut.id);
+    const keptMixedAssistant = result.states.find(state => state.message.id === mixedAssistant.id);
+    const keptMixedCheckpointOut = result.states.find(
+      state => state.message.id === mixedCheckpointOut.id
+    );
+    const keptMixedNormalOut = result.states.find(state => state.message.id === mixedNormalOut.id);
 
     expect(keptMixedAssistant?.action).toBe('keep_working_memory');
     expect(keptMixedCheckpointOut?.action).toBe('keep_working_memory');
@@ -439,16 +519,32 @@ describe('CheckpointSummarizationProvider', () => {
       type: 'tool_calls',
       content: '',
       metadata: {
-        tool_calls: [{ id: toolCallId, type: 'function', function: { name: 'context_checkpoint', arguments: '{}' } }],
+        tool_calls: [
+          {
+            id: ToolCallIdSchema.parse(toolCallId),
+            type: 'function',
+            function: { name: 'context_checkpoint', arguments: '{}' },
+          },
+        ],
       },
     });
-    const assistantTextBetween = makeMsg({ role: 'assistant', type: 'final_answer', content: '中间插入了一条assistant文本' });
+    const assistantTextBetween = makeMsg({
+      role: 'assistant',
+      type: 'final_answer',
+      content: '中间插入了一条assistant文本',
+    });
     const toolCalls2 = makeMsg({
       role: 'assistant',
       type: 'tool_calls',
       content: '',
       metadata: {
-        tool_calls: [{ id: toolCallId, type: 'function', function: { name: 'context_checkpoint', arguments: '{}' } }],
+        tool_calls: [
+          {
+            id: ToolCallIdSchema.parse(toolCallId),
+            type: 'function',
+            function: { name: 'context_checkpoint', arguments: '{}' },
+          },
+        ],
       },
     });
     const toolOut = makeMsg({
@@ -456,9 +552,9 @@ describe('CheckpointSummarizationProvider', () => {
       type: 'tool_output',
       content: '✅ Context checkpoint created.',
       metadata: {
-        tool_call_id: toolCallId,
+        tool_call_id: ToolCallIdSchema.parse(toolCallId),
         tool_name: 'context_checkpoint',
-        raw_output: makeCheckpointContent('dup checkpoint'),
+        data: makeCheckpointData('dup checkpoint'),
       },
     });
 
@@ -476,9 +572,9 @@ describe('CheckpointSummarizationProvider', () => {
     const result = await provider.provide(states, 100000, makeProviderContext());
 
     // 断言：只提升“最近的那条 tool_calls2”与 toolOut
-    const s1 = result.states.find((s) => s.message.id === toolCalls1.id);
-    const s2 = result.states.find((s) => s.message.id === toolCalls2.id);
-    const out = result.states.find((s) => s.message.id === toolOut.id);
+    const s1 = result.states.find(s => s.message.id === toolCalls1.id);
+    const s2 = result.states.find(s => s.message.id === toolCalls2.id);
+    const out = result.states.find(s => s.message.id === toolOut.id);
     expect(s2?.action).toBe('keep_working_memory');
     expect(out?.action).toBe('keep_working_memory');
     expect(s1?.action).toBe('skip');

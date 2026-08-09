@@ -15,8 +15,7 @@ export const DEFAULT_TOOL_OBSERVATION_GOVERNANCE_POLICY = {
    *
    * 中文说明：
    * - 这里控制“工具刚执行完后，原始 observation 多长就落盘到 ToolOutputStore”；
-   * - 这是执行期的网络/持久化/实时回放保护，不替代 context-manager 的 `MAX_TOOL_PAIR_TOKENS`；
-   * - `MAX_TOOL_PAIR_TOKENS` 仍负责下一轮构建 LLM 上下文时，对整组 tool_calls + tool_output 做 token 预算兜底。
+   * - 这是工具 output 的唯一尺寸治理点；上下文构建期只决定工具组保留/丢弃，不再二次改写 output。
    */
   enabled: true,
   maxChars: 20_000,
@@ -26,6 +25,7 @@ export const DEFAULT_TOOL_OBSERVATION_GOVERNANCE_POLICY = {
 export const TOOL_OBSERVATION_PREVIEW_LIMITS = DEFAULT_TOOL_OBSERVATION_GOVERNANCE_POLICY;
 
 export interface ObservationGovernanceResult {
+  observation: string;
   observationTruncation?: ObservationTruncationMeta;
 }
 
@@ -39,51 +39,28 @@ export function resolveToolObservationGovernancePolicy(
   };
 }
 
-function buildToolOutputUiMeta(params: {
-  toolName: string;
-  parsed: Record<string, unknown>;
-}): ObservationPreviewMeta | undefined {
-  const data = params.parsed['data'];
-  if (!isRecord(data)) {
+function readObservationPreviewMeta(parsed: Record<string, unknown>): ObservationPreviewMeta | undefined {
+  const meta = parsed['observationPreviewMeta'];
+  if (!isRecord(meta)) {
     return undefined;
   }
 
-  if (params.toolName === 'browse_document_by_chunk' || params.toolName === 'browse_document_content') {
-    const filename = readString(data['filename']);
-    return filename ? { filename } : undefined;
+  const filename = readString(meta['filename']);
+  const docName = readString(meta['doc_name']);
+  const documentName = readString(meta['document_name']);
+  // 文档类型命名空间属于 host/plugin；runtime 只校验它是非空字符串并原样转交。
+  const docType = readString(meta['doc_type']);
+
+  if (!filename && !docName && !documentName && !docType) {
+    return undefined;
   }
 
-  if (params.toolName === 'sharedmemory_read') {
-    const docName = readString(data['doc_name']);
-    return docName ? { doc_name: docName } : undefined;
-  }
-
-  if (params.toolName === 'resource_read') {
-    const uri = readString(data['uri']);
-    if (typeof uri === 'string' && uri.startsWith('shared_memory://docs/')) {
-      const docName = readString(data['doc_name']);
-      return docName ? { doc_name: docName } : undefined;
-    }
-    if (typeof uri === 'string' && (uri.startsWith('evidence://') || uri.startsWith('citation_snapshot://'))) {
-      const bundleId = readString(data['bundle_id']);
-      return bundleId ? { document_name: bundleId } : undefined;
-    }
-  }
-
-  if (params.toolName === 'workspace_read_documents') {
-    const documentName = readString(data['documentName']) ?? readString(data['document_name']);
-    const docTypeRaw = readString(data['docType']) ?? readString(data['doc_type']);
-    const doc_type = docTypeRaw === 'markdown' || docTypeRaw === 'mindmap' ? docTypeRaw : undefined;
-    if (!documentName && !doc_type) {
-      return undefined;
-    }
-    return {
-      ...(documentName ? { document_name: documentName } : {}),
-      ...(doc_type ? { doc_type } : {}),
-    };
-  }
-
-  return undefined;
+  return {
+    ...(filename ? { filename } : {}),
+    ...(docName ? { doc_name: docName } : {}),
+    ...(documentName ? { document_name: documentName } : {}),
+    ...(docType ? { doc_type: docType } : {}),
+  };
 }
 
 export async function applyObservationGovernance(params: {
@@ -95,12 +72,12 @@ export async function applyObservationGovernance(params: {
   policy?: AgentSpecToolObservationGovernancePolicy;
 }): Promise<ObservationGovernanceResult> {
   if (!params.structuredObservation || !isRecord(params.parsed)) {
-    return {};
+    throw new Error('Observation governance requires a validated structured tool result.');
   }
 
   const policy = resolveToolObservationGovernancePolicy(params.policy);
   if (!policy.enabled) {
-    return {};
+    return { observation: params.structuredObservation };
   }
 
   const truncated = await params.observationPreview.truncateObservation({
@@ -109,24 +86,18 @@ export async function applyObservationGovernance(params: {
     text: params.structuredObservation,
     maxChars: policy.maxChars,
     maxLines: policy.maxLines,
-    meta: buildToolOutputUiMeta({
-      toolName: params.toolName,
-      parsed: params.parsed,
-    }),
+    meta: readObservationPreviewMeta(params.parsed),
   });
 
   if (!truncated.truncated) {
-    return {};
+    return { observation: params.structuredObservation };
   }
 
   params.parsed['observation'] = truncated.preview;
-  const data = params.parsed['data'];
-  if (isRecord(data) && !('tool_output_store' in data)) {
-    data['tool_output_store'] = { blob_id: truncated.blob_id };
-  }
-
   return {
+    observation: truncated.preview,
     observationTruncation: buildObservationTruncationMeta({
+      blobId: truncated.blob_id,
       originalText: params.structuredObservation,
       previewText: truncated.preview,
       originalChars: truncated.originalChars,
@@ -138,6 +109,7 @@ export async function applyObservationGovernance(params: {
 }
 
 function buildObservationTruncationMeta(input: {
+  blobId: string;
   originalText: string;
   previewText: string;
   originalChars?: number;
@@ -146,6 +118,7 @@ function buildObservationTruncationMeta(input: {
   previewLines?: number;
 }): ObservationTruncationMeta {
   return {
+    blobId: input.blobId,
     originalChars: input.originalChars ?? input.originalText.length,
     previewChars: input.previewChars ?? input.previewText.length,
     originalLines: input.originalLines ?? countLines(input.originalText),

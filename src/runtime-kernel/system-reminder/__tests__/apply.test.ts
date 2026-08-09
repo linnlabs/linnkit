@@ -3,15 +3,20 @@ import type { AgentInvocationRequest } from '../../../ports';
 import type { RuntimeEvent } from '../../../contracts';
 import { applySystemReminders } from '../apply';
 import { SystemReminderRegistry } from '../registry';
+import { ToolCallIdSchema } from '../../../contracts';
 
 const request: AgentInvocationRequest = {
   query: 'hello',
   promptKey: 'default',
-  mode: 'agent',
   availableTools: ['context_checkpoint', 'phase_checkpoint'],
 };
 
-function baseEvent(type: RuntimeEvent['type'], id: string): Pick<RuntimeEvent, 'id' | 'conversation_id' | 'timestamp' | 'turn_id' | 'version'> & { type: RuntimeEvent['type'] } {
+function baseEvent(
+  type: RuntimeEvent['type'],
+  id: string
+): Pick<RuntimeEvent, 'id' | 'conversation_id' | 'timestamp' | 'turn_id' | 'version'> & {
+  type: RuntimeEvent['type'];
+} {
   return {
     id,
     type,
@@ -36,7 +41,7 @@ function toolDecision(id: string): RuntimeEvent {
     ...baseEvent('tool_call_decision', id),
     type: 'tool_call_decision',
     tool_name: 'search',
-    tool_call_id: id,
+    tool_call_id: ToolCallIdSchema.parse(id),
     phase: 'complete',
     status: 'success',
   };
@@ -93,7 +98,10 @@ describe('applySystemReminders', () => {
   it('支持通过注册表解释 host extraRules', () => {
     const registry = new SystemReminderRegistry();
     registry.registerTriggerKind('always', () => true);
-    registry.registerContentTemplate('customTemplate', (_ctx, args) => `自定义提醒：${String(args?.name ?? '')}`);
+    registry.registerContentTemplate(
+      'customTemplate',
+      (_ctx, args) => `自定义提醒：${String(args?.name ?? '')}`
+    );
 
     const result = applySystemReminders({
       llmMessages: [{ role: 'user', content: '继续' }],
@@ -121,7 +129,7 @@ describe('applySystemReminders', () => {
     expect(JSON.stringify(result)).toContain('自定义提醒：memory');
   });
 
-  it('上下文预算提醒使用 executorLocal.contextCheckpointToolName', () => {
+  it('上下文预算提醒使用通用 checkpoint 文案', () => {
     const result = applySystemReminders({
       llmMessages: [{ role: 'user', content: '继续' }],
       ctx: {
@@ -141,5 +149,7 @@ describe('applySystemReminders', () => {
     });
 
     expect(JSON.stringify(result)).toContain('调用 phase_checkpoint 工具');
+    expect(JSON.stringify(result)).not.toContain('TaskState');
+    expect(JSON.stringify(result)).not.toContain('Workspace 文件');
   });
 });

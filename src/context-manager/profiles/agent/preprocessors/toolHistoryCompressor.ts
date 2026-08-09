@@ -1,4 +1,4 @@
-import { generateMessageId } from '../../../../shared/ids';
+import { generateAiMessageId } from '../../../../contracts';
 import {
   BasePreprocessor,
   PreprocessorContext,
@@ -15,6 +15,7 @@ import {
   ContextProviderError,
   TOOL_HISTORY_OVERFLOW_ERROR_CODE,
 } from '../../../shared/providers/base';
+import { PREPROCESSOR_PRIORITY } from '../../../shared/preprocessors/priority';
 
 const CHECKPOINT_TOOL_NAME = 'context_checkpoint';
 const DEFAULT_KEEP_LATEST_TOOL_PAIRS = 2;
@@ -32,8 +33,6 @@ export interface ToolHistoryCompressorOptions {
   keepLatestRuns?: number;
   maxInteractionGroups?: number;
   overflowStrategy?: ToolHistoryOverflowStrategy;
-  maxPairTokens?: number;
-  maxOutputSummaryTokens?: number;
 }
 
 type NormalizedToolHistoryCompressorOptions = {
@@ -57,13 +56,13 @@ type NormalizedToolHistoryCompressorOptions = {
  * - drop：默认行为。旧工具组超过保留窗口后直接移除，避免改写历史前缀和制造伪 final_answer。
  * - compress：兼容旧行为。把旧工具组替换为自然语言摘要，用于小上下文或审计友好的历史线索保留。
  *
- * 注意：单个 tool_output 的 token 截断不在这里做，那是 WorkingMemory 阶段
- * ToolPairTruncator 的职责；本处理器只决定“工具组是原样保留、删除，还是压缩为摘要消息”。
+ * 注意：本处理器只决定“工具组是原样保留、删除，还是压缩为摘要消息”。
+ * 构建期不再二次截断 tool_call arguments 或 tool_output；output 的尺寸治理只发生在执行期 observationGovernance。
  */
 export class ToolHistoryCompressorPreprocessor extends BasePreprocessor {
   readonly name = 'ToolHistoryCompressorPreprocessor';
   readonly description = '工具历史保留处理器 - 按策略保留、删除或压缩较早的历史工具调用对';
-  readonly priority = 0;
+  readonly priority = PREPROCESSOR_PRIORITY.toolHistoryCompression;
 
   private summarizer = createDefaultToolOutputSummarizer();
   private readonly options: NormalizedToolHistoryCompressorOptions;
@@ -292,7 +291,7 @@ export class ToolHistoryCompressorPreprocessor extends BasePreprocessor {
       const formattedArgs = this.summarizer.formatToolArgs(item.toolArgs);
       const argsPart = formattedArgs ? `（参数：${formattedArgs}）` : '';
       const outputSummaries = item.rawOutputs.map((rawOutput) =>
-        this.summarizer.getSummary(item.toolName, rawOutput, context.toolSummaryProvider, item.toolArgs),
+        this.summarizer.getSummary(item.toolName, rawOutput, context.toolSummaryProvider),
       );
       const mergedSummary = outputSummaries.join('；');
       summaryParts.push(`我已经调用了工具「${item.toolName}」${argsPart}，并得到了结果：${mergedSummary}`);
@@ -301,7 +300,7 @@ export class ToolHistoryCompressorPreprocessor extends BasePreprocessor {
     const compressedContent = `${summaryParts.join('；')}，我需要思考下一步行动`;
 
     return {
-      id: generateMessageId(),
+      id: generateAiMessageId(),
       role: 'assistant',
       type: 'final_answer',
       content: compressedContent,

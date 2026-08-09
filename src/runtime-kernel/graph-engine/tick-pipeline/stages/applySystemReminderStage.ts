@@ -1,13 +1,15 @@
 import { applySystemReminders } from '../../../system-reminder/apply';
-import type { TickPipelineContext, TickStage } from '../types';
-import type { AiMessage } from '../../../../contracts';
+import { defineTickStage } from '../types';
+import type { TickStage } from '../types';
 
 export function createApplySystemReminderStage(): TickStage {
-  return {
+  return defineTickStage({
     id: 'apply_system_reminder',
-    async run(ctx: TickPipelineContext): Promise<void> {
-      ctx.systemReminderHitRuleIds = undefined;
-      ctx.llmMessages = applySystemReminders({
+    reads: ['llmMessages', 'request', 'history', 'executorLocal'],
+    writes: ['systemReminderHitRuleIds', 'llmMessages'],
+    async run(ctx) {
+      let systemReminderHitRuleIds: string[] | undefined;
+      const llmMessages = applySystemReminders({
         llmMessages: ctx.llmMessages,
         ctx: {
           request: ctx.request,
@@ -16,9 +18,14 @@ export function createApplySystemReminderStage(): TickStage {
         },
         policy: ctx.executorLocal?.systemReminderPolicy,
         onInjected: ({ ruleIds }) => {
-          ctx.systemReminderHitRuleIds = Array.isArray(ruleIds) ? ruleIds : [];
+          systemReminderHitRuleIds = Array.isArray(ruleIds) ? ruleIds : [];
         },
-      }) as AiMessage[];
+      });
+
+      return {
+        systemReminderHitRuleIds,
+        llmMessages,
+      };
     },
-  };
+  });
 }

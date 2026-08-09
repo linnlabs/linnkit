@@ -1,4 +1,4 @@
-import type { AiMessage } from '../contracts';
+import type { AiMessage, ReasoningEffort, RuntimeResourceRef } from '../contracts';
 
 /**
  * Agent runtime 最小调用协议。
@@ -11,18 +11,15 @@ import type { AiMessage } from '../contracts';
  */
 export interface AgentInvocationRequest {
   query: string;
+  currentUserEventId?: string;
+  currentUserAttachments?: RuntimeResourceRef[];
   promptKey: string;
   model_id?: string;
   imageGenerationModelId?: string;
-  /**
-   * 兼容字段。
-   *
-   * 当前仍允许 host 显式传入 `chat`，但长期目标不是维护两套并列核心模式；
-   * 纯聊天会逐步收敛为“不给工具的 agent 形态”。
-   */
-  mode?: 'agent' | 'chat';
   maxSteps?: number;
   enableTools?: boolean;
   availableTools?: string[];
   conversationHistory?: AiMessage[];
+  /** 用户选择的思考努力程度（统一语义）；null/undefined 表示走模型默认 */
+  reasoning_effort?: ReasoningEffort | null;
 }

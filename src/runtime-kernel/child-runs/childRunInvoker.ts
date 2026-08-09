@@ -6,30 +6,39 @@
 import { GraphExecutor } from '../graph-engine/engine';
 import { MemoryCheckpointer } from '../graph-engine/checkpointer/memoryCheckpointer';
 import { ToolNode } from '../graph-engine/nodes/toolNode';
-import { AnswerNode } from '../graph-engine/nodes/answerNode';
 import { WaitUserNode } from '../graph-engine/nodes/waitUserNode';
 import type { AgentInvocationRequest } from '../../ports';
-import type { ObservationPreviewPort, ToolRuntimePort } from '../tools/ports';
+import type {
+  ObservationPreviewPort,
+  ToolModelInputCapabilityValidatorPort,
+  ToolRuntimePort,
+} from '../tools/ports';
+import type { ToolModelInputResolverPort } from '../tools/model-input';
 import { noopAudit } from '../audit/noopAudit';
 import { noopTelemetry } from '../telemetry/noopTelemetry';
 import type { AuditPort } from '../../ports';
 import type { TelemetryPort } from '../telemetry/telemetryPort';
 import type { ChildRunParentContext } from './types';
-import { generateMessageId } from '../../shared/ids';
+import { generateRunId, generateRuntimeEventId, generateTurnId } from '../../contracts';
 import { Logger } from '../../shared/logger';
-import { recordRunTranscript } from '../../shared/llmAuditRecorder';
 import type { ModelResolverLike } from '../llm/modelResolver';
-import type { SubRunTracePublisher } from '../child-run-trace/subrunTrace.types';
-import type { GraphNode } from '../graph-engine/types';
-import type { AgentSpecContextPolicy, AgentSpecSystemReminderPolicy, RuntimeEvent } from '../../contracts';
-import { createChildRunToolContext } from './childToolContext';
+import type { GraphNode, RuntimeEventSink } from '../graph-engine/types';
+import type {
+  AgentSpecContextPolicy,
+  AgentSpecSystemReminderPolicy,
+  RoutedRuntimeEvent,
+  RuntimeEvent,
+  RunId,
+} from '../../contracts';
+import { createChildRunToolContext, decideChildRunDepth } from './childToolContext';
 import {
   appendUniqueEvents,
   buildChildRunTranscriptMessages,
+  createChildRunUserInput,
   extractFinalAnswer,
+  extractLastProgress,
   extractJudgeToolOutput,
 } from './childRunEvents';
-import { createChildRunTraceSink, type ChildRunTraceSink } from './childRunTraceSink';
 import { recoverChildRunEventsFromCheckpoint } from './checkpointRecovery';
 
 const logger = new Logger('ChildRunInvoker');
@@ -57,28 +66,33 @@ export interface ChildRunInvokeConfig {
   /**
    * child-run 的宿主会话归属，用于 RuntimeEvent / Audit / Telemetry。
    *
-   * 中文备注：
-   * - 同步 child-run 需要独立 checkpoint key 隔离图状态，但审计与 run registry
-   *   必须落在 host 注册 child run 时使用的 conversationId 下；
-   * - 不传时优先继承 parentToolContext.conversationId，最后才退回内部 checkpoint key。
+   * 未显式提供时继承父 ToolContext；两处都缺失属于 admission 错误。
    */
   conversationId?: string;
-  runId?: string;
-  parentRunId?: string;
+  runId?: RunId;
+  parentRunId?: RunId;
   abortSignal?: AbortSignal;
-  subrunTracePublisher?: SubRunTracePublisher;
+  /** 由 child lifecycle 装配的唯一 RuntimeEvent admission 入口。 */
+  runtimeEventSink: RuntimeEventSink;
   seedHistoryEvents?: RuntimeEvent[];
   maxSteps?: number;
   modelId?: string;
 }
 
 export interface ChildRunInvokeResult {
-  runId?: string;
-  parentRunId?: string;
+  runId?: RunId;
+  parentRunId?: RunId;
+  subrunId: string;
   success: boolean;
+  cancelled?: boolean;
   judgeToolOutput?: string;
   finalAnswer?: string;
-  events: RuntimeEvent[];
+  lastProgress?: string;
+  events: RoutedRuntimeEvent[];
+  transcriptMessages?: unknown[];
+  toolset?: {
+    availableTools?: string[];
+  };
   stepCount: number;
   error?: string;
 }
@@ -88,6 +102,8 @@ export class ChildRunInvoker {
   private readonly createLlmNode: () => GraphNode;
   private readonly toolRuntime: Pick<ToolRuntimePort, 'getToolDefinition' | 'executeTool'>;
   private readonly observationPreview: ObservationPreviewPort;
+  private readonly modelInputCapabilityValidator?: ToolModelInputCapabilityValidatorPort;
+  private readonly modelInputResolver?: ToolModelInputResolverPort;
   private readonly eventToMessageConverter: (events: RuntimeEvent[]) => unknown[];
   private readonly defaultJudgeToolName?: string;
   private readonly telemetryPort: TelemetryPort;
@@ -98,6 +114,8 @@ export class ChildRunInvoker {
     createLlmNode: () => GraphNode;
     toolRuntime: Pick<ToolRuntimePort, 'getToolDefinition' | 'executeTool'>;
     observationPreview: ObservationPreviewPort;
+    modelInputCapabilityValidator?: ToolModelInputCapabilityValidatorPort;
+    modelInputResolver?: ToolModelInputResolverPort;
     eventToMessageConverter: (events: RuntimeEvent[]) => unknown[];
     defaultJudgeToolName?: string;
     telemetryPort?: TelemetryPort;
@@ -107,6 +125,8 @@ export class ChildRunInvoker {
     this.createLlmNode = dependencies.createLlmNode;
     this.toolRuntime = dependencies.toolRuntime;
     this.observationPreview = dependencies.observationPreview;
+    this.modelInputCapabilityValidator = dependencies.modelInputCapabilityValidator;
+    this.modelInputResolver = dependencies.modelInputResolver;
     this.eventToMessageConverter = dependencies.eventToMessageConverter;
     this.defaultJudgeToolName = dependencies.defaultJudgeToolName;
     this.telemetryPort = dependencies.telemetryPort ?? noopTelemetry;
@@ -121,28 +141,58 @@ export class ChildRunInvoker {
       conversationId,
       runId,
       parentRunId,
-      subrunTracePublisher,
+      runtimeEventSink,
       seedHistoryEvents,
       maxSteps = 8,
       modelId,
       abortSignal,
     } = config;
 
-    const internalCheckpointKey = `internal_${generateMessageId()}`;
+    const childRunId = runId ?? generateRunId();
+    const internalCheckpointKey = childRunId;
+    const resolvedParentRunId = parentRunId ?? parentToolContext.runId;
+
+    const depthDecision = decideChildRunDepth({ parentToolContext });
+    if (!depthDecision.allowed) {
+      logger.warn('child-run 深度超过上限，拒绝继续递归执行', {
+        runId: childRunId,
+        parentRunId: resolvedParentRunId,
+        parentDepth: depthDecision.parentDepth,
+        maxDepth: depthDecision.maxDepth,
+      });
+      return {
+        success: false,
+        runId: childRunId,
+        parentRunId: resolvedParentRunId,
+        subrunId: childRunId,
+        events: [],
+        stepCount: 0,
+        error: depthDecision.error,
+      };
+    }
+
+    if (abortSignal?.aborted || parentToolContext.abortSignal?.aborted) {
+      logger.info('child-run 在任务接纳前已取消', {
+        runId: childRunId,
+        parentRunId: resolvedParentRunId,
+      });
+      return {
+        success: false,
+        runId: childRunId,
+        parentRunId: resolvedParentRunId,
+        subrunId: childRunId,
+        cancelled: true,
+        events: [],
+        stepCount: 0,
+        error: 'The user aborted a request.',
+      };
+    }
+
     const runtimeConversationId = resolveChildRunConversationId({
       explicitConversationId: conversationId,
       parentToolContext,
-      fallbackConversationId: internalCheckpointKey,
     });
-    const turnId = `turn_${Date.now()}`;
-    const childRunId = typeof runId === 'string' && runId.trim().length > 0
-      ? runId.trim()
-      : internalCheckpointKey;
-    const resolvedParentRunId = typeof parentRunId === 'string' && parentRunId.trim().length > 0
-      ? parentRunId.trim()
-      : typeof parentToolContext.runId === 'string' && parentToolContext.runId.trim().length > 0
-        ? parentToolContext.runId.trim()
-        : undefined;
+    const turnId = generateTurnId();
 
     logger.info(`启动 child-run: ${agentConfig.id}`, {
       conversationId: runtimeConversationId,
@@ -160,36 +210,47 @@ export class ChildRunInvoker {
       observationPreview: this.observationPreview,
       telemetryPort: this.telemetryPort,
       auditPort: this.auditPort,
+      modelInputCapabilityValidator: this.modelInputCapabilityValidator,
+      modelInputResolver: this.modelInputResolver,
     });
-    const answerNode = new AnswerNode();
     const waitUserNode = new WaitUserNode({ auditPort: this.auditPort });
 
     graphExecutor.registerNode(llmNode);
     graphExecutor.registerNode(toolNode);
-    graphExecutor.registerNode(answerNode);
     graphExecutor.registerNode(waitUserNode);
 
+    const childUserInput = createChildRunUserInput({
+      id: generateRuntimeEventId(),
+      conversationId: runtimeConversationId,
+      turnId,
+      content: userMessage,
+    });
+    const admittedChildUserInput = runtimeEventSink(childUserInput, 'ChildRunInvoker.user_input');
+
+    const childModelId = resolveChildRunModelId({
+      explicitModelId: modelId,
+      agentConfig,
+      resolveDefaultModelId: () => this.modelResolver.resolveModelId(),
+    });
     const request: AgentInvocationRequest = {
       query: userMessage,
+      currentUserEventId: admittedChildUserInput.id,
       promptKey: agentConfig.promptKey,
-      mode: 'agent',
-      model_id:
-        modelId ??
-        (agentConfig.modelPolicy?.kind === 'fixed'
-          ? agentConfig.modelPolicy.modelId
-          : undefined) ??
-        this.modelResolver.resolveModelId(),
+      model_id: childModelId,
       maxSteps,
       enableTools: true,
-      availableTools: agentConfig.availableTools
-        ? [...agentConfig.availableTools]
-        : undefined,
+      availableTools: agentConfig.availableTools ? [...agentConfig.availableTools] : undefined,
     };
 
-    const systemPrompt = agentConfig.systemPromptBuilder ? agentConfig.systemPromptBuilder(request) : '';
+    const systemPrompt = agentConfig.systemPromptBuilder
+      ? agentConfig.systemPromptBuilder(request)
+      : '';
 
     const stepPolicy = agentConfig.stepPolicy;
     const executorLocalPolicy: Record<string, unknown> = {};
+    if (agentConfig.modelPolicy?.kind === 'fixed' && !modelId) {
+      executorLocalPolicy.lockRequestedModelId = true;
+    }
     if (stepPolicy) {
       const kind = stepPolicy.kind;
       if (kind === 'final_answer' || kind === 'force_tools') {
@@ -203,9 +264,13 @@ export class ChildRunInvoker {
       if (Array.isArray(forcedTools)) {
         const names = forcedTools.filter((x): x is string => typeof x === 'string' && x.length > 0);
         const allowed = Array.isArray(request.availableTools)
-          ? new Set(request.availableTools.filter((x): x is string => typeof x === 'string' && x.length > 0))
+          ? new Set(
+              request.availableTools.filter(
+                (x): x is string => typeof x === 'string' && x.length > 0
+              )
+            )
           : undefined;
-        const finalNames = allowed ? names.filter((n) => allowed.has(n)) : names;
+        const finalNames = allowed ? names.filter(n => allowed.has(n)) : names;
         if (finalNames.length > 0) {
           executorLocalPolicy.finalStepForcedTools = finalNames;
         }
@@ -218,11 +283,17 @@ export class ChildRunInvoker {
     }
 
     const contextCheckpointToolName = agentConfig.contextPolicy?.checkpoint?.triggerToolName;
-    if (typeof contextCheckpointToolName === 'string' && contextCheckpointToolName.trim().length > 0) {
+    if (
+      typeof contextCheckpointToolName === 'string' &&
+      contextCheckpointToolName.trim().length > 0
+    ) {
       executorLocalPolicy.contextCheckpointToolName = contextCheckpointToolName.trim();
     }
 
-    const seedHistory: RuntimeEvent[] = Array.isArray(seedHistoryEvents) ? seedHistoryEvents : [];
+    const seedHistory: RuntimeEvent[] = [
+      ...(Array.isArray(seedHistoryEvents) ? seedHistoryEvents : []),
+      admittedChildUserInput,
+    ];
 
     const childToolContext = createChildRunToolContext({
       parentToolContext,
@@ -230,17 +301,11 @@ export class ChildRunInvoker {
       turnId,
       runId: childRunId,
       parentRunId: resolvedParentRunId,
+      userQuery: userMessage,
+      modelId: childModelId,
       seedHistory,
       abortSignal,
     });
-
-    const subrunSseSink: ChildRunTraceSink | undefined = subrunTracePublisher
-      ? createChildRunTraceSink({
-          publisher: subrunTracePublisher,
-          conversationId: runtimeConversationId,
-          turnId,
-        })
-      : undefined;
 
     const initialLocal: Record<string, unknown> = {
       request,
@@ -249,37 +314,44 @@ export class ChildRunInvoker {
       turnId,
       toolContext: childToolContext,
       ...(abortSignal ? { signal: abortSignal } : {}),
-      ...(Object.keys(executorLocalPolicy).length > 0 ? { executorLocal: executorLocalPolicy } : {}),
-      ...(subrunSseSink ? { sseSink: subrunSseSink } : {}),
+      ...(Object.keys(executorLocalPolicy).length > 0
+        ? { executorLocal: executorLocalPolicy }
+        : {}),
+      runtimeEventSink,
       systemPrompt,
     };
 
-    await graphExecutor.prime(internalCheckpointKey, initialLocal, 'llm');
-
-    const allEvents: RuntimeEvent[] = [];
+    const allEvents: RoutedRuntimeEvent[] = [];
     let stepCount = 0;
     let finalAnswer: string | undefined;
+    let lastProgress: string | undefined;
     let judgeToolOutput: string | undefined;
+    let transcriptMessages: unknown[] | undefined;
+    const toolset = Array.isArray(request.availableTools)
+      ? { availableTools: request.availableTools }
+      : undefined;
     let error: string | undefined;
+    let cancelled = false;
 
     try {
-      if (abortSignal?.aborted || parentToolContext.abortSignal?.aborted) {
-        const err = new Error('The user aborted a request.');
-        err.name = 'AbortError';
-        throw err;
-      }
-
-      const result = await graphExecutor.runUntilYield(internalCheckpointKey);
+      const result = await graphExecutor.startSession(internalCheckpointKey, initialLocal, 'llm');
       appendUniqueEvents(allEvents, result.events);
       stepCount = result.stepCount;
-
-      if (subrunSseSink && typeof subrunSseSink.finalize === 'function') {
-        const finalized = subrunSseSink.finalize();
-        appendUniqueEvents(allEvents, finalized);
+      if (
+        result.checkpoint.nodeId === 'wait_user' ||
+        result.events.some(event => event.type === 'requires_user_interaction')
+      ) {
+        throw new Error(
+          'Interactive tools are not supported in synchronous child runs; delegate the interaction to the foreground run'
+        );
       }
 
-      judgeToolOutput = extractJudgeToolOutput(allEvents, agentConfig.judgeToolName ?? this.defaultJudgeToolName);
+      judgeToolOutput = extractJudgeToolOutput(
+        allEvents,
+        agentConfig.judgeToolName ?? this.defaultJudgeToolName
+      );
       finalAnswer = extractFinalAnswer(allEvents);
+      lastProgress = finalAnswer ? undefined : extractLastProgress(allEvents);
 
       logger.info('child-run 执行完成', {
         stepCount,
@@ -288,25 +360,13 @@ export class ChildRunInvoker {
         hasJudgeToolOutput: !!judgeToolOutput,
       });
 
-      const transcriptMessages = buildChildRunTranscriptMessages({
+      transcriptMessages = buildChildRunTranscriptMessages({
         systemPrompt,
         userMessage,
         events: allEvents,
         eventToMessageConverter: this.eventToMessageConverter,
       });
-
-      recordRunTranscript({
-        mode: 'agent',
-        transcriptMessages,
-        toolset: {
-          availableTools: Array.isArray(request.availableTools) ? request.availableTools : undefined,
-        },
-      });
     } catch (err) {
-      if (err instanceof Error && err.name === 'AbortError') {
-        throw err;
-      }
-
       const recoveredEvents = await recoverChildRunEventsFromCheckpoint({
         checkpointer,
         checkpointKey: internalCheckpointKey,
@@ -315,36 +375,65 @@ export class ChildRunInvoker {
       });
       appendUniqueEvents(allEvents, recoveredEvents);
 
-      if (subrunSseSink && typeof subrunSseSink.finalize === 'function') {
-        const finalized = subrunSseSink.finalize({ isComplete: false });
-        appendUniqueEvents(allEvents, finalized);
-      }
-
-      judgeToolOutput = extractJudgeToolOutput(allEvents, agentConfig.judgeToolName ?? this.defaultJudgeToolName);
+      judgeToolOutput = extractJudgeToolOutput(
+        allEvents,
+        agentConfig.judgeToolName ?? this.defaultJudgeToolName
+      );
       finalAnswer = extractFinalAnswer(allEvents);
+      lastProgress = finalAnswer ? undefined : extractLastProgress(allEvents);
+      // provider 可能把同一次受控取消包装成普通 Error；当前执行链自己的
+      // AbortSignal 才是 lifecycle 权威，错误名称只用于兼容标准 AbortError。
+      cancelled = abortSignal?.aborted === true || isAbortError(err);
       error = err instanceof Error ? err.message : String(err);
-      logger.error('child-run 执行失败:', err instanceof Error
-        ? {
-            name: err.name,
-            message: err.message,
-            stack: err.stack,
-          }
-        : { error: String(err) });
+      if (cancelled) {
+        logger.info('child-run 执行取消', {
+          runId: childRunId,
+          parentRunId: resolvedParentRunId,
+          message: error,
+        });
+      } else {
+        logger.error(
+          'child-run 执行失败:',
+          err instanceof Error
+            ? {
+                name: err.name,
+                message: err.message,
+                stack: err.stack,
+              }
+            : { error: String(err) }
+        );
+      }
     }
+
+    transcriptMessages ??= buildChildRunTranscriptMessages({
+      systemPrompt,
+      userMessage,
+      events: allEvents,
+      eventToMessageConverter: this.eventToMessageConverter,
+    });
 
     await checkpointer.clear(internalCheckpointKey);
 
     return {
-      success: !error,
+      success: !error && !cancelled,
       runId: childRunId,
       parentRunId: resolvedParentRunId,
+      subrunId: childRunId,
+      cancelled: cancelled || undefined,
       judgeToolOutput,
       finalAnswer,
+      lastProgress,
       events: allEvents,
+      transcriptMessages,
+      toolset,
       stepCount,
       error,
     };
   }
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === 'AbortError';
 }
 
 function readNonEmptyString(value: unknown): string | undefined {
@@ -358,17 +447,38 @@ function readNonEmptyString(value: unknown): string | undefined {
 function resolveChildRunConversationId(params: {
   explicitConversationId?: string;
   parentToolContext: ChildRunParentContext;
-  fallbackConversationId: string;
 }): string {
-  return (
+  const conversationId =
     readNonEmptyString(params.explicitConversationId) ??
-    readNonEmptyString(params.parentToolContext.conversationId) ??
-    params.fallbackConversationId
-  );
+    readNonEmptyString(params.parentToolContext.conversationId);
+  if (!conversationId) {
+    throw new Error(
+      'ChildRunInvoker requires conversationId from admission or parent ToolContext.'
+    );
+  }
+  return conversationId;
+}
+
+function resolveChildRunModelId(params: {
+  explicitModelId?: string;
+  agentConfig: ChildRunAgentConfig;
+  resolveDefaultModelId: () => string;
+}): string {
+  const explicitModelId = readNonEmptyString(params.explicitModelId);
+  if (explicitModelId) {
+    return explicitModelId;
+  }
+
+  const modelPolicy = params.agentConfig.modelPolicy;
+  if (modelPolicy?.kind === 'fixed') {
+    return modelPolicy.modelId;
+  }
+
+  return params.resolveDefaultModelId();
 }
 
 function resolveChildRunSystemReminderPolicy(
-  agentConfig: ChildRunAgentConfig,
+  agentConfig: ChildRunAgentConfig
 ): AgentSpecSystemReminderPolicy | undefined {
   const configured = agentConfig.systemReminderPolicy ?? agentConfig.contextPolicy?.systemReminder;
   const threshold = agentConfig.stepPolicy?.lastStepsHintThreshold;

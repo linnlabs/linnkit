@@ -27,7 +27,7 @@ linnkit has no built-in LLM provider, no database binding, no UI, and no opinion
 
 **ContextTrace observability** — Every context build produces a machine-readable trace: which messages were kept, which were trimmed, why, how many tokens each step consumed, and whether the final result exceeded the budget. When the model answers incorrectly, you don't need to guess whether context was lost — you can read the trace directly.
 
-**Managed run lifecycle** — `RunSupervisor` and `RunHandle` turn each agent invocation into a stateful run with its own `runId`, cancellation, observable event stream, state queries, cost accounting, synchronous child runs, and spawnable detached background runs. Agents behave like real services, not temporary function calls.
+**Managed run lifecycle** — `RunSupervisor` and `RunHandle` turn each agent invocation into a stateful run with its own `runId`, run-scoped checkpoint, cancellation, cross-transport observable event stream, state queries, one-shot human-interaction resume claims, cost accounting, synchronous child runs, and spawnable detached background runs. Agents behave like real services, not temporary function calls.
 
 **Audit-first design** — `AuditEnvelope` and `AuditPort` capture important decisions — model selection, tool rejection, fallback, awaiting user input, sandbox decisions — into a unified audit stream. Not for appearances, but so you can answer: *why did the system do that?*
 
@@ -146,6 +146,10 @@ console.log(result.finalAnswer);
 
 > **Browser rule**: do not import `@linnlabs/linnkit/runtime-kernel` in a frontend bundle — it pulls in Node-only sub-trees. For frontend event display logic only, use `@linnlabs/linnkit/runtime-kernel/events`.
 
+Runtime events carry related, non-linear identities: a conversation owns stable turns and logical runs; a run may span multiple start/resume executions; an answer belongs to one execution and its stable turn; a tool call belongs to the run and may continue across executions. Mappers create draft facts only; a required execution-scoped admission sink returns the routed fact consumed by the Graph journal, realtime, persistence, and observers. A host must publish generated facts through one `RuntimeEventPublisher`; durable-first incoming facts must be routed by that publisher before commit and fan out through `publishRouted` afterward. See the integration guide for ownership and concurrency rules.
+
+Child runs use the same fact pipeline. A child EventBus owns child persistence and feeds any parent `subrun_trace` projection; the trace is a read model linked by `source_event_id`, not another child truth. Fields needed for routing, merging, lifecycle, or side-effect targeting belong in shared contracts or an explicitly validated host binding, never open metadata.
+
 ---
 
 ## Documentation
@@ -161,6 +165,7 @@ console.log(result.finalAnswer);
 | [docs/integration/tools.md](./docs/integration/tools.md) | Tool integration overview |
 | [docs/integration/tool-development-guide.md](./docs/integration/tool-development-guide.md) | Tool design internals |
 | [docs/integration/run-supervisor.md](./docs/integration/run-supervisor.md) | Run lifecycle management |
+| [docs/integration/realtime.md](./docs/integration/realtime.md) | RuntimeEvent identity, admission, realtime/persistence fan-out, and event change checklist |
 | [docs/integration/testing.md](./docs/integration/testing.md) | Testkit and invariants |
 | [CHANGELOG.md](./CHANGELOG.md) | Public release history |
 

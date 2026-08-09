@@ -1,15 +1,18 @@
 import type {
-  GenerateRequest,
-  GenerateResponse,
-} from '../contracts/chatLineMessage';
+  SummaryGenerationRequest,
+  SummaryGenerationResponse,
+} from '../contracts/summaryGeneration';
 import type {
   AiMessage,
+  InternalLlmCallUsage,
   RuntimeEvent,
   TokenCountConfidence,
   TokenCountSource,
   TokenRoute,
   TokenUsageCalibrationTrace,
+  SummarizationCallbacks,
 } from '../../../contracts';
+import { Logger } from '../../../shared/logger';
 
 export interface RemoteTokenCountTrace {
   enabled: boolean;
@@ -23,30 +26,23 @@ export interface RemoteTokenCountTrace {
   confidence?: TokenCountConfidence;
   failureBehavior?: 'use-local-estimate' | 'fail-fast';
   failureReason?: string;
+  skipReason?: 'image_input_local_only';
 }
 
 export interface MessageProcessingState {
-  message: AiMessage;
-  originalIndex: number;
+  readonly message: AiMessage;
+  readonly originalIndex: number;
   action: 'keep_core' | 'keep_working_memory' | 'summarize' | 'skip';
   tokens: number;
   tokenCalibration?: TokenUsageCalibrationTrace;
-  processedContent?: string;
+  overrideContent?: string;
+  overrideMetadata?: AiMessage['metadata'];
   contentType?: 'full' | 'final_answer_only' | 'thinking_only';
   phase?: string;
   replacementSourceIds?: string[];
 }
 
-export interface SummarizationCallbacks {
-  onSummarizationStart?: () => void;
-  onSummarizationEnd?: (info: {
-    originalMessageCount: number;
-    summaryTokenCount?: number;
-    newSummaryId?: string;
-    summaryEvent?: RuntimeEvent;
-  }) => void;
-  onSummarizationError?: (error: Error) => void;
-}
+export type { SummarizationCallbacks } from '../../../contracts';
 
 export interface ProviderContext<TConfig = unknown> {
   totalBudget: number;
@@ -59,13 +55,10 @@ export interface ProviderContext<TConfig = unknown> {
   };
   remoteTokenCount?: RemoteTokenCountTrace;
   summarizationCallbacks?: SummarizationCallbacks;
-  /**
-   * Host 注入的注册式 AI 调用入口。
-   *
-   * 中文备注：调用方必须通过 request.promptKey / agentId 解析已注册 agent/chat；
-   * framework 不应在 Provider 内直接发起裸 LLM call。
-   */
-  generate?: (request: GenerateRequest) => Promise<GenerateResponse>;
+  /** Host 注入的注册式摘要入口；framework 不持有 prompt，也不直接调用模型。 */
+  generateSummary?: (
+    request: SummaryGenerationRequest,
+  ) => Promise<SummaryGenerationResponse>;
 }
 
 export interface ProviderResult {
@@ -78,6 +71,7 @@ export interface ProviderResult {
     addedCount: number;
   };
   events?: RuntimeEvent[];
+  internalLlmCalls?: InternalLlmCallUsage[];
 }
 
 export const TOOL_HISTORY_OVERFLOW_ERROR_CODE = 'TOOL_HISTORY_OVERFLOW' as const;
@@ -147,6 +141,7 @@ export abstract class BaseContextProvider<TConfig = unknown>
   abstract readonly name: string;
   abstract readonly description: string;
   abstract readonly priority: number;
+  private readonly logger = new Logger(this.constructor.name);
 
   abstract provide(
     states: MessageProcessingState[],
@@ -168,7 +163,7 @@ export abstract class BaseContextProvider<TConfig = unknown>
     context?: ProviderContext<TConfig>,
   ): void {
     if (context?.debugMode) {
-      console.log(`[${this.name}] ${message}`, data);
+      this.logger.debug(`[${this.name}] ${message}`, data);
     }
   }
 
@@ -178,6 +173,7 @@ export abstract class BaseContextProvider<TConfig = unknown>
     strategiesApplied: string[] = [],
     stats = { processedCount: 0, skippedCount: 0, addedCount: 0 },
     events: RuntimeEvent[] = [],
+    internalLlmCalls: InternalLlmCallUsage[] = [],
   ): ProviderResult {
     return {
       states,
@@ -185,6 +181,7 @@ export abstract class BaseContextProvider<TConfig = unknown>
       strategiesApplied,
       stats,
       ...(events.length > 0 && { events }),
+      ...(internalLlmCalls.length > 0 ? { internalLlmCalls } : {}),
     };
   }
 }

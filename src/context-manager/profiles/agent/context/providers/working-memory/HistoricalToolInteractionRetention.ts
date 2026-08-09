@@ -1,7 +1,6 @@
-import type { MessageProcessingState, ProviderContext } from '../base';
+import type { MessageProcessingState } from '../base';
 import type { ToolInteractionGroup } from '../../../utils/toolInteractionGroup';
 import type { ToolPairMatcher } from './ToolPairMatcher';
-import type { ToolPairTruncator } from './ToolPairTruncator';
 import type { ReplacementSourceTagger } from './ReplacementSourceTagger';
 import { buildHistoricalToolCandidates } from './HistoricalToolCandidates';
 import { keepToolGroup, markWorkingMemory } from './ToolGroupKeeper';
@@ -11,8 +10,8 @@ import type { DebugFn, HistoricalToolRetentionResult } from './types';
  * P3：历史工具交互保留。
  *
  * 中文备注：
- * - compressed 工具摘要与 raw 工具组共享 maxToolGroupsToKeep；
- * - 这里只处理最后一条 user_input 之前的历史段。
+ * - compressed 工具摘要仍共享 maxToolGroupsToKeep；
+ * - raw 工具组只允许来自 turn 保护窗口，超窗口旧 input 维持整组 drop。
  */
 export function processHistoricalToolInteractions(params: {
   allStates: MessageProcessingState[];
@@ -20,13 +19,12 @@ export function processHistoricalToolInteractions(params: {
   processedIds: Set<string>;
   currentTokens: number;
   budgetLimit: number;
-  estimateTokens: ProviderContext['estimateTokens'];
   maxToolGroupsToKeep: number;
   minToolGroupsToKeep: number;
   alreadyKeptToolGroups: number;
   lastUserOriginalIndex: number;
+  minRawToolRunOrdinal: number | null;
   matcher: ToolPairMatcher;
-  truncator: ToolPairTruncator;
   tagger: ReplacementSourceTagger;
   debug: DebugFn;
 }): HistoricalToolRetentionResult {
@@ -36,9 +34,7 @@ export function processHistoricalToolInteractions(params: {
     processedIds,
     currentTokens,
     budgetLimit,
-    estimateTokens,
     matcher,
-    truncator,
     tagger,
     debug,
   } = params;
@@ -56,6 +52,7 @@ export function processHistoricalToolInteractions(params: {
     allStates,
     toolGroups,
     lastUserOriginalIndex: params.lastUserOriginalIndex,
+    minRawToolRunOrdinal: params.minRawToolRunOrdinal,
     matcher,
   });
   for (const candidate of candidates) {
@@ -99,17 +96,14 @@ export function processHistoricalToolInteractions(params: {
       group,
       processedIds,
       currentTokens: currentTokens + tokensUsed,
-      budgetLimit: shouldForceKeepForMinimum ? Number.MAX_SAFE_INTEGER : budgetLimit,
-      estimateTokens,
+      budgetLimit,
       matcher,
-      truncator,
       debug,
       directStrategy: 'historical_tool_interaction',
-      truncatedStrategy: 'historical_tool_interaction_truncation',
       directLog: '✅ P3保留历史工具交互',
-      truncatedLog: '✅ P3截断历史工具交互对',
-      truncationFailedLog: '❌ P3截断历史工具交互对失败',
-      stopWhenTruncatedDoesNotFit: false,
+      overBudgetLog: '⚠️ P3保护窗口内历史工具交互超出预算，仍原样保留',
+      stopWhenOverBudget: false,
+      forceKeepWhenOverBudget: true,
     });
 
     tokensUsed += kept.tokensUsed;

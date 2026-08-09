@@ -28,9 +28,9 @@ export const SYSTEM_REMINDER_RULES: ReadonlyArray<SystemReminderRuleDefinition> 
     contentTemplate: 'toolCallStreak',
   },
   {
-    id: 'periodic_taskstate_reflection',
+    id: 'periodic_progress_reflection',
     trigger: { kind: 'step-count-modulo', period: 30, minStep: 30 },
-    contentTemplate: 'periodicTaskstateReflection',
+    contentTemplate: 'periodicProgressReflection',
   },
   {
     id: 'context_budget_warning',
@@ -85,13 +85,14 @@ function applyThresholdOverrides(
       trigger: { ...definition.trigger, threshold: thresholds.toolCallStreak },
     };
   }
-  if (definition.id === 'periodic_taskstate_reflection' && thresholds.taskstateReflectionPeriod !== undefined) {
+  const periodicReflectionPeriod = thresholds.periodicReflectionPeriod;
+  if (definition.id === 'periodic_progress_reflection' && periodicReflectionPeriod !== undefined) {
     return {
       ...definition,
       trigger: {
         ...definition.trigger,
-        period: thresholds.taskstateReflectionPeriod,
-        minStep: thresholds.taskstateReflectionPeriod,
+        period: periodicReflectionPeriod,
+        minStep: periodicReflectionPeriod,
       },
     };
   }

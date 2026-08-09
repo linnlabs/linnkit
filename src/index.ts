@@ -20,9 +20,17 @@ export type {
 // "Vitest failed to access its internal state."。
 // 必须通过显式子入口 `import * as testkit from 'linnkit/testkit'` 使用，且
 // 该子入口只能在 testkit/test 文件里被引用（由 `npm run lint:codename` 守护）。
-export { generateAuditEnvelopeEventId, generateAuditEnvelopeId, generateMessageId, generateRunId } from './shared/ids';
+export {
+  generateAuditEnvelopeId,
+  generateRunId,
+  generateRuntimeEventId,
+} from './contracts';
 export { withLLMTelemetryContext } from './shared/llmTelemetryContext';
 export type { LlmCallTelemetry } from './shared/llmTelemetryContext';
+export {
+  LlmAuditProjectionError,
+  projectDurableLlmAuditValue,
+} from './shared/llmAuditProjection';
 export { setLlmAuditRecorder } from './shared/llmAuditRecorder';
 export type {
   ContextManagerAuditRecordInput,

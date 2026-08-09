@@ -1,66 +1,70 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { EngineState } from '../../types';
 
 const { getToolDefinitionMock } = vi.hoisted(() => ({
   getToolDefinitionMock: vi.fn(),
 }));
 
-vi.mock('../../tools/idempotency/toolIdempotency', () => ({
-  computeToolIdempotencyKey: vi.fn(() => 'idem_exec_setup'),
-}));
-
-import {
-  prepareToolExecution,
-  prepareToolNodeContext,
-} from '../toolNode.executionSetup';
+import { prepareToolExecution, prepareToolNodeContext } from '../toolNode.executionSetup';
+import { createRuntimeEventAdmissionSink } from './runtimeEventAdmissionFixture';
+import { createToolOutputEvent, RunIdSchema, ToolCallIdSchema } from '../../../../contracts';
 
 describe('toolNode.executionSetup', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     getToolDefinitionMock.mockReturnValue({
-      displayOptions: { viewType: 'card' },
       parameters: { type: 'object', properties: {} },
-      idempotency: { level: 'strict' },
+      idempotency: { scope: 'conversation' },
     });
   });
 
-  it('prepareToolNodeContext 应维持 working history 视图并计算 citationOffset', () => {
-    const baseGetHistory = vi.fn(() => [{ id: 'persisted_1' }]);
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('prepareToolNodeContext 应维持 working history 视图', () => {
+    const baseGetHistory = vi.fn(() => []);
     const state: EngineState = {
       nodeId: 'tool',
       local: {
         conversationId: 'conv_1',
         turnId: 'turn_1',
+        runtimeEventSink: createRuntimeEventAdmissionSink('conv_1', 'run_1'),
         toolContext: {
-          getConversationHistoryEvents: baseGetHistory,
+          conversationView: {
+            getWorkingHistoryEvents: baseGetHistory,
+            getPersistedHistoryEvents: baseGetHistory,
+          },
         },
         history: [
-          {
-            type: 'tool_output',
-            turn_id: 'turn_1',
-            payload: {
-              result: {
-                data: {
-                  citations: {
-                    citations: [{ id: 'c1' }, { id: 'c2' }],
-                  },
+          createToolOutputEvent(
+            'event-citations',
+            'conv_1',
+            'turn_1',
+            'search',
+            'call-citations',
+            {
+              status: 'success',
+              observation: 'citations',
+              data: {
+                citations: {
+                  citations: [{ id: 'c1' }, { id: 'c2' }],
                 },
               },
-            },
-          },
+            }
+          ),
         ],
       },
     };
 
     const prepared = prepareToolNodeContext(state);
 
-    expect(prepared.toolContext.citationOffset).toBe(2);
     expect(prepared.toolContext.conversationView).toBeTruthy();
-    const history = prepared.toolContext.getConversationHistoryEvents?.();
+    const history = prepared.toolContext.conversationView?.getWorkingHistoryEvents();
     expect(Array.isArray(history)).toBe(true);
-    expect((history ?? [])).toHaveLength(1);
+    expect(history ?? []).toHaveLength(1);
     expect(baseGetHistory).not.toHaveBeenCalled();
-    expect(prepared.toolContext.conversationView?.getPersistedHistoryEvents()).toEqual([{ id: 'persisted_1' }]);
+    expect(prepared.toolContext.conversationView?.getPersistedHistoryEvents()).toEqual([]);
     expect(baseGetHistory).toHaveBeenCalledTimes(1);
   });
 
@@ -73,7 +77,7 @@ describe('toolNode.executionSetup', () => {
         toolContext: {
           conversationId: 'conv_root_1',
         },
-        sseSink: vi.fn(),
+        runtimeEventSink: createRuntimeEventAdmissionSink('internal_1', 'run_1'),
       },
     };
 
@@ -81,7 +85,7 @@ describe('toolNode.executionSetup', () => {
     const execution = prepareToolExecution({
       prepared,
       call: {
-        id: 'call_1',
+        id: ToolCallIdSchema.parse('call_1'),
         type: 'function',
         function: {
           name: 'search',
@@ -96,6 +100,7 @@ describe('toolNode.executionSetup', () => {
     expect(execution).toBeTruthy();
     expect(execution?.toolName).toBe('search');
     expect(execution?.toolCallId).toBe('call_1');
+    expect(execution?.idempotencyKey).toMatch(/^[a-f0-9]{32}$/);
     expect(prepared.toolContext.parentToolCallId).toBe('call_1');
     expect(prepared.toolContext.conversationId).toBe('conv_root_1');
     expect(prepared.toolContext.turnId).toBe('turn_1');
@@ -108,7 +113,7 @@ describe('toolNode.executionSetup', () => {
         conversationId: 'internal_2',
         turnId: 'turn_2',
         toolContext: {},
-        sseSink: vi.fn(),
+        runtimeEventSink: createRuntimeEventAdmissionSink('internal_2', 'run_2'),
       },
     };
 
@@ -116,7 +121,7 @@ describe('toolNode.executionSetup', () => {
     const execution = prepareToolExecution({
       prepared,
       call: {
-        id: 'call_2',
+        id: ToolCallIdSchema.parse('call_2'),
         type: 'function',
         function: {
           name: 'search',
@@ -133,7 +138,6 @@ describe('toolNode.executionSetup', () => {
   it('prepareToolExecution 应将 schema 期望的 JSON 编码数组字符串归一化为真实数组', () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     getToolDefinitionMock.mockReturnValue({
-      displayOptions: { viewType: 'card' },
       parameters: {
         type: 'object',
         properties: {
@@ -153,7 +157,7 @@ describe('toolNode.executionSetup', () => {
           },
         },
       },
-      idempotency: { level: 'strict' },
+      idempotency: { scope: 'conversation' },
     });
 
     const state: EngineState = {
@@ -162,7 +166,7 @@ describe('toolNode.executionSetup', () => {
         conversationId: 'internal_3',
         turnId: 'turn_3',
         toolContext: {},
-        sseSink: vi.fn(),
+        runtimeEventSink: createRuntimeEventAdmissionSink('internal_3', 'run_3'),
       },
     };
 
@@ -170,7 +174,7 @@ describe('toolNode.executionSetup', () => {
     const execution = prepareToolExecution({
       prepared,
       call: {
-        id: 'call_3',
+        id: ToolCallIdSchema.parse('call_3'),
         type: 'function',
         function: {
           name: 'ppt_plan',
@@ -189,7 +193,122 @@ describe('toolNode.executionSetup', () => {
       pages: [{ title: 'Overview', content: 'Summary' }],
     });
     expect(warnSpy).toHaveBeenCalledWith(
-      '[ToolArgNormalizer] Normalized JSON-encoded array string for ppt_plan.pages'
+      expect.stringContaining('[WARN] [ToolArgNormalizer] normalized JSON-encoded tool argument'),
+      {
+        expectedType: 'array',
+        path: 'ppt_plan.pages',
+      }
     );
+  });
+
+  it('prepareToolExecution 按规范化参数解析本次动态模型输入要求', () => {
+    const resolveModelInputRequirement = vi.fn((args: Record<string, unknown>) =>
+      args.artifact_manifest === true
+        ? {
+            requires_image_input: true as const,
+            placements: ['tool_result_image'] as const,
+          }
+        : undefined
+    );
+    getToolDefinitionMock.mockReturnValue({
+      parameters: {
+        type: 'object',
+        properties: {
+          artifact_manifest: {
+            type: 'boolean',
+            description: '是否读取图片产物清单',
+          },
+        },
+      },
+      resolveModelInputRequirement,
+    });
+    const prepared = prepareToolNodeContext({
+      nodeId: 'tool',
+      local: {
+        conversationId: 'conversation-dynamic-requirement',
+        turnId: 'turn-dynamic-requirement',
+        runtimeEventSink: createRuntimeEventAdmissionSink(
+          'conversation-dynamic-requirement',
+          'run-dynamic-requirement'
+        ),
+        toolContext: {},
+      },
+    });
+
+    const execution = prepareToolExecution({
+      prepared,
+      call: {
+        id: ToolCallIdSchema.parse('call-dynamic-requirement'),
+        type: 'function',
+        function: {
+          name: 'command_execute',
+          arguments: '{"artifact_manifest":true}',
+        },
+      },
+      toolCatalog: { getToolDefinition: getToolDefinitionMock },
+    });
+
+    expect(resolveModelInputRequirement).toHaveBeenCalledWith({
+      artifact_manifest: true,
+    });
+    expect(execution?.modelInputRequirement).toEqual({
+      requires_image_input: true,
+      placements: ['tool_result_image'],
+    });
+  });
+
+  it('动态模型输入要求解析失败时返回稳定 setup 错误', () => {
+    getToolDefinitionMock.mockReturnValue({
+      parameters: { type: 'object', properties: {} },
+      resolveModelInputRequirement() {
+        throw new Error('host secret should not reach tool output');
+      },
+    });
+    const prepared = prepareToolNodeContext({
+      nodeId: 'tool',
+      local: {
+        conversationId: 'conversation-requirement-error',
+        turnId: 'turn-requirement-error',
+        runtimeEventSink: createRuntimeEventAdmissionSink(
+          'conversation-requirement-error',
+          'run-requirement-error'
+        ),
+        toolContext: {},
+      },
+    });
+
+    const execution = prepareToolExecution({
+      prepared,
+      call: {
+        id: ToolCallIdSchema.parse('call-requirement-error'),
+        type: 'function',
+        function: { name: 'command', arguments: '{}' },
+      },
+      toolCatalog: { getToolDefinition: getToolDefinitionMock },
+    });
+
+    expect(execution?.modelInputRequirement).toBeUndefined();
+    expect(execution?.modelInputRequirementError).toBe(
+      'tool.model_input.requirement_resolution_failed: Tool model input requirement could not be resolved'
+    );
+    expect(execution?.modelInputRequirementError).not.toContain('host secret');
+  });
+
+  it('prepareToolNodeContext 在 conversation scope 身份缺失时立即失败', () => {
+    getToolDefinitionMock.mockReturnValue({
+      parameters: { type: 'object', properties: {} },
+      idempotency: { scope: 'conversation' },
+    });
+    const state: EngineState = {
+      nodeId: 'tool',
+      local: {
+        conversationId: '',
+        turnId: 'turn_4',
+        toolContext: {},
+        runtimeEventSink: createRuntimeEventAdmissionSink('conversation-invalid', 'run-invalid'),
+      },
+    };
+
+    expect(() => prepareToolNodeContext(state)).toThrow(/conversationId/);
   });
 });

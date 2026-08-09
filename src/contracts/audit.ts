@@ -1,4 +1,12 @@
 import { z } from 'zod';
+import {
+  AuditEnvelopeIdSchema,
+  ConversationIdSchema,
+  RunIdSchema,
+  ToolCallIdSchema,
+  TraceIdSchema,
+  TurnIdSchema,
+} from './identity';
 
 const JsonRecord = z.record(z.string(), z.unknown());
 
@@ -59,13 +67,13 @@ export const AuditCostDelta = z.object({
 export type AuditCostDelta = z.infer<typeof AuditCostDelta>;
 
 export const AuditScope = z.object({
-  conversationId: z.string().min(1).optional(),
-  runId: z.string().min(1).optional(),
-  parentRunId: z.string().min(1).optional(),
-  turnId: z.string().min(1).optional(),
-  traceId: z.string().min(1).optional(),
+  conversationId: ConversationIdSchema.optional(),
+  runId: RunIdSchema.optional(),
+  parentRunId: RunIdSchema.optional(),
+  turnId: TurnIdSchema.optional(),
+  traceId: TraceIdSchema.optional(),
   agentSpecId: z.string().min(1).optional(),
-  toolCallId: z.string().min(1).optional(),
+  toolCallId: ToolCallIdSchema.optional(),
   toolName: z.string().min(1).optional(),
   modelId: z.string().min(1).optional(),
   nodeId: z.string().min(1).optional(),
@@ -82,9 +90,9 @@ export type AuditScope = z.infer<typeof AuditScope>;
  * - envelope 必须追加只读，更新/撤回应追加新的补偿 envelope。
  */
 export const AuditEnvelope = z.object({
-  envelopeId: z.string().min(1),
-  runId: z.string().min(1),
-  parentRunId: z.string().min(1).optional(),
+  envelopeId: AuditEnvelopeIdSchema,
+  runId: RunIdSchema,
+  parentRunId: RunIdSchema.optional(),
   ts: z.number().int().nonnegative(),
   actor: AuditActor,
   action: z.string().min(1),

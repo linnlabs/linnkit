@@ -4,7 +4,7 @@
 > **When to read** · 想精确控制每个 token；上下文超长被裁；要诊断"为什么这条消息被丢了"；自定义 tokenizer；做 token 预算选型。
 > **Prerequisites** · [`agent-registration-guide.md`](./agent-registration-guide.md) ⭐（先理解 `AgentSpec.contextPolicy` 字段结构）。
 > **Key exports** · `ContextTrace` from `@linnlabs/linnkit/contracts` · `TokenizerPort` from `@linnlabs/linnkit/ports` · `formatAgentLlmMessages` / `createMessageFormatter` from `@linnlabs/linnkit/context-manager`。
-> **Related** · [`context-fences.md`](./context-fences.md) ⭐ · [`tool-history.md`](./tool-history.md) · [`agent-registration-guide.md`](./agent-registration-guide.md) ⭐
+> **Related** · [`token-management.md`](./token-management.md) · [`context-fences.md`](./context-fences.md) ⭐ · [`tool-history.md`](./tool-history.md) · [`agent-registration-guide.md`](./agent-registration-guide.md) ⭐
 
 > linnkit 的宗旨：**让上下文工程变成精细化、可自由配置、可观测、可审计的事**。
 >
@@ -182,7 +182,7 @@ contextPolicy: {
 
 ## 4. Preprocessor Pipeline（4 个内置预处理器）
 
-这一层在"消息进 ContextProvider 之前"跑。按 priority 顺序执行；任何一个抛 fatal `ContextProviderError` 都会中断 pipeline。
+这一层在"消息进 ContextProvider 之前"跑。按 priority 顺序执行；任何一个抛 fatal `ContextProviderError` 都会中断 pipeline。进入 ContextProvider 之后，默认策略是 fail-fast：普通异常和 `fatal:true` 的 `ContextProviderError` 都会中断，只有显式 `fatal:false` 的 `ContextProviderError` 才允许继续后续 provider。
 
 ### 4.1 ToolHistoryCompressorPreprocessor —— 工具历史保留（AgentSpec 高度可配置 ✅）
 
@@ -242,8 +242,9 @@ contextPolicy: {
 | `budget.reservedForResponse` | `2400` | 留给 LLM 输出的 token | ✅ AgentSpec + runtime |
 | `budget.workingMemoryBudgetPercentage` | `0.70` | 工作记忆占可用预算的比例 | ✅ AgentSpec + runtime |
 | `reasoningRetention.keepLatestThoughts` | `1` | 最近保留多少条 thought | ✅ AgentSpec + runtime |
-| `workingMemory.minToolInteractionsToKeep` | `2` | 即便预算不够也至少保留多少组工具对 | ✅ AgentSpec + runtime |
-| `workingMemory.maxRecentToolInteractions` | `2` | 原始 tool_calls 形态保留的最大组数 | ✅ AgentSpec + runtime |
+| `workingMemory.minToolInteractionsToKeep` | `2` | compressed 历史工具摘要的预算兜底组数 | ✅ AgentSpec + runtime |
+| `workingMemory.maxRecentToolRuns` | `2` | 原始 tool_calls 形态保护的最近工具 turn 数 | ✅ AgentSpec + runtime |
+| `workingMemory.maxRecentToolInteractions` | `2` | Deprecated alias，兼容旧配置；新配置请用 `maxRecentToolRuns` | ⚠️ 兼容保留 |
 | `workingMemory.toolPairingSearchRange` | `10` | 搜工具配对的窗口范围 | ✅ AgentSpec + runtime |
 | P1-P3 优先级数字 | `1/2/3` | 优先级编号 | ❌ 不开放|
 
@@ -254,7 +255,7 @@ Agent 主动调一个约定为 `context_checkpoint` 的工具。工具执行成�
 - **保留**：must-keep + 这个 checkpoint 工具对本身 + checkpoint 之前最近 N 对工具交互（默认 N=2，可用 `checkpoint.keepPairsBefore` 覆盖）
 - **清掉**：checkpoint 之前更旧的 tool_calls / tool_output / final_answer / thought / 旧 history_summary
 
-linnkit 提供协议（`CHECKPOINT_MARKER_TYPE` / `CheckpointSummarizationProvider` / SystemReminder & step-reset 联动）+ 最小工具（`ContextCheckpointTool`）；`taskstate` / shared memory 等 host 状态扩展由接入方负责，可通过下面的 hook 接入。
+linnkit 提供协议（`CHECKPOINT_MARKER_TYPE` / `CheckpointSummarizationProvider` / SystemReminder & step-reset 联动）+ 最小工具（`ContextCheckpointTool`）；工作流状态或外部持久化由接入方负责，可通过下面的 hook 接入。
 
 最小接入：
 
@@ -284,23 +285,23 @@ contextPolicy: {
 ```ts
 const checkpointTool = new ContextCheckpointTool({
   extraParameters: {
-    taskstate: {
+    workflow_state: {
       type: 'object',
-      description: 'Host task state snapshot',
+      description: 'Host workflow state snapshot',
     },
   },
   buildPayloadExtension: async ({ args, context }) => {
-    // 可选：写入 host 自己的 TaskState / Memory / 文件系统。
+    // 可选：写入 host 自己的状态存储或文件系统。
     // 返回值会合并到 tool result data 中，但 _type 与 summary 由 linnkit 固定写回。
     return {
       conversation_id: context.conversationId,
-      taskstate: args.taskstate,
+      workflow_state: args.workflow_state,
     };
   },
 });
 ```
 
-> 注意：`CheckpointSummarizationProvider` 严格读取 `tool_output.metadata.raw_output` 里的 marker，而不是解析展示给模型看的 observation 文本。这是为了避免普通工具输出碰巧像 JSON 时误触发 checkpoint。
+> 注意：`CheckpointSummarizationProvider` 严格读取 `tool_output.metadata.data` 里的 marker，而不是解析展示给模型看的 observation 文本。这是为了避免普通工具输出碰巧像 JSON 时误触发 checkpoint。
 
 **与 summarization 的关键区别**：
 
@@ -331,7 +332,7 @@ const checkpointTool = new ContextCheckpointTool({
 | 摘要 agent + 失败行为 | `summarization.agentId` / `failureBehavior`；摘要必须通过 host 注册 agent/chat 调用 | ✅ AgentSpec + runtime |
 | 摘要失败的 fatal 判断 | 通过 `ContextProviderError({ code: 'SUMMARIZATION_FAILED', fatal: true })` 抛出 | ✅ 协议化 |
 
-**摘要 agent 的注册边界**：framework 不持有摘要 prompt 正文，也不直接发起裸 LLM call。它只把 `summarization.agentId` 放进 `GenerateRequest.promptKey`，由 host 通过自己的注册表解析成一个无工具摘要 agent/chat，再按该注册项的 prompt、模型策略与执行方式完成调用。host 可以把默认摘要 agent 注册为 `history_compression`，也可以在 `contextPolicy.summarization.agentId` 中为单个 agent 指定别的注册项。
+**摘要 agent 的注册边界**：framework 不持有摘要 prompt 正文，也不直接发起裸 LLM call。它只通过 `SummaryGenerationRequest` 把 `agentId`、已格式化的待摘要 `content` 和已解析的 `modelId` 交给 host；host 再通过自己的注册表解析无工具摘要 agent/chat，并按该注册项构造 prompt、完成模型调用。host 可以把默认摘要 agent 注册为 `history_compression`，也可以在 `contextPolicy.summarization.agentId` 中为单个 agent 指定别的注册项。项目、文档、编辑器 block、用户引用和自动补全行为不属于这条合同。
 
 **最小注册示例**（在 host 侧先注册摘要 agent，再在业务 spec 里填 `agentId`）见 [`agent-registration-guide.md`](./agent-registration-guide.md) §4.2。
 
@@ -341,6 +342,8 @@ const checkpointTool = new ContextCheckpointTool({
 |-------------------|------|
 | `'fail-fast'`（默认）| 摘要失败立即抛 typed fatal `ContextProviderError`，保持旧行为 |
 | `'continue-if-within-budget'` | 只有当前上下文仍在预算内时才允许继续使用原始消息；如果已经超预算，仍然 fail-fast |
+
+`ContextProviderError({ fatal:false })` 是 provider 层唯一允许继续的降级信号；普通异常会被视为程序错误并直接向上抛出，避免 pipeline 静默少跑阶段。
 
 ---
 
@@ -364,7 +367,7 @@ const checkpointTool = new ContextCheckpointTool({
 | `max_steps_force_final_answer` | `phase === 'force_final_answer'` | 最后一步强制收尾，禁用工具 |
 | `last_steps_hint` | `remainingSteps <= threshold` | 剩余步数提示 |
 | `tool_call_streak_every_ten` | 本轮工具调用次数 ≥ 10 且为 10 的倍数 | 工具循环过深告警 |
-| `periodic_taskstate_reflection` | `stepCount` 是 30 的倍数 | 长程任务定期反思 |
+| `periodic_progress_reflection` | `stepCount` 是 30 的倍数 | 长程任务定期反思 |
 | `context_budget_warning` | `stepCount` 达 maxSteps 的 90% 且 agent 有 `checkpoint.triggerToolName` 对应工具 | 上下文即将耗尽，引导调 checkpoint |
 
 **配置开放状态**：
@@ -392,7 +395,7 @@ const checkpointTool = new ContextCheckpointTool({
 
 ### 7.1 执行期落盘（ToolNode observationGovernance）
 
-- 工具刚执行完，原始 observation 字符串如果超过阈值，就通过 host 提供的 `ObservationPreviewPort` **写一份完整副本到 ToolOutputStore / 本地文件 / 对象存储**，messages 里只保留 preview + `tool_output_store.blob_id` 指针
+- 工具刚执行完，原始 observation 字符串如果超过阈值，就通过 host 提供的 `ObservationPreviewPort` **写一份完整副本到 ToolOutputStore / 本地文件 / 对象存储**，messages 里保留 preview，Host 返回的 durable 身份记录在 `tool_output.metadata.observationTruncation.blobId`
 - 截断治理由 `AgentSpec.contextPolicy.toolOutput.observationGovernance` 控制；**存储后端、目录、文件命名规则由 host 的 `ObservationPreviewPort` 配置**，不进入 AgentSpec
 - **开放状态**：阈值与启停已进 AgentSpec + runtime；落盘实现仍由 host 的 `ObservationPreviewPort` 决定
 
@@ -411,13 +414,15 @@ contextPolicy: {
 
 接入方实现自己的 `ObservationPreviewPort`，把存储后端 / 路径 / bucket 等参数放在 host 配置里，再传给 `createDefaultGraphExecutor({ observationPreview })`。详细规范见 [`tools.md §6`](./tools.md#6-observationpreviewport配置超长-observation-存储路径)。
 
-> **续读约束**：如果 host 自定义存储路径，读取 `tool_output://blobs/<blob_id>` 的工具必须使用同一个 store，否则模型拿到 `blob_id` 后无法续读。
+> **续读约束**：如果 host 自定义存储路径，host 提供的续读工具必须使用同一个 store。Linnkit 把 live 指针放在 `tool_output.metadata.observationTruncation.blobId`，不修改具体工具的 owner `data`；它不规定工具名、URI 或产品领域协议。
 
-### 7.2 上下文构建期截断（MAX_TOOL_PAIR_TOKENS）
+### 7.2 工具组保留与执行期 output 治理
 
-工具历史进 working memory 时，单对工具 token 总量超过 `maxPairTokens` 会触发 `ToolOutputSummarizer` 把 `tool_output` 压缩成短文本（目标长度由 `maxOutputSummaryTokens` 控制）。默认值见 [`tool-history.md §2`](./tool-history.md)。
+工具历史进 working memory 时不再按单对 token 设置 `maxPairTokens`，也不再改写 `tool_calls.function.arguments` 或二次摘要 `tool_output`。构建期只做两件事：最近 2 个 turn 内的 raw 工具组整组原样保留，超出窗口的旧 raw 工具组整组 drop。
 
-**两层独立、各管各的**：执行期落盘解决"原始观察值过大不该塞进 wire"；上下文构建期截断解决"历史工具结果占用过多预算"。
+tool output 的唯一尺寸治理点是执行期 `toolOutput.observationGovernance`：超阈值 output 会落盘成 blob，并把进入上下文的 observation 替换为 preview。构建期只对这个 preview 做 token 估算与保留/丢弃决策。
+
+这里的“raw 工具组原样保留”指 **context build 不再二次改写已经进入历史的消息**，不是绕过执行期 output 治理。默认情况下，工具执行完成时仍会先按 `maxChars: 20_000` / `maxLines: 1_200` 裁出 preview；因此 output 没有 build 期 token 上限，只有执行期字符/行阈值。
 
 ---
 
@@ -463,6 +468,10 @@ contextPolicy: {
 | `tokenEstimation.encoding` | `'cl100k_base'` | 估算用的 tiktoken encoding 名 | ✅ AgentSpec + runtime |
 | `tokenEstimation.avgCharsPerToken` | `2.0` | tiktoken 不可用或未配置 encoding 时的字符/token 兜底比 | ✅ AgentSpec + runtime |
 | `tokenEstimation.toolCallOverhead` | `50` | 工具调用本身的额外开销估算 | ✅ AgentSpec + runtime |
+| `tokenEstimation.calibration` | 默认关闭 | 用上一轮 actual usage 样本校准本地估算 | ✅ AgentSpec + runtime |
+| `tokenEstimation.remoteCount` | 默认关闭 | final messages 确定后调用 provider/gateway preflight count | ✅ AgentSpec + runtime |
+
+完整 token 口径地图见 [`token-management.md`](./token-management.md)：那里专门说明预算估算、remote count、provider usage、component ledger 与 cost/calibration 的区别。
 
 ### 9.2 谁来算 token？
 
@@ -472,8 +481,10 @@ contextPolicy: {
 
 - linnkit **内置一个默认 tokenizer**（实现：`TokenCalculator` + `tiktoken@^1.0.22` 硬依赖）—— 主路径走 OpenAI 编码族 + CJK 检测；非 OpenAI 模型（Claude / Gemini / DeepSeek）映射到 `cl100k_base` 近似；tiktoken 失败时退到字节比兜底（`avgCharsPerToken`）。
 - runtime 统一通过 `tokenizer.estimateMessage(...)` 估算 message token，预算判断会同时计入基础 message overhead、内容 token、tool call 参数 token 与 `tokenEstimation.toolCallOverhead`。如果 `encoding` 不可用，才回退到 `avgCharsPerToken`。
+- 默认 tokenizer 在未显式配置 `tokenEstimation.encoding` 时，会使用当前 `modelId` 选择 tiktoken encoding；这比纯字符比粗估更准，但可能让历史预算裁剪 / 摘要触发点发生轻微漂移。需要固定旧估算口径时，请显式配置 `tokenEstimation.encoding`，或在直接创建 `DefaultTokenizerPort` 时设置 `preferModelIdWhenEncodingMissing:false`。
 - 这个 tokenizer **仅用于 budget 决策**（"还能塞多少消息"），**不用于**计费——计费 token 数由 provider 返回的 `usage` 字段决定，host 自己消费。
 - linnkit **不发明跨 provider 统一 token 数协议**——每个 host / agent 决定自己用什么 tokenizer（默认内置 / 调三参数 / 完全替换）。
+- 摘要触发、工具历史截断、`ContextTrace.message-decision.tokens` 都走同一套 `TokenizerPort` 口径；context-manager 内部不应绕过它直接调用 `TokenCalculator`。
 
 ### 9.3 何时该担心估算不准？
 
@@ -494,15 +505,16 @@ contextPolicy: {
 
 #### 9.4.1 接入点 · `ContextManagerBaseOptions.tokenizer`
 
-`tokenizer` 注入点在 **context-manager 装配链路**（不是 `GraphExecutor`——GraphExecutor 不负责上下文构建，真正做 token budget / trimming 的是 context-manager）。常见三个装配入口都接受 `tokenizer` 选项：
+`tokenizer` 注入点在 **context-manager 装配链路**（不是 `GraphExecutor`——GraphExecutor 不负责上下文构建，真正做 token budget / trimming 的是 context-manager）。常见装配入口都接受 `tokenizer` 选项：
 
 | 装配入口 | 字段 | 适用场景 |
 |---------|------|---------|
 | `new AgentContextManager({ ..., tokenizer, tokenizerModelId })` | ✅ | host 直接装配 agent context manager |
 | `new AgentMessageOrchestrator({ ..., tokenizer })` | ✅ | host 装配 orchestrator（orchestrator 透传给底层 context-manager）|
-| `new ChatContextManager({ ..., tokenizer })` / `new ChatMessageOrchestrator({ ..., tokenizer })` | ✅ | chat profile |
 
-参考实现：`defaultGraphExecutorContextBuilder.ts` 已经把可选 `tokenizer` 依赖透传到 `AgentMessageOrchestrator` / `ChatMessageOrchestrator` 装配，外部接入方可以照抄。
+纯聊天 / 翻译 / 摘要这类单轮能力也注册为 tools-disabled agent，不再走独立 chat profile。
+
+参考实现：`defaultGraphExecutorContextBuilder.ts` 已经把可选 `tokenizer` 依赖透传到 `AgentMessageOrchestrator` 装配，外部接入方可以照抄。
 
 #### 9.4.2 完整示例
 
@@ -536,7 +548,7 @@ const orchestrator = new agentOrchestration.AgentMessageOrchestrator({
 });
 ```
 
-如果你的 host 有自己的 `GraphExecutorContextBuilder`，就在创建 `AgentMessageOrchestrator` / `ChatMessageOrchestrator` 的地方把同一个 `tokenizer` 透传进去。`GraphExecutor` 本身不构建上下文，因此不接收 tokenizer。
+如果你的 host 有自己的 `GraphExecutorContextBuilder`，就在创建 `AgentMessageOrchestrator` 的地方把同一个 `tokenizer` 透传进去。`GraphExecutor` 本身不构建上下文，因此不接收 tokenizer。
 
 #### 9.4.3 `tokenizerModelId` 字段
 
@@ -611,6 +623,9 @@ contextPolicy: {
 - `effectivePolicy`：本次实际生效的 `contextPolicy`（已经合并 framework 默认、host fallback、agent spec）。
 - `provider` 事件：每个 provider 执行前后保留消息数、token delta、剩余预算、命中的策略名。
 - `message-decision` 事件：每条候选消息的 `keep/drop` 结果、阶段、token、原因；`includeMessageIds=false` 时不会带 message id。
+- `remoteTokenCount`：如果启用 remote count，这里记录是否尝试、是否应用、provider/gateway 返回多少 token、与本地估算差多少。
+- `tokenComponents`：按 system/user/assistant/tool/fence/history-summary 等组件聚合的本地估算分项，用于面板和账本；它不是 provider actual usage。
+- `tokenCalibration`：本轮是否应用了校准系数、样本数量、系数和 delta。
 - `overflowed`：trace 事件超过 `maxTraceEvents` 时为 `true`，防止观测数据反过来膨胀。
 - GraphExecutor 会把 `contextTrace` 从 context builder 透传到 context audit record；runtime-kernel 只按 `unknown` 透传，不反向依赖 context-manager 类型。
 
@@ -623,12 +638,12 @@ contextPolicy: {
 ### ✅ 已通过 AgentSpec 协议化开放，且 runtime 已接线
 
 - `budget.maxTokens` / `reservedForResponse` / `workingMemoryBudgetPercentage`
-- `toolHistory.{strategy, retentionMode, keepLatestToolPairs, keepLatestRuns, maxInteractionGroups, overflowStrategy, maxPairTokens, maxOutputSummaryTokens}`
+- `toolHistory.{strategy, retentionMode, keepLatestToolPairs, keepLatestRuns, maxInteractionGroups, overflowStrategy}`
 - `toolOutput.observationGovernance.{enabled, maxChars, maxLines}`
 - `providerReplay.{provider, requiresReasoningDetailsForToolReplay, missingSidecarBehavior}`
 - `summarization.{triggerThreshold, budgetPercentage, oldestMessagesPercentage, agentId, failureBehavior}`
 - `MustKeepPolicy.{alwaysKeepTypes, alwaysKeepFenceKinds, truncationRules}`
-- `workingMemory.{maxRecentToolInteractions, minToolInteractionsToKeep, toolPairingSearchRange}`
+- `workingMemory.{maxRecentToolRuns, maxRecentToolInteractions(deprecated alias), minToolInteractionsToKeep, toolPairingSearchRange}`
 - `checkpoint.{keepPairsBefore, triggerToolName}`
 - `reasoningRetention.keepLatestThoughts`
 - `tokenEstimation.{encoding, avgCharsPerToken, toolCallOverhead}`
@@ -661,7 +676,7 @@ contextPolicy: {
 | 调整工作记忆工具组数量 | `contextPolicy.workingMemory` | working-memory provider 后的 kept count / token delta |
 | 改 checkpoint 工具名或保留窗口 | `contextPolicy.checkpoint` | checkpoint provider 策略命中 + GraphExecutor step-reset 行为 |
 | 控制 thought 保留数量 | `contextPolicy.reasoningRetention.keepLatestThoughts` | thought message 的 keep/drop 数量 |
-| 控制工具 observation 执行期预览阈值 | `contextPolicy.toolOutput.observationGovernance` | `tool_output_store.blob_id` 是否生成 + tool node 单测 |
+| 控制工具 observation 执行期预览阈值 | `contextPolicy.toolOutput.observationGovernance` | `metadata.observationTruncation.blobId` 是否生成 + tool node 单测 |
 | 控制 provider sidecar 缺失时的历史工具回放 | `contextPolicy.providerReplay` | `ToolReplayProtocolGuardPreprocessor` 是否降级 / 标记 |
 | 调整 token 估算口径 | `contextPolicy.tokenEstimation` | provider token delta 曲线变化 |
 | 自定义 transient system reminder | `contextPolicy.systemReminder` + registry | `systemReminderHitRuleIds` + final LLM input |

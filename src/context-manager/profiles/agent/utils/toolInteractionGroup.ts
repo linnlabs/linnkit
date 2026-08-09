@@ -94,16 +94,24 @@ function safeParseArgs(rawArgs: string | undefined): Record<string, unknown> {
 }
 
 function getRawOutput(message: AiMessage): string {
-  const rawOutput = message.metadata?.raw_output;
-  if (typeof rawOutput === 'string' && rawOutput.trim().length > 0) {
-    return rawOutput;
+  if (message.metadata?.data !== undefined) {
+    return JSON.stringify({
+      data: message.metadata.data,
+      observation: message.content,
+      ...(isRecord(message.metadata.presentation) && message.metadata.presentation['media'] !== undefined
+        ? { media: message.metadata.presentation['media'] }
+        : {}),
+    });
   }
-  return message.content;
+  if (typeof message.metadata?.error === 'string') {
+    return JSON.stringify({ error: message.metadata.error, observation: message.content });
+  }
+  throw new Error(`tool_output message ${message.id} is missing canonical data or error metadata.`);
 }
 
 function hasCheckpointMarker(message: AiMessage): boolean {
-  const rawOutput = message.metadata?.raw_output;
-  return typeof rawOutput === 'string' && rawOutput.includes('"context_checkpoint"');
+  const data = message.metadata?.data;
+  return isRecord(data) && data['_type'] === 'context_checkpoint';
 }
 
 function buildToolInteractionGroups<T>(

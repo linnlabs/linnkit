@@ -18,7 +18,7 @@
  * - 维护内存中的序号状态
  */
 
-import { generateExecutionId, generateTraceId } from '../../shared/ids';
+import { generateExecutionId, generateTraceId } from '../../contracts';
 import { Logger } from '../../shared/logger';
 import type { EventEnvelope, ExecutionTraceContext, RuntimeEvent } from '../../contracts';
 
@@ -78,15 +78,15 @@ export class EventSequencer {
    * @param runLocation - 可选的执行位置
    * @returns 包装后的事件信封
    */
-  wrapEvent(
-    runtimeEvent: RuntimeEvent,
+  wrapEvent<TEvent extends RuntimeEvent>(
+    runtimeEvent: TEvent,
     source: string,
     options: {
       renderHint?: EventEnvelope<RuntimeEvent>['render_hint'];
       runLocation?: EventEnvelope<RuntimeEvent>['run_location'];
     } = {}
-  ): EventEnvelope<RuntimeEvent> {
-    const envelope: EventEnvelope<RuntimeEvent> = {
+  ): EventEnvelope<TEvent> {
+    const envelope: EventEnvelope<TEvent> = {
       seq: this.getNextSeq(),
       timestamp: Date.now(),
       trace: this.getExecutionContext(),

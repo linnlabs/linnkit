@@ -5,7 +5,7 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { EventBus } from '../event-bus';
-import type { RuntimeEvent } from '../../../contracts';
+import { RunIdSchema, type RuntimeEvent } from '../../../contracts';
 import type { EventEnvelope as Envelope } from 'linnkit/contracts';
 
 type EventEnvelope = Envelope<RuntimeEvent>;
@@ -13,6 +13,11 @@ type EventEnvelope = Envelope<RuntimeEvent>;
 describe('EventBus', () => {
   let eventBus: EventBus;
   const testExecutionId = 'exec_test_123';
+  const routingIdentity = {
+    run_id: RunIdSchema.parse('run_1'),
+    lane: 'foreground' as const,
+    visibility: 'conversation' as const,
+  };
 
   beforeEach(() => {
     eventBus = new EventBus(testExecutionId);
@@ -32,8 +37,9 @@ describe('EventBus', () => {
 
   describe('事件发布 (publish)', () => {
     it('应该成功发布事件', () => {
-      return new Promise<void>((resolve) => {
+      return new Promise<void>(resolve => {
         const mockPayload: RuntimeEvent = {
+          ...routingIdentity,
           type: 'user_input',
           id: 'msg_1',
           content: 'Hello',
@@ -55,7 +61,7 @@ describe('EventBus', () => {
           payload: mockPayload,
         };
 
-        eventBus.on('event', (receivedEnvelope) => {
+        eventBus.on('event', receivedEnvelope => {
           expect(receivedEnvelope).toEqual(envelope);
           expect(receivedEnvelope.payload.type).toBe('user_input');
           expect(receivedEnvelope.seq).toBe(1);
@@ -69,7 +75,7 @@ describe('EventBus', () => {
     it('应该按顺序发布多个事件', () => {
       const receivedEvents: EventEnvelope[] = [];
 
-      eventBus.on('event', (envelope) => {
+      eventBus.on('event', envelope => {
         receivedEvents.push(envelope);
       });
 
@@ -83,6 +89,7 @@ describe('EventBus', () => {
           },
           source: 'test',
           payload: {
+            ...routingIdentity,
             type: 'thought',
             id: `msg_${i}`,
             content: `Thought ${i}`,
@@ -116,6 +123,7 @@ describe('EventBus', () => {
         },
         source: 'test',
         payload: {
+          ...routingIdentity,
           type: 'user_input',
           id: 'msg_1',
           content: 'Test',
@@ -132,11 +140,39 @@ describe('EventBus', () => {
       expect(errorHandler).toHaveBeenCalled();
       expect(errorHandler.mock.calls[0][0].message).toContain('execution_id does not match');
     });
+
+    it('缺少正式 run 路由身份时只报告错误，不向消费者分发', () => {
+      const eventHandler = vi.fn();
+      const errorHandler = vi.fn();
+      eventBus.on('event', eventHandler);
+      eventBus.on('error', errorHandler);
+
+      eventBus.publish({
+        seq: 1,
+        timestamp: Date.now(),
+        trace: { execution_id: testExecutionId },
+        source: 'test',
+        payload: {
+          type: 'user_input',
+          id: 'missing-routing',
+          content: 'Test',
+          timestamp: Date.now(),
+          conversation_id: 'conv_1',
+          version: 1,
+          turn_id: 'turn_1',
+          source: 'user',
+        },
+      });
+
+      expect(eventHandler).not.toHaveBeenCalled();
+      expect(errorHandler).toHaveBeenCalledOnce();
+      expect(errorHandler.mock.calls[0][0].message).toContain('formal run routing identity');
+    });
   });
 
   describe('事件订阅 (on)', () => {
     it('应该支持单个监听器', () => {
-      return new Promise<void>((resolve) => {
+      return new Promise<void>(resolve => {
         const envelope: EventEnvelope = {
           seq: 1,
           timestamp: Date.now(),
@@ -146,6 +182,7 @@ describe('EventBus', () => {
           },
           source: 'test',
           payload: {
+            ...routingIdentity,
             type: 'user_input',
             id: 'msg_1',
             content: 'Test',
@@ -157,7 +194,7 @@ describe('EventBus', () => {
           },
         };
 
-        eventBus.on('event', (receivedEnvelope) => {
+        eventBus.on('event', receivedEnvelope => {
           expect(receivedEnvelope).toEqual(envelope);
           resolve();
         });
@@ -179,6 +216,7 @@ describe('EventBus', () => {
         },
         source: 'test',
         payload: {
+          ...routingIdentity,
           type: 'user_input',
           id: 'msg_1',
           content: 'Test',
@@ -222,6 +260,7 @@ describe('EventBus', () => {
         },
         source: 'test',
         payload: {
+          ...routingIdentity,
           type: 'user_input',
           id: 'msg_1',
           content: 'Test',
@@ -260,6 +299,7 @@ describe('EventBus', () => {
         },
         source: 'test',
         payload: {
+          ...routingIdentity,
           type: 'user_input',
           id: 'msg_1',
           content: 'Test',
@@ -303,6 +343,7 @@ describe('EventBus', () => {
         },
         source: 'test',
         payload: {
+          ...routingIdentity,
           type: 'user_input',
           id: 'msg_1',
           content: 'Test',
@@ -320,7 +361,7 @@ describe('EventBus', () => {
 
       eventBus.off('event', listener1);
       eventBus.publish(envelope);
-      
+
       expect(listener1Count).toBe(1); // 没有增加
       expect(listener2Count).toBe(2); // 继续增加
     });
@@ -328,7 +369,7 @@ describe('EventBus', () => {
 
   describe('关闭总线 (close)', () => {
     it('应该触发 close 事件', () => {
-      return new Promise<void>((resolve) => {
+      return new Promise<void>(resolve => {
         eventBus.on('close', () => {
           resolve();
         });
@@ -361,6 +402,7 @@ describe('EventBus', () => {
         },
         source: 'test',
         payload: {
+          ...routingIdentity,
           type: 'user_input',
           id: 'msg_1',
           content: 'Test',
@@ -382,10 +424,10 @@ describe('EventBus', () => {
 
   describe('错误处理', () => {
     it('应该能够处理错误事件', () => {
-      return new Promise<void>((resolve) => {
+      return new Promise<void>(resolve => {
         const testError = new Error('Test error');
 
-        eventBus.on('error', (error) => {
+        eventBus.on('error', error => {
           expect(error).toBe(testError);
           expect(error.message).toBe('Test error');
           resolve();
@@ -396,8 +438,8 @@ describe('EventBus', () => {
     });
 
     it('应该在 executionId 不匹配时触发错误', () => {
-      return new Promise<void>((resolve) => {
-        eventBus.on('error', (error) => {
+      return new Promise<void>(resolve => {
+        eventBus.on('error', error => {
           expect(error.message).toContain('execution_id does not match');
           resolve();
         });
@@ -411,6 +453,7 @@ describe('EventBus', () => {
           },
           source: 'test',
           payload: {
+            ...routingIdentity,
             type: 'user_input',
             id: 'msg_1',
             content: 'Test',
@@ -431,7 +474,7 @@ describe('EventBus', () => {
     it('应该能够处理快速连续的事件发布', () => {
       const receivedEvents: EventEnvelope[] = [];
 
-      eventBus.on('event', (envelope) => {
+      eventBus.on('event', envelope => {
         receivedEvents.push(envelope);
       });
 
@@ -447,6 +490,7 @@ describe('EventBus', () => {
           },
           source: 'test',
           payload: {
+            ...routingIdentity,
             type: 'thought',
             id: `msg_${i}`,
             content: `Thought ${i}`,
@@ -469,9 +513,9 @@ describe('EventBus', () => {
       const listener2Events: EventEnvelope[] = [];
       const listener3Events: EventEnvelope[] = [];
 
-      eventBus.on('event', (envelope) => listener1Events.push(envelope));
-      eventBus.on('event', (envelope) => listener2Events.push(envelope));
-      eventBus.on('event', (envelope) => listener3Events.push(envelope));
+      eventBus.on('event', envelope => listener1Events.push(envelope));
+      eventBus.on('event', envelope => listener2Events.push(envelope));
+      eventBus.on('event', envelope => listener3Events.push(envelope));
 
       const envelope: EventEnvelope = {
         seq: 1,
@@ -482,6 +526,7 @@ describe('EventBus', () => {
         },
         source: 'test',
         payload: {
+          ...routingIdentity,
           type: 'user_input',
           id: 'msg_1',
           content: 'Test',
@@ -535,6 +580,7 @@ describe('EventBus', () => {
         },
         source: 'test',
         payload: {
+          ...routingIdentity,
           type: 'user_input',
           id: 'msg_1',
           content: 'Test',
@@ -547,7 +593,7 @@ describe('EventBus', () => {
       };
 
       eventBus.publish(envelope);
-      
+
       // 不再抛出错误，因为监听器已被清理
       // eventBus.emit('error', new Error('Test'));
 
@@ -582,6 +628,7 @@ describe('EventBus', () => {
         },
         source: 'test',
         payload: {
+          ...routingIdentity,
           type: 'user_input',
           id: 'msg_1',
           content: 'Test',

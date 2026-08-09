@@ -1,25 +1,26 @@
 import { Logger } from '../../../../shared/logger';
-import { readNonEmptyString } from '../helpers';
-import type { TickAroundMiddleware } from '../types';
+import { decideRunModelLockPatch } from '../../functions/runModelLock';
+import type { TickAroundMiddleware, TickMiddlewarePatch } from '../types';
 
 const logger = new Logger('GraphAgentExecutor');
 
-export const runModelLockMiddleware: TickAroundMiddleware = async (ctx, stage, next) => {
+export const runModelLockMiddleware: TickAroundMiddleware = async (ctx, stage, next): Promise<TickMiddlewarePatch | void> => {
   await next();
 
-  if (stage.id !== 'execute_llm') {
+  const decision = decideRunModelLockPatch({
+    stageId: stage.id,
+    appliedFallbackModelId: ctx.cloudQuotaFallbackAppliedModelId,
+    currentRunLockedModelId: ctx.executorLocalPatch?.runLockedModelId ?? ctx.executorLocal?.runLockedModelId,
+  });
+  if (!decision.executorLocalPatch) {
     return;
   }
 
-  const normalized = readNonEmptyString(ctx.cloudQuotaFallbackAppliedModelId);
-  if (!normalized) {
-    return;
+  if (decision.shouldLog) {
+    logger.warn(`检测到云端额度降级，已锁定本 run 后续模型: ${ctx.modelId} -> ${decision.executorLocalPatch.runLockedModelId}`);
   }
-  if (ctx.executorLocal?.runLockedModelId === normalized) {
-    return;
-  }
-  if (ctx.executorLocal) {
-    ctx.executorLocal.runLockedModelId = normalized;
-  }
-  logger.warn(`检测到云端额度降级，已锁定本 run 后续模型: ${ctx.modelId} -> ${normalized}`);
+
+  return {
+    executorLocalPatch: decision.executorLocalPatch,
+  };
 };

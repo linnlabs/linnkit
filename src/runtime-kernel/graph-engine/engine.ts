@@ -1,32 +1,29 @@
 import { Logger } from '../../shared/logger';
+import { ENGINE_ERROR_CODES } from '../../shared/errorClassifier';
+import { createEngineErrorEvent } from '../../shared/engineErrorEvent';
+import { generateRuntimeEventId } from '../../contracts';
 import { noopTelemetry } from '../telemetry/noopTelemetry';
 import type { TelemetryPort } from '../telemetry/telemetryPort';
 import type { Checkpointer } from './checkpointer/base';
-import { ENGINE_STATE_SCHEMA_VERSION, type EngineState, type GraphNode, type NodeResult } from './types';
-import { DEFAULT_MAX_STEPS, type RuntimeEvent } from '../../contracts';
+import { ENGINE_STATE_SCHEMA_VERSION, type EngineState, type GraphNode } from './types';
+import { DEFAULT_MAX_STEPS, type RoutedRuntimeEvent } from '../../contracts';
+import { sanitizeCheckpointLocal } from './functions/engineStateSnapshot';
+import { prepareGraphStep } from './functions/graphStepPreparation';
+import { resolveGraphStepResult } from './functions/graphStepResult';
+import { runGraphNodeWithTelemetry } from './orchestration/runGraphNodeWithTelemetry';
+import { runWithLifecycleTelemetry } from './orchestration/runWithLifecycleTelemetry';
+import { requireRuntimeEventSink } from './graphLocal';
+import { requireRuntimeIdentity } from './tick-pipeline/helpers';
 
 const logger = new Logger('GraphExecutor');
 
-function asLocalRecord(local: EngineState['local']): Record<string, unknown> {
-  return local && typeof local === 'object' ? { ...local } : {};
-}
+type GraphRunResult = { events: RoutedRuntimeEvent[]; checkpoint: EngineState; stepCount: number };
 
-function readNonEmptyString(value: unknown): string | undefined {
-  return typeof value === 'string' && value.trim().length > 0 ? value : undefined;
-}
-
-function readRuntimeConversationId(state: EngineState | null): string | undefined {
-  const local = state?.local && typeof state.local === 'object'
-    ? state.local as Record<string, unknown>
-    : undefined;
-  return readNonEmptyString(local?.conversationId);
-}
-
-function readRuntimeTurnId(state: EngineState | null): string | undefined {
-  const local = state?.local && typeof state.local === 'object'
-    ? state.local as Record<string, unknown>
-    : undefined;
-  return readNonEmptyString(local?.turnId);
+export interface GraphResumeSessionInput {
+  expectedRevision: number;
+  localPatch: Record<string, unknown>;
+  nodeId?: string;
+  expectedNodeId?: string;
 }
 
 export interface GraphExecutorConfig {
@@ -42,6 +39,7 @@ export interface GraphExecutorConfig {
 export class GraphExecutor {
   private nodes: Map<string, GraphNode> = new Map();
   private ephemeralLocals: Map<string, Record<string, unknown>> = new Map();
+  private checkpointQueues: Map<string, Promise<void>> = new Map();
   private readonly config: Required<Pick<GraphExecutorConfig, 'maxSteps' | 'maxCheckpoints'>>;
   private readonly telemetryPort: TelemetryPort;
 
@@ -65,24 +63,92 @@ export class GraphExecutor {
   }
 
   private sanitize(state: EngineState): EngineState {
-    const local = asLocalRecord(state.local);
-    if ('memory' in local) delete local.memory;
-    if ('sseSink' in local) delete local.sseSink;
     return {
       nodeId: state.nodeId,
+      revision: state.revision ?? 0,
       schemaVersion: state.schemaVersion ?? ENGINE_STATE_SCHEMA_VERSION,
-      local,
+      local: sanitizeCheckpointLocal(state.local),
     };
+  }
+
+  /**
+   * 原子启动一次 Graph session。
+   *
+   * 同一个 checkpointKey 的“创建初态 + 执行到 yield”共享同一临界区，调用方不再
+   * 需要组合 prime/runUntilYield，也就不会在两步之间被另一个 run 覆盖。
+   */
+  async startSession(
+    checkpointKey: string,
+    local: Record<string, unknown>,
+    nodeId: string = 'user',
+  ): Promise<GraphRunResult> {
+    return this.runWithCheckpointQueue(checkpointKey, async () => {
+      const existing = await this.checkpointer.load(checkpointKey);
+      if (existing) {
+        throw new Error(`Graph checkpoint already exists: ${checkpointKey}`);
+      }
+      this.ephemeralLocals.set(checkpointKey, { ...local });
+      await this.checkpointer.save(checkpointKey, {
+        nodeId,
+        revision: 1,
+        schemaVersion: ENGINE_STATE_SCHEMA_VERSION,
+        local: sanitizeCheckpointLocal(local),
+      });
+      return this.runUntilYieldQueued(checkpointKey);
+    });
+  }
+
+  /** 同一个 run 从已持久化 wait_user checkpoint 继续执行。 */
+  async resumeSession(
+    checkpointKey: string,
+    input: GraphResumeSessionInput,
+  ): Promise<GraphRunResult> {
+    return this.runWithCheckpointQueue(checkpointKey, async () => {
+      const current = await this.checkpointer.load(checkpointKey);
+      if (!current) {
+        throw new Error(`Graph checkpoint does not exist: ${checkpointKey}`);
+      }
+      const currentRevision = current.revision ?? 0;
+      if (currentRevision !== input.expectedRevision) {
+        throw new Error(
+          `Graph checkpoint revision conflict: expected=${input.expectedRevision}, actual=${currentRevision}`,
+        );
+      }
+      const expectedNodeId = input.expectedNodeId ?? 'wait_user';
+      if (current.nodeId !== expectedNodeId) {
+        throw new Error(
+          `Graph checkpoint is not resumable: expected node=${expectedNodeId}, actual=${current.nodeId}`,
+        );
+      }
+
+      this.ephemeralLocals.set(checkpointKey, { ...input.localPatch });
+      await this.checkpointer.save(checkpointKey, {
+        ...current,
+        nodeId: input.nodeId ?? 'llm',
+        revision: currentRevision + 1,
+        local: {
+          ...(current.local ?? {}),
+          ...sanitizeCheckpointLocal(input.localPatch),
+        },
+      });
+      return this.runUntilYieldQueued(checkpointKey);
+    });
+  }
+
+  async clearCheckpoint(checkpointKey: string): Promise<void> {
+    await this.runWithCheckpointQueue(checkpointKey, async () => {
+      this.ephemeralLocals.delete(checkpointKey);
+      await this.checkpointer.clear(checkpointKey);
+    });
   }
 
   async prime(checkpointKey: string, local: Record<string, unknown>, nodeId: string = 'user'): Promise<void> {
     this.ephemeralLocals.set(checkpointKey, { ...(local || {}) });
-    const localSansMemory = { ...(local || {}) };
-    if ('memory' in localSansMemory) delete localSansMemory.memory;
     const state: EngineState = {
       nodeId,
+      revision: 1,
       schemaVersion: ENGINE_STATE_SCHEMA_VERSION,
-      local: localSansMemory,
+      local: sanitizeCheckpointLocal(local),
     };
     await this.checkpointer.save(checkpointKey, state);
   }
@@ -90,76 +156,60 @@ export class GraphExecutor {
   async setNode(checkpointKey: string, nodeId: string, localPatch?: Record<string, unknown>): Promise<void> {
     const current = (await this.checkpointer.load(checkpointKey)) || {
       nodeId: 'user',
+      revision: 0,
       schemaVersion: ENGINE_STATE_SCHEMA_VERSION,
       local: {},
     };
     const mergedLocal = { ...(current.local || {}), ...(localPatch || {}) };
-    if ('memory' in mergedLocal) delete mergedLocal.memory;
     const next: EngineState = {
       nodeId,
+      revision: (current.revision ?? 0) + 1,
       schemaVersion: current.schemaVersion ?? ENGINE_STATE_SCHEMA_VERSION,
-      local: mergedLocal,
+      local: sanitizeCheckpointLocal(mergedLocal),
     };
     await this.checkpointer.save(checkpointKey, next);
   }
 
-  async runUntilYield(checkpointKey: string): Promise<{ events: RuntimeEvent[]; checkpoint: EngineState; stepCount: number }> {
-    // B2-engine Batch 4: run_lifecycle 埋点
-    // - 一次 runUntilYield 调用 = 一次 "run"
-    // - 进入即 emit 'spawned'，退出走 try/finally 决定 'completed' | 'failed' | 'cancelled'
-    const runId = `run_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-    let lifecyclePhase: 'completed' | 'failed' | 'cancelled' = 'completed';
-    let initialState: EngineState | null = null;
-    try {
-      initialState = await this.loadInitialState(checkpointKey);
-    } catch (err) {
-      lifecyclePhase = 'failed';
-      this.telemetryPort.emit({
-        kind: 'run_lifecycle',
-        runId,
-        phase: 'spawned',
-        scope: {},
-      });
-      this.telemetryPort.emit({
-        kind: 'run_lifecycle',
-        runId,
-        phase: lifecyclePhase,
-        scope: {},
-      });
-      throw err;
-    }
+  async runUntilYield(checkpointKey: string): Promise<GraphRunResult> {
+    return this.runWithCheckpointQueue(checkpointKey, () => this.runUntilYieldQueued(checkpointKey));
+  }
 
-    let lifecycleConversationId = readRuntimeConversationId(initialState);
-    let lifecycleTurnId = readRuntimeTurnId(initialState);
-    this.telemetryPort.emit({
-      kind: 'run_lifecycle',
-      runId,
-      phase: 'spawned',
-      scope: {
-        conversationId: lifecycleConversationId,
-        turnId: lifecycleTurnId,
+  private async runWithCheckpointQueue<T>(
+    checkpointKey: string,
+    task: () => Promise<T>,
+  ): Promise<T> {
+    const previous = this.checkpointQueues.get(checkpointKey) ?? Promise.resolve();
+    let releaseCurrent!: () => void;
+    const current = new Promise<void>((resolve) => {
+      releaseCurrent = resolve;
+    });
+    const tail = previous.then(() => current, () => current);
+    this.checkpointQueues.set(checkpointKey, tail);
+
+    await previous.catch(() => undefined);
+    try {
+      return await task();
+    } finally {
+      releaseCurrent();
+      if (this.checkpointQueues.get(checkpointKey) === tail) {
+        this.checkpointQueues.delete(checkpointKey);
+      }
+    }
+  }
+
+  private async runUntilYieldQueued(checkpointKey: string): Promise<GraphRunResult> {
+    return await runWithLifecycleTelemetry({
+      checkpointKey,
+      telemetryPort: this.telemetryPort,
+      loadInitialState: () => this.loadInitialState(checkpointKey),
+      run: async (initialState) => {
+        const result = await this.runUntilYieldInternal(checkpointKey, initialState);
+        return {
+          result,
+          finalState: result.checkpoint,
+        };
       },
     });
-
-    try {
-      const result = await this.runUntilYieldInternal(checkpointKey, initialState);
-      lifecycleConversationId = readRuntimeConversationId(result.checkpoint);
-      lifecycleTurnId = readRuntimeTurnId(result.checkpoint);
-      return result;
-    } catch (err) {
-      lifecyclePhase = (err as Error | undefined)?.name === 'AbortError' ? 'cancelled' : 'failed';
-      throw err;
-    } finally {
-      this.telemetryPort.emit({
-        kind: 'run_lifecycle',
-        runId,
-        phase: lifecyclePhase,
-        scope: {
-          conversationId: lifecycleConversationId,
-          turnId: lifecycleTurnId,
-        },
-      });
-    }
   }
 
   private async loadInitialState(checkpointKey: string): Promise<EngineState> {
@@ -170,10 +220,29 @@ export class GraphExecutor {
     };
   }
 
+  private async saveCheckpoint(checkpointKey: string, state: EngineState): Promise<EngineState> {
+    const checkpoint = this.sanitize({
+      ...state,
+      revision: (state.revision ?? 0) + 1,
+    });
+    await this.checkpointer.save(checkpointKey, checkpoint);
+    return checkpoint;
+  }
+
+  private async saveCheckpointAndBuildResult(
+    checkpointKey: string,
+    state: EngineState,
+    events: RoutedRuntimeEvent[],
+    stepCount: number,
+  ): Promise<GraphRunResult> {
+    const checkpoint = await this.saveCheckpoint(checkpointKey, state);
+    return { events, checkpoint, stepCount };
+  }
+
   private async runUntilYieldInternal(
     checkpointKey: string,
     initialState: EngineState,
-  ): Promise<{ events: RuntimeEvent[]; checkpoint: EngineState; stepCount: number }> {
+  ): Promise<GraphRunResult> {
     let state: EngineState = initialState;
     const ephemeral = this.ephemeralLocals.get(checkpointKey) || {};
     state = {
@@ -194,7 +263,7 @@ export class GraphExecutor {
     let stepCount = 0;
     let cycleStepCount = 0;
     let checkpointCount = 0;
-    let allEvents: RuntimeEvent[] = [];
+    let allEvents: RoutedRuntimeEvent[] = [];
     logger.info('[GraphExecutor] 开始推理循环', {
       maxSteps: this.config.maxSteps,
       maxCheckpoints: this.config.maxCheckpoints,
@@ -212,61 +281,19 @@ export class GraphExecutor {
         throwAbortError();
       }
 
-      const isLastStep = cycleStepCount >= this.config.maxSteps;
-      const rawLocal = state.local && typeof state.local === 'object' ? state.local : {};
-      const localForStep: Record<string, unknown> = { ...(rawLocal as Record<string, unknown>) };
-
-      const rawExecutorLocal = localForStep.executorLocal;
-      const executorLocalForStep: Record<string, unknown> =
-        rawExecutorLocal && typeof rawExecutorLocal === 'object' && !Array.isArray(rawExecutorLocal)
-          ? { ...(rawExecutorLocal as Record<string, unknown>) }
-          : {};
-      executorLocalForStep.maxSteps = this.config.maxSteps;
-      executorLocalForStep.stepCount = cycleStepCount;
-      executorLocalForStep.remainingSteps = this.config.maxSteps - cycleStepCount;
-      executorLocalForStep.checkpointCount = checkpointCount;
-
-      const policyRaw = executorLocalForStep.finalStepPolicy;
-      const finalStepPolicy =
-        policyRaw === 'force_tools' || policyRaw === 'final_answer'
-          ? (policyRaw as 'force_tools' | 'final_answer')
-          : 'final_answer';
-
-      const isPenultimateStep = cycleStepCount === this.config.maxSteps - 1;
-      if (finalStepPolicy === 'force_tools') {
-        executorLocalForStep.phase = isPenultimateStep
-          ? 'force_tools'
-          : (executorLocalForStep.phase ?? 'running');
-      } else {
-        executorLocalForStep.phase = isLastStep ? 'force_final_answer' : (executorLocalForStep.phase ?? 'running');
+      const stepPreparation = prepareGraphStep({
+        state,
+        maxSteps: this.config.maxSteps,
+        cycleStepCount,
+        checkpointCount,
+      });
+      if (stepPreparation.forcedToLlm) {
+        logger.warn('[GraphExecutor] 收尾策略强制切换到 llm 节点', {
+          reason: stepPreparation.forceReason,
+          fromNodeId: stepPreparation.fromNodeId,
+        });
       }
-      localForStep.executorLocal = executorLocalForStep;
-
-      const shouldForceToLlm =
-        finalStepPolicy === 'force_tools'
-          ? isPenultimateStep
-          : isLastStep;
-
-      if (shouldForceToLlm && state.nodeId !== 'wait_user' && state.nodeId !== 'answer') {
-        delete localForStep.pendingToolCalls;
-        delete localForStep.pendingInteractionSpec;
-        delete localForStep.lastToolResult;
-        if (state.nodeId !== 'llm') {
-          const reason =
-            finalStepPolicy === 'force_tools'
-              ? 'force tools before maxSteps'
-              : 'force final answer at maxSteps';
-          logger.warn('[GraphExecutor] 收尾策略强制切换到 llm 节点', {
-            reason,
-            fromNodeId: state.nodeId,
-          });
-          state = { ...state, nodeId: 'llm', local: localForStep };
-        } else {
-          state = { ...state, local: localForStep };
-        }
-      } else {
-        state = { ...state, local: localForStep };
-      }
+      state = stepPreparation.state;
 
       const node = this.nodes.get(state.nodeId);
       if (!node) {
@@ -276,10 +303,9 @@ export class GraphExecutor {
           stepCount,
           checkpointCount,
         });
-        const cp = this.sanitize(state);
-        await this.checkpointer.save(checkpointKey, cp);
+        const result = await this.saveCheckpointAndBuildResult(checkpointKey, state, allEvents, stepCount);
         this.ephemeralLocals.delete(checkpointKey);
-        return { events: allEvents, checkpoint: cp, stepCount };
+        return result;
       }
 
       logger.info('[GraphExecutor] 节点切换', {
@@ -289,41 +315,32 @@ export class GraphExecutor {
         nodeId: state.nodeId,
       });
 
-      // B2-engine Batch 3: 计时 graph_node 事件
-      const nodeRunStartedAt = Date.now();
-      const nodeIdForTelemetry = state.nodeId;
-      const conversationIdForTelemetry = readRuntimeConversationId(state);
-      let result: NodeResult;
-      try {
-        result = await node.run(state);
-      } finally {
-        this.telemetryPort.emit({
-          kind: 'graph_node',
-          nodeId: nodeIdForTelemetry,
-          durationMs: Date.now() - nodeRunStartedAt,
-          scope: {
-            conversationId: conversationIdForTelemetry,
-            turnId: readRuntimeTurnId(state),
-          },
-        });
-      }
+      const result = await runGraphNodeWithTelemetry({
+        node,
+        state,
+        checkpointKey,
+        telemetryPort: this.telemetryPort,
+      });
 
-      if (Array.isArray(result.events) && result.events.length > 0) {
+      const stepResolution = resolveGraphStepResult({
+        state,
+        result,
+        checkpointCount,
+        maxCheckpoints: this.config.maxCheckpoints,
+      });
+
+      if (stepResolution.events.length > 0) {
         logger.info('[GraphExecutor] 节点产生事件', {
           nodeId: state.nodeId,
-          eventCount: result.events.length,
-          events: result.events.map((event) => `${event.type}(${event.timestamp})`),
+          eventCount: stepResolution.events.length,
+          events: stepResolution.events.map((event) => `${event.type}(${event.timestamp})`),
         });
-        allEvents.push(...result.events);
+        allEvents.push(...stepResolution.events);
       }
 
-      const localAfterRun = (state.local && typeof state.local === 'object')
-        ? state.local as Record<string, unknown>
-        : undefined;
-      if (localAfterRun?._checkpointStepReset === true) {
-        delete localAfterRun._checkpointStepReset;
-        checkpointCount++;
-        if (checkpointCount > this.config.maxCheckpoints) {
+      if (stepResolution.checkpointReset.kind !== 'none') {
+        checkpointCount = stepResolution.checkpointReset.checkpointCount;
+        if (stepResolution.checkpointReset.kind === 'limit_exceeded') {
           logger.warn('[GraphExecutor] 达到最大 checkpoint 次数，不再重置步数', {
             checkpointCount,
             maxCheckpoints: this.config.maxCheckpoints,
@@ -339,41 +356,34 @@ export class GraphExecutor {
         }
       }
 
-      if (result.kind === 'route') {
-        const nextNodeId = result.nextNodeId || 'user';
+      state = stepResolution.state;
+
+      if (stepResolution.action.kind === 'route') {
         logger.info('[GraphExecutor] 路由切换', {
-          fromNodeId: state.nodeId,
-          nextNodeId,
+          fromNodeId: stepResolution.action.fromNodeId,
+          nextNodeId: stepResolution.action.nextNodeId,
         });
-        state = { ...state, nodeId: nextNodeId };
-        const cp = this.sanitize(state);
-        await this.checkpointer.save(checkpointKey, cp);
+        await this.saveCheckpoint(checkpointKey, state);
         continue;
       }
 
-      if (result.kind === 'yield') {
+      if (stepResolution.action.kind === 'yield') {
         logger.info('[GraphExecutor] 推理暂停，等待外部输入', {
           cycleStepCount,
           maxSteps: this.config.maxSteps,
           stepCount,
           checkpointCount,
         });
-        const cp = this.sanitize(state);
-        await this.checkpointer.save(checkpointKey, cp);
-        return { events: allEvents, checkpoint: cp, stepCount };
+        return await this.saveCheckpointAndBuildResult(checkpointKey, state, allEvents, stepCount);
       }
 
-      if (result.kind === 'pause') {
-        logger.info('[GraphExecutor] 推理暂停，等待用户交互', {
-          cycleStepCount,
-          maxSteps: this.config.maxSteps,
-          stepCount,
-          checkpointCount,
-        });
-        const cp = this.sanitize(state);
-        await this.checkpointer.save(checkpointKey, cp);
-        return { events: allEvents, checkpoint: cp, stepCount };
-      }
+      logger.info('[GraphExecutor] 推理暂停，等待用户交互', {
+        cycleStepCount,
+        maxSteps: this.config.maxSteps,
+        stepCount,
+        checkpointCount,
+      });
+      return await this.saveCheckpointAndBuildResult(checkpointKey, state, allEvents, stepCount);
     }
 
     logger.warn('[GraphExecutor] 达到步数上限，强制结束', {
@@ -382,9 +392,24 @@ export class GraphExecutor {
       stepCount,
       checkpointCount,
     });
-    const cp = this.sanitize(state);
-    await this.checkpointer.save(checkpointKey, cp);
+    const conversationId = requireRuntimeIdentity(state.local?.conversationId, 'conversationId');
+    const turnId = requireRuntimeIdentity(state.local?.turnId, 'turnId');
+    allEvents.push(requireRuntimeEventSink(state.local)(createEngineErrorEvent({
+      id: generateRuntimeEventId(),
+      conversationId,
+      turnId,
+      errorCode: ENGINE_ERROR_CODES.ENGINE_BUDGET_EXHAUSTED,
+      error: `Maximum step budget (${this.config.maxSteps}) exhausted after ${stepCount} steps`,
+      details: {
+        cycleStepCount,
+        maxSteps: this.config.maxSteps,
+        stepCount,
+        checkpointCount,
+      },
+      retryable: false,
+    }), 'GraphExecutor.engine_budget_exhausted'));
+    const result = await this.saveCheckpointAndBuildResult(checkpointKey, state, allEvents, stepCount);
     this.ephemeralLocals.delete(checkpointKey);
-    return { events: allEvents, checkpoint: cp, stepCount };
+    return result;
   }
 }

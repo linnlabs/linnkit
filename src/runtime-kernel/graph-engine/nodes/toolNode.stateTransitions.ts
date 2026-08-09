@@ -1,20 +1,75 @@
 import type { ToolControlInfo } from '../../tools/ui-types';
 import type { UnknownRecord } from './toolNode.helpers';
 import { isRecord } from './toolNode.helpers';
-import type { RuntimeEvent } from '../../../contracts';
+import { parseRuntimeEvents, type RuntimeEvent, type ToolCallId } from '../../../contracts';
+import {
+  parseToolModelInputDeclaration,
+  type ToolModelInputAttachmentSelection,
+} from '../../tools/model-input';
 
 function mergeHistory(local: UnknownRecord, runtimeEvents: RuntimeEvent[]): RuntimeEvent[] {
-  const history = (local.history as RuntimeEvent[]) || [];
+  const history = parseRuntimeEvents(local.history ?? []);
   return [...history, ...runtimeEvents];
 }
 
-function stripAnswerState(local: UnknownRecord): UnknownRecord {
-  const { answerId, chunkSeq, ...rest } = local;
-  return rest;
+export function stripAnswerState(local: UnknownRecord): UnknownRecord {
+  const nextLocal = { ...local };
+  delete nextLocal.answerId;
+  delete nextLocal.chunkSeq;
+  return nextLocal;
 }
 
 export function readStructuredObservation(parsed: unknown): string | undefined {
-  return isRecord(parsed) && typeof parsed.observation === 'string' ? parsed.observation : undefined;
+  return isRecord(parsed) && typeof parsed.observation === 'string'
+    ? parsed.observation
+    : undefined;
+}
+
+export type StructuredToolResultContractValidation =
+  | {
+      readonly ok: true;
+      readonly result: UnknownRecord;
+      readonly observation: string;
+      readonly modelInputAttachments?: readonly ToolModelInputAttachmentSelection[];
+    }
+  | {
+      readonly ok: false;
+      readonly reason: string;
+    };
+
+/**
+ * Agent 工具的成功结果必须严格分离 UI data 与模型 observation。
+ * 这里校验可观察的协议形状，不猜测业务字段，也不修补工具返回值。
+ */
+export function validateStructuredToolResultContract(
+  parsed: unknown
+): StructuredToolResultContractValidation {
+  if (!isRecord(parsed)) {
+    return { ok: false, reason: '工具成功结果必须是 JSON 对象。' };
+  }
+  if (!Object.prototype.hasOwnProperty.call(parsed, 'data') || parsed.data === undefined) {
+    return { ok: false, reason: '工具成功结果缺少必填字段 data。' };
+  }
+  if (typeof parsed.observation !== 'string' || parsed.observation.trim().length === 0) {
+    return { ok: false, reason: '工具成功结果缺少非空字符串 observation。' };
+  }
+  if (parsed.modelInput !== undefined) {
+    const modelInput = parseToolModelInputDeclaration(parsed.modelInput);
+    if (!modelInput.ok) {
+      return { ok: false, reason: modelInput.reason };
+    }
+    return {
+      ok: true,
+      result: parsed,
+      observation: parsed.observation,
+      modelInputAttachments: modelInput.declaration.attachments,
+    };
+  }
+  return {
+    ok: true,
+    result: parsed,
+    observation: parsed.observation,
+  };
 }
 
 export function extractToolControlInfo(parsed: unknown): ToolControlInfo | undefined {
@@ -25,27 +80,24 @@ export function extractToolControlInfo(parsed: unknown): ToolControlInfo | undef
   const control = parsed.control;
   const requireUser = control.requireUser === true;
   const terminateRun = control.terminateRun === true;
-  if (!requireUser && !terminateRun) {
+  const finalAnswer =
+    typeof control.finalAnswer === 'string' && control.finalAnswer.trim().length > 0
+      ? control.finalAnswer
+      : undefined;
+  if (!requireUser && !terminateRun && !finalAnswer) {
     return undefined;
   }
 
   return {
     ...(requireUser ? { requireUser: true } : {}),
-    ...(typeof control.questionnaireId === 'string' ? { questionnaireId: control.questionnaireId } : {}),
+    ...(typeof control.questionnaireId === 'string'
+      ? { questionnaireId: control.questionnaireId }
+      : {}),
     ...(control.resumeStrategy === 'continue' ? { resumeStrategy: 'continue' } : {}),
     ...(terminateRun ? { terminateRun: true } : {}),
+    ...(finalAnswer ? { finalAnswer } : {}),
     ...(typeof control.reason === 'string' ? { reason: control.reason } : {}),
   };
-}
-
-export function buildSuccessOutputPayload(execResult: string | undefined, parsed: unknown): Record<string, unknown> {
-  const payload: Record<string, unknown> = {
-    output: execResult ?? '',
-  };
-  if (parsed && typeof parsed === 'object') {
-    payload.result = parsed;
-  }
-  return payload;
 }
 
 export function applyToolOutputIdempotencyMetadata(params: {
@@ -72,7 +124,7 @@ export function applyToolOutputIdempotencyMetadata(params: {
 export function buildRequireUserLocalState(params: {
   local: UnknownRecord;
   parsed: unknown;
-  toolCallId: string;
+  toolCallId: ToolCallId;
   toolName: string;
   remainingCalls: unknown[];
   conversationId: string;
@@ -84,6 +136,8 @@ export function buildRequireUserLocalState(params: {
     pendingToolCalls: params.remainingCalls,
     pendingInteractionSpec: {
       ...(isRecord(params.parsed) && isRecord(params.parsed.control) ? params.parsed.control : {}),
+      // wait_user 必须携带工具已校验的结构化结果，UI 才能使用正式 form identity。
+      form: params.parsed,
       toolCallId: params.toolCallId,
       toolName: params.toolName,
     },

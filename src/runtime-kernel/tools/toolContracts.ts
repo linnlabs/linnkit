@@ -1,6 +1,6 @@
-import type { ToolDisplayOptions } from './ui-types';
 import type { ToolIdempotencyPolicy } from './idempotency/toolIdempotency';
 import type { ToolExecutionContext } from './toolExecutionContext';
+import type { ModelInputRequirement } from '../llm/input-capabilities';
 
 export type ToolArgs = Record<string, unknown>;
 export type JsonObjectSchema = Record<string, unknown>;
@@ -12,9 +12,21 @@ export interface ToolParameterProperty {
   enum?: string[];
   minimum?: number;
   maximum?: number;
+  minLength?: number;
   properties?: Record<string, ToolParameterProperty>;
   items?: ToolParameterProperty;
   required?: string[];
+}
+
+/**
+ * 工具对 LLM 流式 tool_call 生命周期的显式声明。
+ *
+ * 这里仅表达 runtime 何时发布通用事件，不包含组件、卡片或产品工具名等展示语义。
+ * 未声明时，工具只在正式 tool_call decision 与执行阶段进入事件流。
+ */
+export interface ToolCallStreamingPolicy {
+  readonly emitPlaceholder?: true;
+  readonly emitArgumentSnapshots?: true;
 }
 
 export interface ToolParameterSchema {
@@ -35,16 +47,15 @@ export type UnifiedToolResult =
   | { kind: 'need_user'; spec: unknown }
   | { kind: 'async'; run_id: string };
 
-export abstract class BaseTool<
-  TArgs extends ToolArgs = ToolArgs,
-  TResult extends string = string,
-> {
+export abstract class BaseTool<TArgs extends ToolArgs = ToolArgs, TResult extends string = string> {
   abstract readonly name: string;
   abstract readonly description: string;
   abstract readonly parameters: ToolParameterSchema;
 
   readonly idempotency?: ToolIdempotencyPolicy;
-  readonly displayOptions?: ToolDisplayOptions;
+  readonly modelInputRequirement?: ModelInputRequirement;
+  readonly resolveModelInputRequirement?: (args: ToolArgs) => ModelInputRequirement | undefined;
+  readonly streaming?: ToolCallStreamingPolicy;
 
   getExecutionSummary?(output: string): string {
     const FULL_CONTENT_THRESHOLD = 200;
@@ -73,7 +84,7 @@ export abstract class BaseTool<
 
       if (this.parameters.additionalProperties === false) {
         const allowed = new Set(Object.keys(this.parameters.properties));
-        const unknownFields = Object.keys(args).filter((field) => !allowed.has(field));
+        const unknownFields = Object.keys(args).filter(field => !allowed.has(field));
         if (unknownFields.length > 0) {
           return {
             success: false,
@@ -131,10 +142,7 @@ export const CommonParameterTypes = {
   },
 } as const;
 
-export interface AgentTool<
-  TArgs extends ToolArgs = ToolArgs,
-  TResult = unknown,
-> {
+export interface AgentTool<TArgs extends ToolArgs = ToolArgs, TResult = unknown> {
   name: string;
   description: string;
   parameters: JsonObjectSchema;

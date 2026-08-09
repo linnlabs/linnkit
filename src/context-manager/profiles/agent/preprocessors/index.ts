@@ -17,6 +17,7 @@ import {
 import { ToolReplayProtocolGuardPreprocessor } from './toolReplayProtocolGuard';
 import type { AiMessage } from '../../../../contracts';
 import { isContextProviderError } from '../../../shared/providers/base';
+import { Logger } from '../../../../shared/logger';
 
 // 重新导出公共接口
 export * from './base';
@@ -93,6 +94,7 @@ export class PreprocessorRegistry {
 export class PreprocessorPipeline {
   private registry: PreprocessorRegistry;
   private context: PreprocessorContext;
+  private readonly logger = new Logger('AgentPreprocessorPipeline');
 
   constructor(
     registry: PreprocessorRegistry, 
@@ -165,7 +167,10 @@ export class PreprocessorPipeline {
           throw error;
         }
         // 预处理器失败不应该中断整个管道，继续执行后续预处理器
-        console.warn(`Agent Preprocessor ${preprocessor.name} failed:`, error);
+        this.logger.warn('Agent preprocessor failed; continuing pipeline', {
+          preprocessor: preprocessor.name,
+          error: error instanceof Error ? error.message : String(error),
+        });
       }
     }
 
@@ -213,7 +218,7 @@ export class PreprocessorPipeline {
    */
   private debug(message: string, data?: Record<string, unknown>): void {
     if (this.context.debugMode) {
-      console.log(`[AgentPreprocessorPipeline] ${message}`, data);
+      this.logger.debug(message, data);
     }
   }
 }
@@ -248,13 +253,12 @@ export interface PreprocessorPipelineResult {
  * 创建默认的Agent预处理器注册表
  * 
  * 🔥 这里定义了Agent预处理管道的默认配置：
- * 1. ToolHistoryCompressorPreprocessor (priority: 0) - 工具历史保留/删除，最先执行
- * 2. ToolReplayProtocolGuardPreprocessor (priority: 0.5) - 工具回放协议守卫，仅治理历史轮次
- * 3. HistoryPurificationPreprocessor (priority: 1) - Agent历史净化，在压缩后执行
+ * 1. ToolHistoryCompressorPreprocessor (toolHistoryCompression) - 工具历史保留/删除，最先执行
+ * 2. ToolReplayProtocolGuardPreprocessor (toolReplayProtocolGuard) - 工具回放协议守卫，仅治理历史轮次
+ * 3. HistoryPurificationPreprocessor (historyPurification) - Agent历史净化，在压缩后执行
  * 
  * 💡 未来可扩展:
- * 3. AgentToolCallValidationPreprocessor (priority: 2) - 工具调用验证
- * 4. AgentContextOptimizationPreprocessor (priority: 3) - 上下文优化
+ * - 新增 preprocessor 时先在 PREPROCESSOR_PRIORITY 中声明稳定阶段，再接入 registry。
  */
 export function createDefaultAgentPreprocessorRegistry(
   options: DefaultAgentPreprocessorRegistryOptions = {},

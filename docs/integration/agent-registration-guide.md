@@ -78,7 +78,6 @@ const spec = AgentSpec.parse({
     budget: { maxTokens: 128_000 },
   }),
   role: 'PPT 制作助手',           // ⚪
-  modelHints: { preferredProviders: ['anthropic'] }, // ⚪
   audit: { redactionLevel: 'standard', pii: false }, // ⚪
   metadata: {},                    // ⚪ host 业务字段，不要升格为协议字段
 });
@@ -91,7 +90,9 @@ const spec = AgentSpec.parse({
 | `capabilities` | ✅ | 能力声明字符串数组；host 路由 / 权限决策可用 |
 | `tools` | ✅ | `ToolBindingSpec[]` —— 见 §3 |
 | `contextPolicy` | ✅ | **必须**用 `defineContextPolicy()` helper —— 见 §4 |
-| `role` / `description` / `modelHints` / `audit` / `metadata` | ⚪ | 见上方示例 |
+| `role` / `description` / `audit` / `metadata` | ⚪ | 见上方示例 |
+
+> 模型选择不在 `AgentSpec` 里用 hint 表达。生产 host 应在自己的 agent registry / model policy 层显式决定模型，并在运行时传入 `AgentInvocationRequest.model_id` 或装配自己的 `ModelResolver`。不要把“偏好模型 / fallback chain”写进静态 spec 后期待 framework 自动路由。
 
 ---
 
@@ -149,6 +150,10 @@ linnkit **不**做：跨 provider 统一计费 token 数协议（不同模型口
 
 被动摘要（`contextPolicy.summarization`）会把一批旧消息交给 host 注册表里的**无工具**摘要 agent/chat；framework 不写摘要 prompt、不直接裸调 LLM。接入顺序：**先在 host 侧注册摘要项** → **再让业务 `AgentSpec` 的 `summarization.agentId` 指向该注册 id**。
 
+运行时，framework 只向 host 的 `generateSummary` port 传递
+`SummaryGenerationRequest { agentId, content, modelId }`。产品侧的项目、文档或编辑器上下文应留在
+host 自有请求中，不能扩张摘要合同。
+
 ```ts
 // ① host：注册一个无工具的摘要 agent/chat（表单项形状随 host 而定；核心是 id 可被解析、tools 为空）
 //    例如注册 id: 'history_compression'，并自行装配 prompt / 模型。
@@ -184,7 +189,6 @@ export const pptAssistantSpec = AgentSpec.parse({
   capabilities: ['agent', 'createPpt'],
   tools: [{ toolId: 'search_docs', argsSchema: searchDocsToolSchema }],
   contextPolicy: defineContextPolicy({ profileId: 'agent', budget: { maxTokens: 128_000 } }),
-  modelHints: { preferredProviders: ['anthropic'] },
 });
 ```
 
@@ -209,7 +213,7 @@ export const pptAssistant = defineAgent({
 |------|----------------|---------------------|
 | 工具引用 | 持有 `BaseTool` 实例 | 只持 `toolId` 字符串 |
 | systemPrompt | 必填，由 helper 持有 | 不存在（host 自管 prompt 装配）|
-| modelId | helper 字段 | 走 `modelHints` |
+| modelId | helper 字段 | 生产 host 显式传入运行请求或在 host modelPolicy 中解析 |
 | 用途 | demo / 测试 / 5 分钟入门 | 生产 host 接入 |
 
 完整 quickstart demo 见 [`02-quickstart.md`](./02-quickstart.md)。
@@ -257,7 +261,7 @@ await executor.run({
   query: req.userMessage,
   history: await loadHistory(req.conversationId),
   fences: await buildFences(req),    // 见 context-fences.md
-  modelId: spec.modelHints?.preferredModels?.[0] ?? 'claude-sonnet-4',
+  modelId: resolveModelIdForAgent(spec, req),
 });
 ```
 

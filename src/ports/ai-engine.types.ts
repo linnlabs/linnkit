@@ -3,17 +3,22 @@
  * @description
  * AI 引擎协议参数 type 的**真正 owner**。
  *
- * 历史背景：这 5 个 type 原本定义在 `runtime-kernel/llm/caller.types.ts`，
+ * 历史背景：这些 type 原本定义在 `runtime-kernel/llm/caller.types.ts`，
  * 但它们的语义其实是"host 实现 `AgentAiEngine` 时要填入的参数形状" —— 属于 ports
  * 协议面，不属于 runtime-kernel 实现层。把它们放在 runtime-kernel 一侧导致
  * `ports/ai-engine.ts` 反向 import runtime-kernel，形成 ports ⇄ runtime-kernel 循环
  * 依赖（rollup dts 打包阶段发出 chunk 循环警告）。
  *
  * 2026-04-23 归位：
- * - 5 个 type 的 **definitive source** 移到本文件
+ * - AI engine port type 的 **definitive source** 移到本文件
  * - `runtime-kernel/llm/caller.types.ts` 改为从 `'../../ports'` barrel re-export，保持
  *   runtime-kernel 的 public face 兼容（`llm.LlmCallOptions` namespace 访问仍然 work）
  * - `ports` 不再依赖 runtime-kernel，循环彻底消除
+ *
+ * 2026-06-24 Q-L4 校准：
+ * - `ProviderReasoningDetails` 的事实 owner 是 contracts/messages：它既出现在 provider
+ *   port 响应中，也要作为 `AiMessage.metadata.reasoning_details` 原样回放；
+ * - ports 只 re-export 该不透明 sidecar type，避免消息层和 provider 层各自维护一份。
  *
  * 约定：
  * - 本文件**只放类型定义**，不包含业务逻辑；
@@ -22,13 +27,18 @@
  *   等供应商（由各 adapter 做映射）。
  */
 
-import type { AiMessage, CanonicalLlmUsage } from '../contracts';
+import type {
+  AiMessage,
+  CanonicalLlmUsage,
+  ProviderReasoningDetails,
+  RuntimeResourceRef,
+} from '../contracts';
+
+export type { ProviderReasoningDetails } from '../contracts';
 
 /**
  * 工具调用的结构类型（OpenAI tool_calls 兼容）
  */
-export type ProviderReasoningDetails = unknown[];
-
 export type ToolCallExtraContent = {
   google?: {
     thought_signature?: string;
@@ -71,10 +81,11 @@ export interface ToolCallChunk {
 
 export type LlmRequestMessage =
   | AiMessage
-  | { role: 'system' | 'user'; content: string }
+  | { role: 'system'; content: string }
+  | { role: 'user'; content: string; attachments?: RuntimeResourceRef[] }
   | { role: 'assistant'; content: string }
   | { role: 'assistant'; content: string | null; tool_calls: unknown[]; reasoning_details?: ProviderReasoningDetails }
-  | { role: 'tool'; tool_call_id: string; content: string };
+  | { role: 'tool'; tool_call_id: string; content: string; attachments?: RuntimeResourceRef[] };
 
 /**
  * LLM 流式/非流式的统一响应载荷（caller 内部使用）
@@ -141,6 +152,16 @@ export interface LlmCallOptions {
   retry_policy?: 'client' | 'none';
 
   /**
+   * 是否允许 LLM 层在一次调用失败后自动切换到其它模型。
+   *
+   * 中文说明：
+   * - `false` 用于固定模型语义：模型不可用时应直接暴露失败，不能被 policy switch
+   *   或 cloud quota fallback 掩盖。
+   * - 未设置时保持历史行为，由 retry/fallback 层按策略决定是否切模型。
+   */
+  allow_model_fallback?: boolean;
+
+  /**
    * 云端模型限额降级目标（同一个 run 内续跑专用）
    *
    * 中文说明：
@@ -150,10 +171,24 @@ export interface LlmCallOptions {
    * - 若为 undefined 或空字符串，则 quota 错误仍按"不可重试"处理（即新请求直接报错）。
    */
   cloud_quota_fallback_model_id?: string;
+  /**
+   * 思考努力程度（统一语义，prepareCallStage 已降级后的最终档位）。
+   * adapter 负责翻译为 provider 原生字段，不得原样进入请求体。
+   */
+  reasoning_effort?: import('../contracts').ReasoningEffort;
 }
 
 export interface LlmRetryConfig {
   maxRetries: number;
+  /**
+   * 单次 LLM 编排允许触发的真实上游调用总数。
+   *
+   * 中文备注：
+   * - `maxRetries` 只表达“同一模型失败后的客户端重试次数”；
+   * - `maxTotalAttempts` 额外覆盖 policy switch / cloud quota fallback 造成的切模型调用，
+   *   避免多级 fallback 绕开 retry 配额。
+   */
+  maxTotalAttempts?: number;
   enableEmptyResponseRetry: boolean;
   retryDelayMs: number;
 }

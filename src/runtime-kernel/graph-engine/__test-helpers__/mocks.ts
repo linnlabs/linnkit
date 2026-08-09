@@ -6,7 +6,9 @@
 import { vi } from 'vitest';
 import type { Checkpointer } from '../checkpointer/base';
 import type { EngineState, GraphNode, NodeResult } from '../types';
-import type { RuntimeEvent } from '../../../contracts';
+import type { RoutedRuntimeEvent, RuntimeEvent } from '../../../contracts';
+import { RunIdSchema } from '../../../contracts';
+import { RuntimeEvent as RuntimeEventSchema } from '../../../contracts';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
@@ -26,10 +28,10 @@ export function createMockCheckpointer() {
     save: vi.fn<Checkpointer['save']>(async (checkpointKey, state) => {
       states.set(checkpointKey, state);
     }),
-    load: vi.fn<Checkpointer['load']>(async (checkpointKey) => {
+    load: vi.fn<Checkpointer['load']>(async checkpointKey => {
       return states.get(checkpointKey) || null;
     }),
-    clear: vi.fn<Checkpointer['clear']>(async (checkpointKey) => {
+    clear: vi.fn<Checkpointer['clear']>(async checkpointKey => {
       states.delete(checkpointKey);
     }),
     _states: states, // 测试辅助：访问内部状态
@@ -54,7 +56,11 @@ export function createMockNode(
 /**
  * 创建简单的 route 结果节点
  */
-export function createRouteNode(id: string, nextNodeId: string, events: RuntimeEvent[] = []): GraphNode {
+export function createRouteNode(
+  id: string,
+  nextNodeId: string,
+  events: RoutedRuntimeEvent[] = []
+): GraphNode {
   return createMockNode(id, {
     kind: 'route',
     nextNodeId,
@@ -65,7 +71,7 @@ export function createRouteNode(id: string, nextNodeId: string, events: RuntimeE
 /**
  * 创建 yield 节点
  */
-export function createYieldNode(id: string, events: RuntimeEvent[] = []): GraphNode {
+export function createYieldNode(id: string, events: RoutedRuntimeEvent[] = []): GraphNode {
   return createMockNode(id, {
     kind: 'yield',
     events,
@@ -75,7 +81,7 @@ export function createYieldNode(id: string, events: RuntimeEvent[] = []): GraphN
 /**
  * 创建 pause 节点
  */
-export function createPauseNode(id: string, events: RuntimeEvent[] = []): GraphNode {
+export function createPauseNode(id: string, events: RoutedRuntimeEvent[] = []): GraphNode {
   return createMockNode(id, {
     kind: 'pause',
     events,
@@ -99,9 +105,21 @@ export function createMockEngineState(
  * 创建测试用的 RuntimeEvent
  */
 export function createMockEvent(
+  type: 'thought',
+  overrides?: Partial<Extract<RuntimeEvent, { type: 'thought' }>>
+): Extract<RoutedRuntimeEvent, { type: 'thought' }>;
+export function createMockEvent(
+  type: 'user_input',
+  overrides?: Partial<Extract<RuntimeEvent, { type: 'user_input' }>>
+): Extract<RoutedRuntimeEvent, { type: 'user_input' }>;
+export function createMockEvent(
+  type: 'final_answer',
+  overrides?: Partial<Extract<RuntimeEvent, { type: 'final_answer' }>>
+): Extract<RoutedRuntimeEvent, { type: 'final_answer' }>;
+export function createMockEvent(
   type: 'thought' | 'user_input' | 'final_answer',
-  overrides: Partial<RuntimeEvent> = {},
-): RuntimeEvent {
+  overrides: Partial<RuntimeEvent> = {}
+): RoutedRuntimeEvent {
   const content = readContent(overrides);
   const base = {
     id: `test_${Date.now()}`,
@@ -109,12 +127,15 @@ export function createMockEvent(
     turn_id: 'turn_test',
     timestamp: Date.now(),
     version: 1 as const,
-    ...overrides,
+    run_id: RunIdSchema.parse('run_test'),
+    lane: 'foreground' as const,
+    visibility: 'conversation' as const,
   };
 
   if (type === 'user_input') {
     return {
       ...base,
+      ...(overrides as Partial<Extract<RuntimeEvent, { type: 'user_input' }>>),
       type: 'user_input',
       content,
       source: 'user',
@@ -122,17 +143,26 @@ export function createMockEvent(
   }
 
   if (type === 'final_answer') {
+    const finalAnswerOverrides = overrides as Partial<
+      Extract<RuntimeEvent, { type: 'final_answer' }>
+    >;
+    const answerId = finalAnswerOverrides.answer_id ?? 'answer_test';
+    const completionReason = finalAnswerOverrides.completion_reason ?? 'terminal';
     return {
       ...base,
+      ...finalAnswerOverrides,
       type: 'final_answer',
-      answer_id: 'answer_test',
+      id: answerId,
+      answer_id: answerId,
       content,
-      is_complete: true,
+      completion_reason: completionReason,
+      is_complete: completionReason !== 'interrupted',
     };
   }
 
   return {
     ...base,
+    ...(overrides as Partial<Extract<RuntimeEvent, { type: 'thought' }>>),
     type: 'thought',
     content,
     is_complete: false,
@@ -144,21 +174,23 @@ export function createMockEvent(
  */
 export function createMockHistory(length: number = 5): RuntimeEvent[] {
   const history: RuntimeEvent[] = [];
-  
+
   for (let i = 0; i < length; i++) {
     const isUser = i % 2 === 0;
-    history.push({
-      type: isUser ? 'user_input' : 'final_answer',
-      id: `msg_${i}`,
-      content: `Message ${i}`,
-      conversation_id: 'conv_test',
-      turn_id: `turn_${Math.floor(i / 2)}`,
-      timestamp: Date.now() + i * 1000,
-      version: 1,
-      source: isUser ? 'user' : undefined,
-    } as RuntimeEvent);
+    history.push(
+      RuntimeEventSchema.parse({
+        type: isUser ? 'user_input' : 'final_answer',
+        id: `msg_${i}`,
+        content: `Message ${i}`,
+        conversation_id: 'conv_test',
+        turn_id: `turn_${Math.floor(i / 2)}`,
+        timestamp: Date.now() + i * 1000,
+        version: 1,
+        source: isUser ? 'user' : undefined,
+      })
+    );
   }
-  
+
   return history;
 }
 

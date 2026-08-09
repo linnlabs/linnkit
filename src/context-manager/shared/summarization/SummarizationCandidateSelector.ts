@@ -1,5 +1,11 @@
 import type { MessageProcessingState } from '../providers/base';
-import type { SummarizationProviderContext } from './config';
+import type {
+  SummarizationProtectedRange,
+  SummarizationProviderContext,
+} from './config';
+import { Logger } from '../../../shared/logger';
+
+const logger = new Logger('SummarizationCandidateSelector');
 
 export class SummarizationCandidateSelector {
   static identifySummarizationCandidates(
@@ -19,15 +25,14 @@ export class SummarizationCandidateSelector {
     };
 
     const allScopeStates = fullStateList ?? workingMemoryStates;
+    const protectedRanges = normalizeProtectedRanges(context.summarizationProtectedRanges ?? []);
     const allValuableMessages = allScopeStates.filter(isValuable);
     const workingValuableMessages = workingMemoryStates.filter(isValuable);
-    const coreMessages = workingValuableMessages.filter((state) => {
-      return state.message.type === 'user_input'
-        || state.message.type === 'final_answer'
-        || state.message.type === 'history_summary';
-    });
+    const candidateSegments = buildCandidateSegments(workingValuableMessages, protectedRanges);
+    const selectedSegment = candidateSegments.find(segment => countCoreMessages(segment) > 4);
+    const coreMessages = selectedSegment?.filter(isCoreMessage) ?? [];
 
-    console.log('[SummarizationCandidateSelector] 🔍 筛选消息（两步）:', {
+    logger.debug('筛选消息（两步）', {
       输入消息数: workingMemoryStates.length,
       摘要范围候选: allValuableMessages.length,
       核心对话消息: coreMessages.length,
@@ -41,7 +46,7 @@ export class SummarizationCandidateSelector {
       }, {} as Record<string, number>),
     });
 
-    if (coreMessages.length <= 4) {
+    if (!selectedSegment || coreMessages.length <= 4) {
       return { allCandidates: [], coreCandidates: [] };
     }
 
@@ -72,7 +77,7 @@ export class SummarizationCandidateSelector {
     const minIndex = Math.min(...coreIndices);
     const maxIndex = Math.max(...coreIndices);
 
-    console.log('[SummarizationCandidateSelector] 📐 计算替换范围:', {
+    logger.debug('计算替换范围', {
       核心候选数: coreCandidatesForPrompt.length,
       minIndex,
       maxIndex,
@@ -80,10 +85,12 @@ export class SummarizationCandidateSelector {
     });
 
     const allCandidatesInRange = allValuableMessages.filter((state) => {
-      return state.originalIndex >= minIndex && state.originalIndex <= maxIndex;
+      return state.originalIndex >= minIndex
+        && state.originalIndex <= maxIndex
+        && !isProtectedIndex(state.originalIndex, protectedRanges);
     });
 
-    console.log('[SummarizationCandidateSelector] ✅ 最终候选消息:', {
+    logger.debug('最终候选消息', {
       所有候选数: allCandidatesInRange.length,
       核心候选数: coreCandidatesForPrompt.length,
       所有候选类型: allCandidatesInRange.reduce((acc, s) => {
@@ -132,4 +139,66 @@ export class SummarizationCandidateSelector {
 
     return result;
   }
+}
+
+function isCoreMessage(state: MessageProcessingState): boolean {
+  return state.message.type === 'user_input'
+    || state.message.type === 'final_answer'
+    || state.message.type === 'history_summary';
+}
+
+function countCoreMessages(states: readonly MessageProcessingState[]): number {
+  return states.filter(isCoreMessage).length;
+}
+
+function buildCandidateSegments(
+  states: readonly MessageProcessingState[],
+  protectedRanges: readonly SummarizationProtectedRange[],
+): MessageProcessingState[][] {
+  const segments: MessageProcessingState[][] = [];
+  let currentSegment: MessageProcessingState[] = [];
+  let previousIndex: number | undefined;
+
+  for (const state of [...states].sort((left, right) => left.originalIndex - right.originalIndex)) {
+    if (isProtectedIndex(state.originalIndex, protectedRanges)) {
+      if (currentSegment.length > 0) segments.push(currentSegment);
+      currentSegment = [];
+      previousIndex = undefined;
+      continue;
+    }
+    if (previousIndex !== undefined && crossesProtectedRange(previousIndex, state.originalIndex, protectedRanges)) {
+      if (currentSegment.length > 0) segments.push(currentSegment);
+      currentSegment = [];
+    }
+    currentSegment.push(state);
+    previousIndex = state.originalIndex;
+  }
+  if (currentSegment.length > 0) segments.push(currentSegment);
+  return segments;
+}
+
+function normalizeProtectedRanges(
+  ranges: readonly SummarizationProtectedRange[],
+): SummarizationProtectedRange[] {
+  return [...ranges]
+    .filter(range => Number.isInteger(range.startIndex)
+      && Number.isInteger(range.endIndex)
+      && range.startIndex >= 0
+      && range.endIndex >= range.startIndex)
+    .sort((left, right) => left.startIndex - right.startIndex || left.endIndex - right.endIndex);
+}
+
+function isProtectedIndex(
+  index: number,
+  ranges: readonly SummarizationProtectedRange[],
+): boolean {
+  return ranges.some(range => index >= range.startIndex && index <= range.endIndex);
+}
+
+function crossesProtectedRange(
+  leftIndex: number,
+  rightIndex: number,
+  ranges: readonly SummarizationProtectedRange[],
+): boolean {
+  return ranges.some(range => range.startIndex > leftIndex && range.endIndex < rightIndex);
 }

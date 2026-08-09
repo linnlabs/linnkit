@@ -1,9 +1,14 @@
 import { vi } from 'vitest';
-import { runtimeKernel } from '../..';
+import {
+  LlmCaller,
+  type LlmCallOptions,
+  type ModelCatalogEntry,
+  type ModelCatalogLike,
+  type ToolCallChunk,
+} from '../../runtime-kernel';
+import type { LlmInputMaterializerPort } from '../../ports';
 
-type LlmCaller = runtimeKernel.llm.LlmCaller;
-type LlmCallOptions = runtimeKernel.llm.LlmCallOptions;
-type ToolCallChunk = runtimeKernel.llm.ToolCallChunk;
+type ScriptedLlmCaller = LlmCaller;
 
 const { AI_ENGINE_MOCK } = vi.hoisted(() => ({
   AI_ENGINE_MOCK: {
@@ -54,7 +59,7 @@ export interface ScriptedLlmTurn {
 export interface ScriptedAiEngineHarness {
   getCalls(): ScriptedLlmCall[];
   getConsumedTurnCount(): number;
-  getLlmCaller(): LlmCaller;
+  getLlmCaller(): ScriptedLlmCaller;
   assertAllTurnsConsumed(): void;
   restore(): void;
 }
@@ -69,6 +74,8 @@ export interface ScriptedAiEngineHarnessOptions {
    * - 若仍传入 `true`，直接抛错，避免 package boundary 悄悄回退。
    */
   patchModuleAiEngine?: boolean;
+  modelCatalog?: ModelCatalogLike;
+  llmInputMaterializer?: LlmInputMaterializerPort;
 }
 
 function toError(input: string | Error): Error {
@@ -84,6 +91,20 @@ function buildToolCallChunks(toolCalls: ScriptedToolCall[]): ToolCallChunk[] {
       arguments: toolCall.argumentsJson,
     },
   }));
+}
+
+function createScriptedModelCatalog(): ModelCatalogLike {
+  const entry = (id: string): ModelCatalogEntry => ({
+    id,
+    enabled: true,
+    capabilities: ['chat'],
+    adapter_input_support: { user_image: false, tool_result_image: false },
+  });
+  return {
+    getModelById: entry,
+    getModelsByCapability: () => [],
+    getModelsByUIVisibility: () => [],
+  };
 }
 
 type ScriptedAiEngineCallbacks = {
@@ -103,7 +124,7 @@ export function createScriptedAiEngineHarness(
 
   const consumeStreamTurn = async (
     modelId: string,
-    messages: unknown[],
+    messages: readonly unknown[],
     options: LlmCallOptions & { signal?: AbortSignal; stream_options?: { include_usage?: boolean } },
     callbacks: ScriptedAiEngineCallbacks,
   ): Promise<void> => {
@@ -180,7 +201,11 @@ export function createScriptedAiEngineHarness(
       });
     },
   };
-  const llmCaller = new runtimeKernel.llm.LlmCaller({ aiEngine: scriptedAiEngine });
+  const llmCaller = new LlmCaller({
+    aiEngine: scriptedAiEngine,
+    modelCatalog: options.modelCatalog ?? createScriptedModelCatalog(),
+    llmInputMaterializer: options.llmInputMaterializer,
+  });
   if (options.patchModuleAiEngine === true) {
     throw new Error(
       '[scriptedAiEngineHarness] patchModuleAiEngine 已退役；请改为显式使用 getLlmCaller() 注入 LlmCaller。'
@@ -194,7 +219,7 @@ export function createScriptedAiEngineHarness(
     getConsumedTurnCount(): number {
       return calls.length;
     },
-    getLlmCaller(): LlmCaller {
+    getLlmCaller(): ScriptedLlmCaller {
       return llmCaller;
     },
     assertAllTurnsConsumed(): void {

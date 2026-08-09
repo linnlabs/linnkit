@@ -1,6 +1,6 @@
 import type { AgentProfileRequest } from '../contracts';
 import type { ToolSummaryProvider } from '../../../shared/preprocessors/base';
-import type { ToolArgs } from 'linnkit/runtime-kernel';
+import type { ToolArgs } from '../../../../runtime-kernel';
 
 export interface ToolManagerRegistry extends ToolSummaryProvider {
   getAvailableToolNames(toolNames?: string[]): string[];

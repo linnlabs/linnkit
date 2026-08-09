@@ -4,8 +4,12 @@
  * 
  * 🎯 目的: 为Agent的ContextManager提供所有策略参数的可配置中心
  * 📖 详情: 实现Agent README中描述的3阶段上下文构建策略，专注于工具交互优化
- * 🔧 特色: P1-P4优先级填充策略，工具调用配对保留机制
+ * 🔧 特色: P1-P3优先级填充策略，工具调用配对保留机制
  */
+
+import { Logger } from '../../../../shared/logger';
+
+const logger = new Logger('AgentContextConfig');
 
 /**
  * Agent上下文构建器核心配置
@@ -62,12 +66,6 @@ export const AGENT_CONTEXT_BUILDER_CONFIG = {
   P3_HISTORICAL_TOOL_PRIORITY: 3,
   
   /**
-   * P4优先级：循环填充
-   * - 剩余预算的循环填充策略
-   */
-  P4_CIRCULAR_FILL_PRIORITY: 4,
-  
-  /**
    * P2优先级：工作记忆中保留的最近'thought'消息数量
    */
   MAX_THOUGHTS_TO_KEEP: 1,
@@ -97,34 +95,16 @@ export const AGENT_CONTEXT_BUILDER_CONFIG = {
   TOOL_PAIRING_SEARCH_RANGE: 10,
   
   /**
-   * 单个工具交互对的最大Token数
-   *
-   * 中文说明：
-   * - 这里是上下文构建期的 token 预算兜底，作用对象是整组 `tool_calls + tool_output`；
-   * - 它不负责工具执行后的原始 observation 落盘预览；
-   * - 执行期落盘阈值在 ToolNode observation governance 中维护，二者不要混成一个配置。
-   */
-  MAX_TOOL_PAIR_TOKENS: 6000,
-
-  /**
-   * 工具输出（tool_output）在“工作记忆层截断”时的摘要长度上限（Token）
-   * - 该值用于控制 `ToolOutputSummarizer` 生成摘要的“信息密度”，避免摘要过短导致信息丢失
-   * - 仅影响：超大工具交互对触发截断时（tool_output 会被摘要替换）
-   */
-  MAX_TOOL_OUTPUT_SUMMARY_TOKENS: 1000,
-  
-  /**
    * 工具交互保留的最小数量
    * - 即使预算不足，也要保留最近的几组工具交互
    */
   MIN_TOOL_INTERACTIONS_TO_KEEP: 2,
 
   /**
-   * P1：最近工具交互（原始 tool_calls/tool_output）的最大保留组数
-   * - 目的：只让“最近的行动链”以原始结构进入上下文，避免工具消息膨胀
-   * - 注意：这里只统计“工具交互组”（一组 = 一次 tool_calls ↔ tool_output 配对）
+   * P1：最近工具 turn 的原始 tool_calls/tool_output 保护窗口
+   * - 目的：当前 turn + 最近历史 turn 内，工具 input 原样保留，避免构建期改写误导模型
    */
-  MAX_RECENT_TOOL_INTERACTIONS_TO_KEEP: 2,
+  MAX_RECENT_TOOL_RUNS_TO_KEEP: 2,
 
   /**
    * P1+P3：工作记忆层最多保留的工具交互组总数（超过则直接丢弃）
@@ -162,7 +142,7 @@ export const AGENT_CONTEXT_BUILDER_CONFIG = {
    * Token 精确估算用的“模型标识”（用于映射到 tiktoken encoding）
    *
    * 说明：
-   * - 这里只用于 `TokenCalculator.estimateTokensPrecise(...)` 的 encoding 选择，不用于真实 LLM 调用；
+   * - 这里只用于默认 `TokenizerPort` 的 encoding 选择，不用于真实 LLM 调用；
    * - 为避免把某个具体业务模型写死在这里，统一使用 tiktoken 的默认 encoding：cl100k_base。
    */
   TOKEN_ENCODING_NAME: 'cl100k_base',
@@ -199,7 +179,6 @@ export interface AgentContextBuilderConfig {
   P1_TOOL_INTERACTION_PRIORITY: number;
   P2_TEXT_CONVERSATION_PRIORITY: number;
   P3_HISTORICAL_TOOL_PRIORITY: number;
-  P4_CIRCULAR_FILL_PRIORITY: number;
   MAX_THOUGHTS_TO_KEEP: number;
   
   // === 摘要策略设置 ===
@@ -208,10 +187,8 @@ export interface AgentContextBuilderConfig {
   
   // === 工具交互特殊配置 ===
   TOOL_PAIRING_SEARCH_RANGE: number;
-  MAX_TOOL_PAIR_TOKENS: number;
-  MAX_TOOL_OUTPUT_SUMMARY_TOKENS: number;
   MIN_TOOL_INTERACTIONS_TO_KEEP: number;
-  MAX_RECENT_TOOL_INTERACTIONS_TO_KEEP: number;
+  MAX_RECENT_TOOL_RUNS_TO_KEEP: number;
   MAX_TOOL_INTERACTION_GROUPS_TO_KEEP: number;
   
   // === 消息类型优先级定义 ===
@@ -366,84 +343,64 @@ export function shouldPairToolInteraction(
 export function validateAgentConfig(config: AgentContextBuilderConfig): boolean {
   // 检查绝对Token限制
   if (config.DEFAULT_MAX_TOKENS <= 0) {
-    console.warn('DEFAULT_MAX_TOKENS must be positive');
+    logger.warn('DEFAULT_MAX_TOKENS must be positive');
     return false;
   }
   
   if (config.RESERVED_FOR_RESPONSE <= 0 || config.RESERVED_FOR_RESPONSE >= config.DEFAULT_MAX_TOKENS) {
-    console.warn('RESERVED_FOR_RESPONSE must be positive and less than DEFAULT_MAX_TOKENS');
+    logger.warn('RESERVED_FOR_RESPONSE must be positive and less than DEFAULT_MAX_TOKENS');
     return false;
   }
   
   // 检查百分比配置是否合理
   if (config.WORKING_MEMORY_BUDGET_PERCENTAGE <= 0 || config.WORKING_MEMORY_BUDGET_PERCENTAGE > 1) {
-    console.warn('WORKING_MEMORY_BUDGET_PERCENTAGE should be between 0 and 1');
+    logger.warn('WORKING_MEMORY_BUDGET_PERCENTAGE should be between 0 and 1');
     return false;
   }
   
   if (config.SUMMARIZATION_TRIGGER_THRESHOLD <= 0 || config.SUMMARIZATION_TRIGGER_THRESHOLD > 1) {
-    console.warn('SUMMARIZATION_TRIGGER_THRESHOLD should be between 0 and 1');
+    logger.warn('SUMMARIZATION_TRIGGER_THRESHOLD should be between 0 and 1');
     return false;
   }
   
   if (config.SUMMARY_BUDGET_PERCENTAGE <= 0 || config.SUMMARY_BUDGET_PERCENTAGE > 0.5) {
-    console.warn('SUMMARY_BUDGET_PERCENTAGE should be between 0 and 0.5');
+    logger.warn('SUMMARY_BUDGET_PERCENTAGE should be between 0 and 0.5');
     return false;
   }
   
   // 检查工具相关配置
   if (config.TOOL_PAIRING_SEARCH_RANGE <= 0) {
-    console.warn('TOOL_PAIRING_SEARCH_RANGE should be positive');
-    return false;
-  }
-  
-  if (config.MAX_TOOL_PAIR_TOKENS <= 0) {
-    console.warn('MAX_TOOL_PAIR_TOKENS should be positive');
-    return false;
-  }
-
-  if (config.MAX_TOOL_OUTPUT_SUMMARY_TOKENS <= 0) {
-    console.warn('MAX_TOOL_OUTPUT_SUMMARY_TOKENS should be positive');
-    return false;
-  }
-
-  if (config.MAX_TOOL_OUTPUT_SUMMARY_TOKENS > config.MAX_TOOL_PAIR_TOKENS) {
-    console.warn('MAX_TOOL_OUTPUT_SUMMARY_TOKENS should not exceed MAX_TOOL_PAIR_TOKENS');
+    logger.warn('TOOL_PAIRING_SEARCH_RANGE should be positive');
     return false;
   }
   
   if (config.MIN_TOOL_INTERACTIONS_TO_KEEP < 0) {
-    console.warn('MIN_TOOL_INTERACTIONS_TO_KEEP should be non-negative');
+    logger.warn('MIN_TOOL_INTERACTIONS_TO_KEEP should be non-negative');
     return false;
   }
 
-  if (config.MAX_RECENT_TOOL_INTERACTIONS_TO_KEEP < 0) {
-    console.warn('MAX_RECENT_TOOL_INTERACTIONS_TO_KEEP should be non-negative');
+  if (config.MAX_RECENT_TOOL_RUNS_TO_KEEP < 0) {
+    logger.warn('MAX_RECENT_TOOL_RUNS_TO_KEEP should be non-negative');
     return false;
   }
 
   if (config.MAX_TOOL_INTERACTION_GROUPS_TO_KEEP <= 0) {
-    console.warn('MAX_TOOL_INTERACTION_GROUPS_TO_KEEP should be positive');
-    return false;
-  }
-
-  if (config.MAX_RECENT_TOOL_INTERACTIONS_TO_KEEP > config.MAX_TOOL_INTERACTION_GROUPS_TO_KEEP) {
-    console.warn('MAX_RECENT_TOOL_INTERACTIONS_TO_KEEP should not exceed MAX_TOOL_INTERACTION_GROUPS_TO_KEEP');
+    logger.warn('MAX_TOOL_INTERACTION_GROUPS_TO_KEEP should be positive');
     return false;
   }
 
   if (config.AVG_CHARS_PER_TOKEN <= 0) {
-    console.warn('AVG_CHARS_PER_TOKEN should be positive');
+    logger.warn('AVG_CHARS_PER_TOKEN should be positive');
     return false;
   }
 
   if (config.TOOL_CALL_OVERHEAD_TOKENS < 0) {
-    console.warn('TOOL_CALL_OVERHEAD_TOKENS should be non-negative');
+    logger.warn('TOOL_CALL_OVERHEAD_TOKENS should be non-negative');
     return false;
   }
 
   if (config.TOKEN_ENCODING_NAME.trim().length === 0) {
-    console.warn('TOKEN_ENCODING_NAME should not be empty');
+    logger.warn('TOKEN_ENCODING_NAME should not be empty');
     return false;
   }
   

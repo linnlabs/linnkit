@@ -1,8 +1,10 @@
 import { z } from 'zod';
+import { ExecutionIdSchema, TraceIdSchema } from './identity';
 
 export const ExecutionTraceContext = z.object({
-  execution_id: z.string().describe('The unique identifier for a single, complete execution flow.'),
-  trace_id: z.string().optional().describe('An optional trace ID for correlating logs in an APM system.'),
+  /** execution_id 的命名空间由 identity contract 统一定义；这里仅补充 trace 语境。 */
+  execution_id: ExecutionIdSchema.describe('The unique identifier for a single, complete execution flow.'),
+  trace_id: TraceIdSchema.optional().describe('An optional trace ID for correlating logs in an APM system.'),
 });
 
 const EventEnvelopeSchema = z.object({

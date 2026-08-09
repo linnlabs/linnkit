@@ -1,9 +1,9 @@
 import type { MessageProcessingState, ProviderContext } from '../providers/base';
-import { generateMessageId } from '../../../shared/ids';
 import {
   createHistorySummaryEvent,
+  generateRuntimeEventId,
   type AiMessage,
-  type RuntimeEvent,
+  type HistorySummaryEvent,
 } from '../../../contracts';
 
 export type ReplacedIdRange = {
@@ -52,8 +52,8 @@ export class SummarizationStateUtils {
     context: ProviderContext,
     allMessages: AiMessage[],
     includedOldSummary: boolean = false
-  ): { state: MessageProcessingState; event: RuntimeEvent } {
-    const summaryId = generateMessageId();
+  ): { state: MessageProcessingState; event: HistorySummaryEvent } {
+    const summaryId = generateRuntimeEventId();
     const timestamp = Date.now();
     const replacedMessageIds = this.collectReplacedIds(candidates);
     const originalMessageCount = candidates.length;
@@ -91,7 +91,7 @@ export class SummarizationStateUtils {
       originalIndex: -1,
       action: 'keep_core' as const,
       tokens,
-      processedContent: summaryMessage.content,
+      overrideContent: summaryMessage.content,
       contentType: 'full' as const,
       phase: 'SUMMARIZATION' as const,
     };
@@ -102,10 +102,10 @@ export class SummarizationStateUtils {
       '',
       fullContent,
       replacedMessageIds,
+      originalMessageCount,
       summarySeq,
       {
         timestamp,
-        original_message_count: originalMessageCount,
         compression_ratio: summaryMessage.metadata?.compressionRatio,
         included_old_summary: includedOldSummary,
       }

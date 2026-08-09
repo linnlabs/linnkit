@@ -1,33 +1,52 @@
-import type { AgentInvocationRequest, LlmRequestMessage } from '../../ports';
+import type {
+  AgentInvocationRequest,
+  ImageInputAdmissionEvidence,
+  LlmRequestMessage,
+} from '../../ports';
 import type {
   ContextBuildTokenEstimate,
   ContextComponentTokenLedgerEntry,
   ContextTokenComponent,
+  InternalLlmCallUsage,
   RuntimeEvent,
+  SummarizationCallbacks,
 } from '../../contracts';
-
-export interface GraphExecutorSummarizationCallbacks {
-  onSummarizationStart?: () => void;
-  onSummarizationEnd?: (summaryInfo: unknown) => void;
-}
 
 export interface PendingContextRuntimeEvent extends Record<string, unknown> {
   id: string;
   type: string;
 }
 
+export interface GraphExecutorOutputProcessor {
+  /**
+   * 中文备注：outputProcessor 来自 host task 实例，方法可能依赖 `this`。
+   * runtime-kernel 调用时必须保留对象接收者，不要拆成裸函数传递。
+   */
+  processResponse?(this: GraphExecutorOutputProcessor, rawResponse: string): string;
+  processStreamChunk?(this: GraphExecutorOutputProcessor, chunk: string): string;
+}
+
 export interface GraphExecutorContextBuildInput {
   request: AgentInvocationRequest;
   history: RuntimeEvent[];
-  summarizationCallbacks?: GraphExecutorSummarizationCallbacks;
+  summarizationCallbacks?: SummarizationCallbacks;
   modelId: string;
   signal?: AbortSignal;
 }
 
 export interface GraphExecutorContextBuildOutput {
-  mode: 'agent' | 'chat';
   llmMessages: LlmRequestMessage[];
+  /** Context Manager 产出的短生命周期图片预算证据；不得写入 checkpoint 或 provider options。 */
+  imageInputAdmissionEvidence?: ImageInputAdmissionEvidence;
   summaryEvents: PendingContextRuntimeEvent[];
+  /**
+   * Host 注入的输出文本处理器。
+   *
+   * 中文备注：
+   * - runtime-kernel 只知道“把模型输出字符串交给一个可选函数处理”；
+   * - 具体规则仍由 host 的 agent/task 定义提供，避免 framework 反向识别 promptKey 或产品语义。
+   */
+  outputProcessor?: GraphExecutorOutputProcessor;
   /**
    * 上下文构建旁路 trace。
    *
@@ -50,6 +69,13 @@ export interface GraphExecutorContextBuildOutput {
    */
   tokenComponents?: ContextTokenComponent[];
   tokenLedgerEntry?: ContextComponentTokenLedgerEntry;
+  /**
+   * context build 内部 LLM 调用 usage。
+   *
+   * 中文备注：runtime 只在 build stage 为这些调用补发 telemetry；它们不进入 RuntimeEvent，
+   * 避免把审计数据写入模型上下文或历史事件。
+   */
+  internalLlmCalls?: InternalLlmCallUsage[];
 }
 
 export interface GraphExecutorContextBuilder {

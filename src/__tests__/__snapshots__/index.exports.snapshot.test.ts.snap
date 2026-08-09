@@ -2,14 +2,15 @@
 
 exports[`src/agent public exports snapshot > exposes the documented root public surface 1`] = `
 [
+  "LlmAuditProjectionError",
   "contracts",
   "defineAgent",
   "defineConfig",
-  "generateAuditEnvelopeEventId",
   "generateAuditEnvelopeId",
-  "generateMessageId",
   "generateRunId",
+  "generateRuntimeEventId",
   "ports",
+  "projectDurableLlmAuditValue",
   "resolveConfiguredLlm",
   "runAgent",
   "runtimeKernel",

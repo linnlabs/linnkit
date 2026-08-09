@@ -280,7 +280,7 @@ AgentAiEngine.chatCompletionStream(llmMessages, ...)
 
 - 不要把 `<my_tag>...</my_tag>` 写进 system prompt 字符串拼装（会绕过 fence lifetime / must-keep 治理）
 - 不要在不同链路用两个不同的 `FenceRegistry`（注册侧和 formatter 侧必须是同一个实例）
-- 不要继续借用 `document_fragment` / `context_before` / `context_after` 这些 legacy type 表达新的产品注入。它们是迁移期兼容字段，host 一律转成 fence 注入
+- 不要借用 `document_fragment` / `context_before` / `context_after` 这类产品 type。Host 必须在进入 framework 前构造正式 fence，Linnkit 主链不兼容这些输入
 - 不要把 fence 概念漏到 system prompt 文案里去——fence kind 是 host-internal 命名，对 LLM 不可见；LLM 只看 formatter 输出的标签
 
 ## 9. 最小验证
@@ -316,15 +316,15 @@ AgentAiEngine.chatCompletionStream(llmMessages, ...)
 - 实际场景 99% 的判断就是"按 type 列表 + 按 fenceKind 列表"——配置对象足够，且能直接 dump 出来 debug
 - 复杂场景留 escape hatch：未来需要时再加 `customMatcher?: (msg) => boolean`
 
-## 11. 兼容期注意
+## 11. 当前合同
 
 linnkit 0.4.x 起，agent profile 的公开请求合同已经收窄：
 
 - host 产品字段不再挂在 `AgentProfileRequest` 上
 - `MessageFormatter` 也不再替 `document_fragment` / `additional_context` 这类产品语义做包装
 
-新接入方应当：
+接入方必须：
 
 - 把 host 产品字段全部走 `fences[]` 通道
-- 不引用 `chatContext` / `chatTasks` 等 namespace；需要兼容旧 chat 形态时，先使用主入口的扁平导出，后续迁到 tools-disabled `AgentSpec`
-- 不 deep import `profiles/chat/*`；这仍是迁移期兼容层，不是新功能扩展点
+- 不引用 `chatContext` / `chatTasks` 等 namespace；单轮无工具能力使用 tools-disabled `AgentSpec`
+- 不 deep import `profiles/chat/*`；chat profile 不属于当前公共扩展面

@@ -1,7 +1,10 @@
-import { createAuditEnvelopeEvent } from '../../contracts';
+import {
+  createAuditEnvelopeEvent,
+  generateRuntimeEventId,
+  routeRuntimeEvent,
+} from '../../contracts';
 import type { AuditEnvelope } from '../../contracts';
 import type { AuditPort } from '../../ports';
-import { generateAuditEnvelopeEventId } from '../../shared/ids';
 import type { EventStore } from '../graph-engine/event-store/base';
 
 export interface EventStoreAuditOptions {
@@ -51,18 +54,24 @@ export class EventStoreAuditPort implements AuditPort {
   async emit(envelope: AuditEnvelope): Promise<void> {
     const conversationId = resolveConversationId(envelope);
     const turnId = resolveTurnId(envelope);
-    const event = createAuditEnvelopeEvent(
-      generateAuditEnvelopeEventId(),
-      conversationId,
-      turnId,
-      envelope,
+    const event = routeRuntimeEvent(
+      createAuditEnvelopeEvent(
+        generateRuntimeEventId(),
+        conversationId,
+        turnId,
+        envelope,
+      ),
+      {
+        run_id: envelope.runId,
+        parent_run_id: envelope.parentRunId,
+        // Audit 是目标 run 的隐藏辅助事实，不属于该 run 的正文展示 lane。
+        lane: 'auxiliary',
+        visibility: 'none',
+      },
     );
 
-    await this.eventStore.append(conversationId, {
-      eventId: event.id,
-      timestamp: event.timestamp,
-      conversationId,
-      runId: envelope.runId,
+    await this.eventStore.append({
+      eventStoreId: event.id,
       event,
     });
   }

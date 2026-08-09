@@ -1,6 +1,7 @@
 import type { AiMessage } from '../../../contracts';
 import type { FenceDescriptor, FenceRegistry } from '../fences';
 import { BasePreprocessor, type PreprocessorContext, type PreprocessorResult } from './base';
+import { PREPROCESSOR_PRIORITY } from './priority';
 
 export interface CurrentTurnMessageAssemblerOptions {
   fenceRegistry: FenceRegistry;
@@ -30,7 +31,7 @@ interface AssemblyResult {
 export class CurrentTurnMessageAssembler extends BasePreprocessor {
   readonly name = 'CurrentTurnMessageAssembler';
   readonly description = 'Assembles current-turn fences into system_prompt and user_input messages';
-  readonly priority = 10;
+  readonly priority = PREPROCESSOR_PRIORITY.currentTurnAssembly;
 
   private readonly fenceRegistry: FenceRegistry;
 

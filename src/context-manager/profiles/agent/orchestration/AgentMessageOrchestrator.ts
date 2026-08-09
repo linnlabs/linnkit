@@ -3,8 +3,8 @@ import {
   AgentContextManager,
   type AgentBuildPhase,
   type ContextBuildResult,
-  ConversationSession,
 } from '../context';
+import type { ContextManagerBaseOptions } from '../../../shared/context-manager-base';
 import {
   AGENT_CONTEXT_BUILDER_CONFIG,
   type AgentContextBuilderConfig,
@@ -20,20 +20,31 @@ import {
 import { ToolManager } from '../tools/ToolManager';
 import type { AgentTaskResolver } from '../tasks/base';
 import { convertEventsToAiMessages } from '../utils/eventConverter';
-import type { GenerateRequest, GenerateResponse } from '../../chat/contracts';
+import type {
+  SummaryGenerationRequest,
+  SummaryGenerationResponse,
+} from '../../../shared/contracts/summaryGeneration';
+import { recordBeforeContextManager } from '../../../../shared/llmAuditRecorder';
 import type {
   AgentSpecContextPolicy,
   AiMessage,
   RuntimeEvent,
+  TokenCountConfidence,
+  TokenCountSource,
   TokenRoute,
   TokenUsageCalibrationSample,
 } from '../../../../contracts';
-import type { TokenCounterPort, TokenizerPort } from '../../../../ports';
+import type {
+  LlmImageInputEstimatorPort,
+  TokenCounterPort,
+  TokenizerPort,
+} from '../../../../ports';
 import type { FenceRegistry } from '../../../shared/fences';
 import {
   contextPolicyToContextBuilderConfig,
   contextPolicyToPreprocessorOptions,
 } from '../../../shared/agentSpecAdapter';
+import { Logger } from '../../../../shared/logger';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
@@ -78,6 +89,7 @@ export interface AgentOrchestratorOptions {
   fenceRegistry?: FenceRegistry;
   tokenizer?: TokenizerPort;
   tokenCounter?: TokenCounterPort;
+  imageInputEstimator?: LlmImageInputEstimatorPort;
   resolveTokenRoute?: (params: {
     request: AgentProfileRequest;
     modelId: string;
@@ -95,6 +107,8 @@ export interface AgentProcessingResult {
       estimated: number;
       budget: number;
       remaining: number;
+      source: TokenCountSource;
+      confidence: TokenCountConfidence;
     };
     processingStats: ContextBuildResult['processingStats'];
     truncated: boolean;
@@ -108,11 +122,27 @@ interface EffectiveContextBudget {
   totalBudget: number;
 }
 
+interface RequestContextAssembly {
+  contextBuilderConfig: Partial<AgentContextBuilderConfig>;
+  contextManager: AgentContextManager;
+}
+
+type AgentContextManagerOptions = NonNullable<ConstructorParameters<typeof AgentContextManager>[0]>;
+type AgentRemoteCountPolicy = ContextManagerBaseOptions<
+  AgentContextBuilderConfig,
+  ContextProviderRegistry
+>['remoteCount'];
+type AgentTokenCalibrationOptions = ContextManagerBaseOptions<
+  AgentContextBuilderConfig,
+  ContextProviderRegistry
+>['tokenCalibration'];
+
 export class AgentMessageOrchestrator {
-  private agentContextManager: AgentContextManager;
+  private baseAgentContextManager: AgentContextManager;
   private options: AgentOrchestratorOptions;
   private readonly taskResolver: AgentTaskResolver;
   private baseContextConfig: Partial<AgentContextBuilderConfig>;
+  private readonly logger = new Logger('AgentMessageOrchestrator');
 
   constructor(options: AgentOrchestratorOptions) {
     this.options = options;
@@ -125,14 +155,31 @@ export class AgentMessageOrchestrator {
       SUMMARY_BUDGET_PERCENTAGE: AGENT_CONTEXT_BUILDER_CONFIG.SUMMARY_BUDGET_PERCENTAGE,
       SUMMARY_OLDEST_MESSAGES_PERCENTAGE: AGENT_CONTEXT_BUILDER_CONFIG.SUMMARY_OLDEST_MESSAGES_PERCENTAGE,
     };
-    this.agentContextManager = new AgentContextManager({
+    this.baseAgentContextManager = this.createAgentContextManager({
       debugMode: options.processing.debugMode,
       customConfig: this.baseContextConfig,
       providerRegistry: options.providerRegistry,
       tokenizer: options.tokenizer,
       tokenizerModelId: options.model,
       tokenCounter: options.tokenCounter,
+      imageInputEstimator: options.imageInputEstimator,
     });
+  }
+
+  private createAgentContextManager(options: {
+    debugMode?: boolean;
+    customConfig: Partial<AgentContextBuilderConfig>;
+    providerRegistry: ContextProviderRegistry;
+    tokenizer?: TokenizerPort;
+    tokenizerModelId?: string;
+    tokenCounter?: TokenCounterPort;
+    tokenRoute?: TokenRoute;
+    remoteCount?: AgentRemoteCountPolicy;
+    tokenCalibration?: AgentTokenCalibrationOptions;
+    imageInputEstimator?: LlmImageInputEstimatorPort;
+  }): AgentContextManager {
+    const managerOptions: AgentContextManagerOptions = options;
+    return new AgentContextManager(managerOptions);
   }
 
   private buildPreprocessorPipelineForRequest(
@@ -161,10 +208,10 @@ export class AgentMessageOrchestrator {
     return this.options.resolveContextPolicy?.(request);
   }
 
-  private applyContextPolicy(
+  private assembleRequestContext(
     request: AgentProfileRequest,
     contextPolicy: AgentSpecContextPolicy | undefined,
-  ): Partial<AgentContextBuilderConfig> {
+  ): RequestContextAssembly {
     const contextBuilderConfig = {
       ...this.baseContextConfig,
       ...(contextPolicy ? contextPolicyToContextBuilderConfig(contextPolicy) : {}),
@@ -186,7 +233,7 @@ export class AgentMessageOrchestrator {
       contextPolicy,
     }) ?? tokenCalibration?.route;
 
-    this.agentContextManager = new AgentContextManager({
+    const contextManager = this.createAgentContextManager({
       debugMode: this.options.processing.debugMode,
       customConfig: contextBuilderConfig,
       providerRegistry,
@@ -200,9 +247,13 @@ export class AgentMessageOrchestrator {
         route: tokenCalibration?.route,
         samples: tokenCalibration?.samples,
       },
+      imageInputEstimator: this.options.imageInputEstimator,
     });
 
-    return contextBuilderConfig;
+    return {
+      contextBuilderConfig,
+      contextManager,
+    };
   }
 
   private resolveEffectiveContextBudget(
@@ -227,7 +278,9 @@ export class AgentMessageOrchestrator {
     toolManager: ToolManager,
     callbacks?: SummarizationCallbacks,
     extraOptions?: {
-      generate?: (request: GenerateRequest) => Promise<GenerateResponse>;
+      generateSummary?: (
+        request: SummaryGenerationRequest,
+      ) => Promise<SummaryGenerationResponse>;
     }
   ): Promise<AgentProcessingResult> {
     const historyCount = history.length;
@@ -251,7 +304,7 @@ export class AgentMessageOrchestrator {
       this.debug('Built complete message list', { totalCount: allMessages.length });
 
       const contextPolicy = this.resolveContextPolicy(request);
-      const contextBuilderConfig = this.applyContextPolicy(request, contextPolicy);
+      const { contextBuilderConfig, contextManager } = this.assembleRequestContext(request, contextPolicy);
       const effectiveContextBudget = this.resolveEffectiveContextBudget(contextBuilderConfig);
 
       const preprocessorPipeline = this.buildPreprocessorPipelineForRequest(toolManager, request, contextPolicy);
@@ -270,41 +323,36 @@ export class AgentMessageOrchestrator {
         processedCount: preprocessResult.messages.length,
         appliedStrategies: preprocessResult.pipelineStats.appliedStrategies,
       });
-
-      const tempSession = new ConversationSession('');
-      tempSession.getHistory().length = 0;
-      preprocessResult.messages.forEach((msg) => {
-        tempSession.getHistory().push(msg);
+      recordBeforeContextManager({
+        payload: {
+          request,
+          history,
+          preprocessedMessages: preprocessResult.messages,
+          preprocessorStrategies: preprocessResult.pipelineStats.appliedStrategies,
+        },
       });
 
       const contextResult = await this.buildContextFromPreprocessedMessages(
+        contextManager,
         request,
-        tempSession,
         preprocessResult.messages,
         callbacks,
         undefined,
-        extraOptions?.generate,
+        extraOptions?.generateSummary,
         contextPolicy,
         effectiveContextBudget.totalBudget,
       );
       this.debug('Context built', { afterContextCount: contextResult.messages.length });
 
-      if (this.options.processing.debugMode) {
-        console.log(
-          '[AgentMessageOrchestrator] DEBUG: Messages after context build:',
-          JSON.stringify(
-            contextResult.messages.map((m) => ({
-              id: m.id,
-              ts: m.timestamp,
-              role: m.role,
-              type: m.type,
-              content: m.content.substring(0, 50),
-            })),
-            null,
-            2
-          )
-        );
-      }
+      this.debug('Messages after context build', {
+        messages: contextResult.messages.map((m) => ({
+          id: m.id,
+          ts: m.timestamp,
+          role: m.role,
+          type: m.type,
+          content: m.content.substring(0, 50),
+        })),
+      });
 
       const endTime = performance.now();
       const processingTime = endTime - startTime;
@@ -324,6 +372,8 @@ export class AgentMessageOrchestrator {
             estimated: contextResult.tokenUsage.used,
             budget: effectiveContextBudget.totalBudget,
             remaining: contextResult.tokenUsage.remaining,
+            source: contextResult.tokenUsage.source,
+            confidence: contextResult.tokenUsage.confidence,
           },
           processingStats: contextResult.processingStats,
           truncated: contextResult.truncated,
@@ -349,26 +399,27 @@ export class AgentMessageOrchestrator {
   }
 
   private async buildContextFromPreprocessedMessages(
+    contextManager: AgentContextManager,
     request: AgentProfileRequest,
-    conversationSession: ConversationSession,
     messages: AiMessage[],
     callbacks?: SummarizationCallbacks,
     phaseOverride?: AgentBuildPhase,
-    generate?: (request: GenerateRequest) => Promise<GenerateResponse>,
+    generateSummary?: (
+      request: SummaryGenerationRequest,
+    ) => Promise<SummaryGenerationResponse>,
     contextPolicy?: AgentSpecContextPolicy,
     totalBudget?: number,
   ): Promise<ContextBuildResult> {
     const resolvedTotalBudget =
       totalBudget ?? this.options.tokenBudget.maxTokens - this.options.tokenBudget.reservedForResponse;
 
-    const contextResult = await this.agentContextManager.buildContextFromPreprocessedMessages(
+    const contextResult = await contextManager.buildContextFromPreprocessedMessages(
       request,
-      conversationSession,
       messages,
       resolvedTotalBudget,
       callbacks,
       phaseOverride,
-      generate,
+      generateSummary,
       {
         policy: contextPolicy?.contextTrace,
         effectiveContextPolicy: contextPolicy,
@@ -392,7 +443,7 @@ export class AgentMessageOrchestrator {
 
   private debug(message: string, data?: Record<string, unknown>): void {
     if (this.options.processing.debugMode) {
-      console.log(`[AgentMessageOrchestrator] ${message}`, data);
+      this.logger.debug(message, data);
     }
   }
 
@@ -408,17 +459,17 @@ export class AgentMessageOrchestrator {
       DEFAULT_MAX_TOKENS: this.options.tokenBudget.maxTokens,
       RESERVED_FOR_RESPONSE: this.options.tokenBudget.reservedForResponse,
     };
-    this.agentContextManager.updateConfig(this.baseContextConfig);
-    this.agentContextManager.updateTokenizerModelId(this.options.model);
+    this.baseAgentContextManager.updateConfig(this.baseContextConfig);
+    this.baseAgentContextManager.updateTokenizerModelId(this.options.model);
   }
 
   getContextManager(): AgentContextManager {
-    return this.agentContextManager;
+    return this.baseAgentContextManager;
   }
 
   getContextInfo(): { config: AgentContextBuilderConfig } {
     return {
-      config: this.agentContextManager.getConfig(),
+      config: this.baseAgentContextManager.getConfig(),
     };
   }
 }

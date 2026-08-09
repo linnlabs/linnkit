@@ -22,10 +22,8 @@ export interface AgentContextBuilderConfigOverrides {
   SUMMARY_OLDEST_MESSAGES_PERCENTAGE?: number;
   MAX_THOUGHTS_TO_KEEP?: number;
   TOOL_PAIRING_SEARCH_RANGE?: number;
-  MAX_TOOL_PAIR_TOKENS?: number;
-  MAX_TOOL_OUTPUT_SUMMARY_TOKENS?: number;
   MIN_TOOL_INTERACTIONS_TO_KEEP?: number;
-  MAX_RECENT_TOOL_INTERACTIONS_TO_KEEP?: number;
+  MAX_RECENT_TOOL_RUNS_TO_KEEP?: number;
   MAX_TOOL_INTERACTION_GROUPS_TO_KEEP?: number;
   AVG_CHARS_PER_TOKEN?: number;
   TOOL_CALL_OVERHEAD_TOKENS?: number;
@@ -40,8 +38,6 @@ export interface AgentSpecPreprocessorOptions {
     keepLatestRuns?: number;
     maxInteractionGroups?: number;
     overflowStrategy?: 'keep-latest' | 'fail-fast';
-    maxPairTokens?: number;
-    maxOutputSummaryTokens?: number;
   };
   providerReplay?: AgentSpecProviderReplayPolicy;
 }
@@ -106,17 +102,12 @@ export function contextPolicyToContextBuilderConfig(
   if (summarization?.oldestMessagesPercentage !== undefined) {
     config.SUMMARY_OLDEST_MESSAGES_PERCENTAGE = summarization.oldestMessagesPercentage;
   }
-  if (toolHistory?.maxPairTokens !== undefined) {
-    config.MAX_TOOL_PAIR_TOKENS = toolHistory.maxPairTokens;
-  }
-  if (toolHistory?.maxOutputSummaryTokens !== undefined) {
-    config.MAX_TOOL_OUTPUT_SUMMARY_TOKENS = toolHistory.maxOutputSummaryTokens;
-  }
   if (toolHistory?.maxInteractionGroups !== undefined) {
     config.MAX_TOOL_INTERACTION_GROUPS_TO_KEEP = toolHistory.maxInteractionGroups;
   }
-  if (workingMemory?.maxRecentToolInteractions !== undefined) {
-    config.MAX_RECENT_TOOL_INTERACTIONS_TO_KEEP = workingMemory.maxRecentToolInteractions;
+  const maxRecentToolRuns = workingMemory?.maxRecentToolRuns ?? workingMemory?.maxRecentToolInteractions;
+  if (maxRecentToolRuns !== undefined) {
+    config.MAX_RECENT_TOOL_RUNS_TO_KEEP = maxRecentToolRuns;
   }
   if (workingMemory?.minToolInteractionsToKeep !== undefined) {
     config.MIN_TOOL_INTERACTIONS_TO_KEEP = workingMemory.minToolInteractionsToKeep;

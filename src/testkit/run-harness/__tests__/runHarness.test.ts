@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import type { AuditEnvelope, RuntimeEvent } from '../../../contracts';
+import { routeRuntimeEvent, RunIdSchema } from '../../../contracts';
+import type { AuditEnvelope, RoutedRuntimeEvent } from '../../../contracts';
 import type { runSupervisor, telemetry } from '../../../runtime-kernel';
 import {
   assertRunInvariants,
@@ -13,35 +14,49 @@ import {
 type TelemetryEvent = telemetry.TelemetryEvent;
 type RunOutcome = runSupervisor.RunOutcome;
 
-function thoughtEvent(id: string, runId: string): RuntimeEvent {
-  return {
-    type: 'thought',
-    id,
-    conversation_id: 'conv-test',
-    turn_id: 'turn-test',
-    timestamp: Date.now(),
-    version: 1,
-    content: id,
-    is_complete: true,
-    metadata: {
-      run_context: { runId },
+function thoughtEvent(id: string, runId: string): RoutedRuntimeEvent {
+  return routeRuntimeEvent(
+    {
+      type: 'thought',
+      id,
+      conversation_id: 'conv-test',
+      turn_id: 'turn-test',
+      timestamp: Date.now(),
+      version: 1,
+      content: id,
+      is_complete: true,
     },
-  };
+    {
+      run_id: runId,
+      lane: 'foreground',
+      visibility: 'conversation',
+    }
+  );
 }
 
-function waitUserEvent(runId: string): RuntimeEvent {
-  return {
-    type: 'requires_user_interaction',
-    id: 'wait-event',
-    conversation_id: 'conv-test',
-    turn_id: 'turn-test',
-    timestamp: Date.now(),
-    version: 1,
-    form: { prompt: '需要用户确认' },
-    metadata: {
-      run_context: { runId },
+function waitUserEvent(runId: string): RoutedRuntimeEvent {
+  return routeRuntimeEvent(
+    {
+      type: 'requires_user_interaction',
+      id: 'wait-event',
+      conversation_id: 'conv-test',
+      turn_id: 'turn-test',
+      timestamp: Date.now(),
+      version: 1,
+      form: { prompt: '需要用户确认' },
+      interaction_id: 'interaction-wait-event',
+      run_id: runId,
+      tool_call_id: 'tool-wait-event',
+      checkpoint_revision: 1,
+      resume_token: 'resume-wait-event',
+      interaction_status: 'pending',
     },
-  };
+    {
+      run_id: runId,
+      lane: 'foreground',
+      visibility: 'conversation',
+    }
+  );
 }
 
 function llmEvent(runId: string, parentRunId?: string): TelemetryEvent {
@@ -63,7 +78,7 @@ function llmEvent(runId: string, parentRunId?: string): TelemetryEvent {
 function modelSelectEnvelope(runId: string): AuditEnvelope {
   return {
     envelopeId: `env-${runId}`,
-    runId,
+    runId: RunIdSchema.parse(runId),
     ts: Date.now(),
     actor: { kind: 'system' },
     action: 'model.select',
@@ -99,7 +114,7 @@ describe('run-harness primitives', () => {
     audit.port.emit(modelSelectEnvelope('run-1'));
     audit.port.emit({
       envelopeId: 'env-cancel',
-      runId: 'run-1',
+      runId: RunIdSchema.parse('run-1'),
       ts: Date.now(),
       actor: { kind: 'host' },
       action: 'run.cancel',
@@ -122,7 +137,7 @@ describe('run-harness primitives', () => {
       tokensOutput: 5,
       llmCallCount: 1,
     });
-    expect(telemetry.costCollector.snapshot('parent-run')).toMatchObject({
+    expect(telemetry.costCollector.snapshot(RunIdSchema.parse('parent-run'))).toMatchObject({
       tokensInput: 10,
       tokensOutput: 5,
       childrenTotal: {
@@ -152,7 +167,7 @@ describe('run-harness primitives', () => {
       telemetryEvents: harness.telemetry.getEvents(),
       auditEnvelopes: harness.audit.getEnvelopes(),
       signal: handle.signal,
-      getCost: (runId) => harness.telemetry.costCollector.snapshot(runId),
+      getCost: runId => harness.telemetry.costCollector.snapshot(RunIdSchema.parse(runId)),
     });
 
     expect(report.ok).toBe(true);
@@ -168,18 +183,21 @@ describe('run-harness primitives', () => {
     });
     const event = waitUserEvent('run-wait');
     harness.publish(event);
-    await new Promise<void>((resolve) => {
+    await new Promise<void>(resolve => {
       setTimeout(resolve, 0);
     });
 
-    const report = await validateRunInvariants({
-      rootRunId: 'run-wait',
-      runRecords: await harness.getRegisteredRuns(),
-      events: [event],
-      signal: handle.signal,
-    }, {
-      enabled: ['I13_WAIT_USER_STATUS'],
-    });
+    const report = await validateRunInvariants(
+      {
+        rootRunId: 'run-wait',
+        runRecords: await harness.getRegisteredRuns(),
+        events: [event],
+        signal: handle.signal,
+      },
+      {
+        enabled: ['I13_WAIT_USER_STATUS'],
+      }
+    );
 
     expect(report.ok).toBe(true);
     harness.restore();
@@ -207,15 +225,18 @@ describe('run-harness primitives', () => {
       conversationId: 'conv-test',
     });
     const terminal = await harness.supervisor.waitForTerminal(handle.runId);
-    const report = await validateRunInvariants({
-      rootRunId: handle.runId,
-      runRecords: await harness.getRegisteredRuns(),
-      terminalOutcomes: [terminal],
-      inFlightRunIds: [],
-      signal: handle.signal,
-    }, {
-      enabled: ['I14_DETACHED_TERMINAL_OUTCOME', 'I15_DRAIN_NO_INFLIGHT'],
-    });
+    const report = await validateRunInvariants(
+      {
+        rootRunId: handle.runId,
+        runRecords: await harness.getRegisteredRuns(),
+        terminalOutcomes: [terminal],
+        inFlightRunIds: [],
+        signal: handle.signal,
+      },
+      {
+        enabled: ['I14_DETACHED_TERMINAL_OUTCOME', 'I15_DRAIN_NO_INFLIGHT'],
+      }
+    );
 
     expect(outcomes).toHaveLength(1);
     expect(report.ok).toBe(true);

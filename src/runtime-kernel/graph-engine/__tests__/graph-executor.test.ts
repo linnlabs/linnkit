@@ -7,6 +7,33 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { GraphExecutor } from '../engine';
 import type { Checkpointer } from '../checkpointer/base';
 import type { EngineState, GraphNode, NodeResult } from '../types';
+import { createThoughtEvent, routeRuntimeEvent, RunIdSchema } from '../../../contracts';
+import { EventBus, EventSequencer, RuntimeEventPublisher } from '../../execution';
+
+function createRoutedTestEvent(id: string) {
+  return routeRuntimeEvent(
+    createThoughtEvent(id, 'conv_test', 'turn_test', id, { is_complete: true }),
+    { run_id: 'run_test', lane: 'foreground', visibility: 'conversation' }
+  );
+}
+
+function createRuntimeEventSink() {
+  const sequencer = new EventSequencer('conv_test');
+  const eventBus = new EventBus(sequencer.getExecutionId());
+  const publisher = new RuntimeEventPublisher(eventBus, sequencer, {
+    run_id: RunIdSchema.parse('run_test'),
+    lane: 'foreground',
+    visibility: 'conversation',
+  });
+  return (event: Parameters<typeof routeRuntimeEvent>[0], source: string) =>
+    publisher.publish(event, source);
+}
+
+async function nextTask(): Promise<void> {
+  await new Promise<void>(resolve => {
+    setTimeout(resolve, 0);
+  });
+}
 
 describe('GraphExecutor - 核心单元测试', () => {
   let mockCheckpointer: Checkpointer;
@@ -30,7 +57,7 @@ describe('GraphExecutor - 核心单元测试', () => {
       };
 
       executor.registerNode(mockNode);
-      
+
       vi.mocked(mockCheckpointer.load).mockResolvedValue({
         nodeId: 'test',
         local: {},
@@ -49,15 +76,32 @@ describe('GraphExecutor - 核心单元测试', () => {
       expect(mockCheckpointer.save).toHaveBeenCalledWith('conv_1', {
         nodeId: 'user',
         local: { stepCount: 0, userId: '123' },
+        revision: 1,
         schemaVersion: 1,
       });
     });
 
-    it('应该在 prime 时移除 memory 字段', async () => {
-      await executor.prime('conv_1', { memory: {}, stepCount: 0 }, 'user');
+    it('应该在 prime 时移除不可 checkpoint 的运行时引用', async () => {
+      await executor.prime(
+        'conv_1',
+        {
+          memory: {},
+          stepCount: 0,
+          signal: new AbortController().signal,
+          runtimeEventSink: () => undefined,
+          summarizationCallbacks: { onSummarizationStart: () => undefined },
+          toolContext: { runId: 'run-1' },
+        },
+        'user'
+      );
 
       const saveCall = vi.mocked(mockCheckpointer.save).mock.calls[0];
       expect(saveCall[1].local).not.toHaveProperty('memory');
+      expect(saveCall[1].local).not.toHaveProperty('signal');
+      expect(saveCall[1].local).not.toHaveProperty('runtimeEventSink');
+      expect(saveCall[1].local).not.toHaveProperty('summarizationCallbacks');
+      expect(saveCall[1].local).not.toHaveProperty('toolContext');
+      expect(saveCall[1].local).toMatchObject({ stepCount: 0 });
     });
 
     it('应该正确使用 setNode 切换节点', async () => {
@@ -71,6 +115,7 @@ describe('GraphExecutor - 核心单元测试', () => {
       expect(mockCheckpointer.save).toHaveBeenCalledWith('conv_1', {
         nodeId: 'llm',
         local: { stepCount: 1 },
+        revision: 1,
         schemaVersion: 1,
       });
     });
@@ -83,14 +128,14 @@ describe('GraphExecutor - 核心单元测试', () => {
         run: vi.fn().mockResolvedValue({
           kind: 'route',
           nextNodeId: 'llm',
-          events: [{ type: 'user_input', content: 'hello' }],
+          events: [createRoutedTestEvent('user_input')],
         }),
       };
       const llmNode: GraphNode = {
         id: 'llm',
         run: vi.fn().mockResolvedValue({
           kind: 'yield',
-          events: [{ type: 'final_answer', content: 'hi' }],
+          events: [createRoutedTestEvent('final_answer')],
         }),
       };
 
@@ -114,11 +159,11 @@ describe('GraphExecutor - 核心单元测试', () => {
         run: vi.fn().mockResolvedValue({
           kind: i === 2 ? 'yield' : 'route',
           nextNodeId: `node${i + 2}`,
-          events: [{ type: `event${i + 1}` }],
+          events: [createRoutedTestEvent(`event${i + 1}`)],
         }),
       }));
 
-      nodes.forEach((n) => executor.registerNode(n));
+      nodes.forEach(n => executor.registerNode(n));
 
       vi.mocked(mockCheckpointer.load).mockResolvedValue({
         nodeId: 'node1',
@@ -136,12 +181,12 @@ describe('GraphExecutor - 核心单元测试', () => {
         id: 'wait',
         run: vi.fn().mockResolvedValue({
           kind: 'yield',
-          events: [{ type: 'waiting' }],
+          events: [createRoutedTestEvent('waiting')],
         }),
       };
 
       executor.registerNode(node);
-      
+
       vi.mocked(mockCheckpointer.load).mockResolvedValue({
         nodeId: 'wait',
         local: {},
@@ -154,17 +199,50 @@ describe('GraphExecutor - 核心单元测试', () => {
       expect(result.checkpoint.nodeId).toBe('wait');
     });
 
+    it('终端返回的 checkpoint 应与持久化快照一致并剥离运行时引用', async () => {
+      const node: GraphNode = {
+        id: 'wait',
+        run: vi.fn().mockResolvedValue({
+          kind: 'yield',
+          events: [],
+        }),
+      };
+
+      executor.registerNode(node);
+
+      vi.mocked(mockCheckpointer.load).mockResolvedValue({
+        nodeId: 'wait',
+        local: {
+          signal: new AbortController().signal,
+          toolContext: { runId: RunIdSchema.parse('run-1') },
+          retained: 'value',
+        },
+      });
+
+      const result = await executor.runUntilYield('conv_1');
+
+      expect(result.checkpoint.local).toMatchObject({ retained: 'value' });
+      expect(result.checkpoint.local).not.toHaveProperty('signal');
+      expect(result.checkpoint.local).not.toHaveProperty('toolContext');
+      const saveCalls = vi.mocked(mockCheckpointer.save).mock.calls;
+      const lastSaveCall = saveCalls[saveCalls.length - 1];
+      if (!lastSaveCall) {
+        throw new Error('expected checkpoint save');
+      }
+      expect(lastSaveCall[1]).toBe(result.checkpoint);
+    });
+
     it('应该在 pause 时正确暂停', async () => {
       const node: GraphNode = {
         id: 'wait-user',
         run: vi.fn().mockResolvedValue({
           kind: 'pause',
-          events: [{ type: 'waiting_user' }],
+          events: [createRoutedTestEvent('waiting_user')],
         }),
       };
 
       executor.registerNode(node);
-      
+
       vi.mocked(mockCheckpointer.load).mockResolvedValue({
         nodeId: 'wait-user',
         local: {},
@@ -182,20 +260,20 @@ describe('GraphExecutor - 核心单元测试', () => {
         run: vi.fn().mockResolvedValue({
           kind: 'route',
           nextNodeId: 'node2',
-          events: [{ type: 'event1' }, { type: 'event2' }],
+          events: [createRoutedTestEvent('event1'), createRoutedTestEvent('event2')],
         }),
       };
       const node2: GraphNode = {
         id: 'node2',
         run: vi.fn().mockResolvedValue({
           kind: 'yield',
-          events: [{ type: 'event3' }],
+          events: [createRoutedTestEvent('event3')],
         }),
       };
 
       executor.registerNode(node1);
       executor.registerNode(node2);
-      
+
       vi.mocked(mockCheckpointer.load).mockResolvedValue({
         nodeId: 'node1',
         local: {},
@@ -207,7 +285,7 @@ describe('GraphExecutor - 核心单元测试', () => {
     });
 
     it('应该准确记录执行的步数', async () => {
-      const nodes = [1, 2, 3, 4, 5].map((i) => ({
+      const nodes = [1, 2, 3, 4, 5].map(i => ({
         id: `node${i}`,
         run: vi.fn().mockResolvedValue({
           kind: i === 5 ? 'yield' : 'route',
@@ -216,8 +294,8 @@ describe('GraphExecutor - 核心单元测试', () => {
         }),
       }));
 
-      nodes.forEach((n) => executor.registerNode(n));
-      
+      nodes.forEach(n => executor.registerNode(n));
+
       vi.mocked(mockCheckpointer.load).mockResolvedValue({
         nodeId: 'node1',
         local: {},
@@ -234,12 +312,12 @@ describe('GraphExecutor - 核心单元测试', () => {
         run: vi.fn().mockResolvedValue({
           kind: 'route',
           nextNodeId: 'loop',
-          events: [{ type: 'loop_event' }],
+          events: [createRoutedTestEvent('loop_event')],
         }),
       };
 
       executor.registerNode(loopNode);
-      
+
       vi.mocked(mockCheckpointer.load).mockResolvedValue({
         nodeId: 'loop',
         local: {},
@@ -261,7 +339,7 @@ describe('GraphExecutor - 核心单元测试', () => {
 
     it('应该支持自定义 maxSteps', async () => {
       const customExecutor = new GraphExecutor(mockCheckpointer, { maxSteps: 3 });
-      
+
       const loopNode: GraphNode = {
         id: 'loop',
         run: vi.fn().mockResolvedValue({
@@ -272,7 +350,7 @@ describe('GraphExecutor - 核心单元测试', () => {
       };
 
       customExecutor.registerNode(loopNode);
-      
+
       vi.mocked(mockCheckpointer.load).mockResolvedValue({
         nodeId: 'loop',
         local: {},
@@ -281,6 +359,53 @@ describe('GraphExecutor - 核心单元测试', () => {
       const result = await customExecutor.runUntilYield('conv_1');
 
       expect(result.stepCount).toBe(3);
+    });
+
+    it('maxSteps 预算真正耗尽时应发出 ENGINE_BUDGET_EXHAUSTED error event', async () => {
+      const budgetExecutor = new GraphExecutor(mockCheckpointer, { maxSteps: 2 });
+      const loopNode: GraphNode = {
+        id: 'loop',
+        run: vi.fn().mockResolvedValue({
+          kind: 'route',
+          nextNodeId: 'loop',
+          events: [],
+        }),
+      };
+      const llmNode: GraphNode = {
+        id: 'llm',
+        run: vi.fn().mockResolvedValue({
+          kind: 'route',
+          nextNodeId: 'llm',
+          events: [],
+        }),
+      };
+
+      budgetExecutor.registerNode(loopNode);
+      budgetExecutor.registerNode(llmNode);
+
+      vi.mocked(mockCheckpointer.load).mockResolvedValue({
+        nodeId: 'loop',
+        local: {
+          conversationId: 'conv_budget',
+          turnId: 'turn_budget',
+          runtimeEventSink: createRuntimeEventSink(),
+        },
+      });
+
+      const result = await budgetExecutor.runUntilYield('conv_1');
+      const errorEvents = result.events.filter(event => event.type === 'error');
+
+      expect(errorEvents).toHaveLength(1);
+      expect(errorEvents[0]).toMatchObject({
+        conversation_id: 'conv_budget',
+        turn_id: 'turn_budget',
+        error_code: 'engine.budget_exhausted',
+        retryable: false,
+        details: {
+          maxSteps: 2,
+          stepCount: 2,
+        },
+      });
     });
   });
 
@@ -293,7 +418,7 @@ describe('GraphExecutor - 核心单元测试', () => {
 
       const node: GraphNode = {
         id: 'saved',
-        run: vi.fn((state) => {
+        run: vi.fn(state => {
           expect(state.local?.count).toBe(5);
           return Promise.resolve({ kind: 'yield', events: [] } satisfies NodeResult);
         }),
@@ -315,7 +440,7 @@ describe('GraphExecutor - 核心单元测试', () => {
 
       const node: GraphNode = {
         id: 'test',
-        run: vi.fn((state) => {
+        run: vi.fn(state => {
           expect(state.local?.count).toBe(2); // ephemeral 覆盖
           expect(state.local?.persistent).toBe('data'); // persistent 保留
           expect(state.local?.memory).toBeDefined(); // memory 存在
@@ -328,9 +453,284 @@ describe('GraphExecutor - 核心单元测试', () => {
 
       expect(node.run).toHaveBeenCalled();
     });
+
+    it('同 checkpointKey 的并发 runUntilYield 应串行执行，避免 ephemeral/checkpoint 交错', async () => {
+      const serialExecutor = new GraphExecutor(mockCheckpointer, { maxSteps: 10 });
+      vi.mocked(mockCheckpointer.load).mockResolvedValue({
+        nodeId: 'test',
+        local: {},
+      });
+
+      let activeRuns = 0;
+      let maxActiveRuns = 0;
+      let releaseFirstRun!: () => void;
+      const firstRunCanFinish = new Promise<void>(resolve => {
+        releaseFirstRun = resolve;
+      });
+      const node: GraphNode = {
+        id: 'test',
+        run: vi.fn(async () => {
+          activeRuns++;
+          maxActiveRuns = Math.max(maxActiveRuns, activeRuns);
+          if (activeRuns === 1) {
+            await firstRunCanFinish;
+          }
+          activeRuns--;
+          return { kind: 'yield', events: [] } satisfies NodeResult;
+        }),
+      };
+      serialExecutor.registerNode(node);
+
+      const firstRun = serialExecutor.runUntilYield('shared-checkpoint');
+      await nextTask();
+      const secondRun = serialExecutor.runUntilYield('shared-checkpoint');
+      await nextTask();
+
+      expect(node.run).toHaveBeenCalledTimes(1);
+      releaseFirstRun();
+
+      await Promise.all([firstRun, secondRun]);
+
+      expect(node.run).toHaveBeenCalledTimes(2);
+      expect(maxActiveRuns).toBe(1);
+    });
+
+    it('不同 checkpointKey 的 runUntilYield 不应被同一把锁阻塞', async () => {
+      const parallelExecutor = new GraphExecutor(mockCheckpointer, { maxSteps: 10 });
+      vi.mocked(mockCheckpointer.load).mockResolvedValue({
+        nodeId: 'test',
+        local: {},
+      });
+
+      let activeRuns = 0;
+      let maxActiveRuns = 0;
+      let releaseRuns!: () => void;
+      const runsCanFinish = new Promise<void>(resolve => {
+        releaseRuns = resolve;
+      });
+      const node: GraphNode = {
+        id: 'test',
+        run: vi.fn(async () => {
+          activeRuns++;
+          maxActiveRuns = Math.max(maxActiveRuns, activeRuns);
+          await runsCanFinish;
+          activeRuns--;
+          return { kind: 'yield', events: [] } satisfies NodeResult;
+        }),
+      };
+      parallelExecutor.registerNode(node);
+
+      const firstRun = parallelExecutor.runUntilYield('checkpoint-a');
+      await nextTask();
+      const secondRun = parallelExecutor.runUntilYield('checkpoint-b');
+      await nextTask();
+
+      expect(node.run).toHaveBeenCalledTimes(2);
+      releaseRuns();
+      await Promise.all([firstRun, secondRun]);
+
+      expect(maxActiveRuns).toBe(2);
+    });
+
+    it('startSession 应原子保护初始化与执行，拒绝第二个 run 覆盖同一 checkpoint', async () => {
+      const stored = new Map<string, EngineState>();
+      const checkpointer: Checkpointer = {
+        load: vi.fn(async key => stored.get(key) ?? null),
+        save: vi.fn(async (key, state) => {
+          stored.set(key, structuredClone(state));
+        }),
+        clear: vi.fn(async key => {
+          stored.delete(key);
+        }),
+      };
+      const sessionExecutor = new GraphExecutor(checkpointer, { maxSteps: 10 });
+      let releaseFirst!: () => void;
+      const firstCanFinish = new Promise<void>(resolve => {
+        releaseFirst = resolve;
+      });
+      const observedOwners: string[] = [];
+      sessionExecutor.registerNode({
+        id: 'test',
+        run: vi.fn(async (state: EngineState) => {
+          observedOwners.push(String(state.local?.owner));
+          await firstCanFinish;
+          return { kind: 'yield', events: [] } satisfies NodeResult;
+        }),
+      });
+
+      const first = sessionExecutor.startSession('shared-run', { owner: 'foreground' }, 'test');
+      await nextTask();
+      const second = sessionExecutor.startSession('shared-run', { owner: 'title' }, 'test');
+      await nextTask();
+
+      expect(observedOwners).toEqual(['foreground']);
+      releaseFirst();
+      await expect(first).resolves.toMatchObject({
+        checkpoint: { local: { owner: 'foreground' } },
+      });
+      await expect(second).rejects.toThrow('Graph checkpoint already exists');
+      expect(observedOwners).toEqual(['foreground']);
+    });
+
+    it('resumeSession 应只接受 wait_user 的当前 revision，并保留原 run 状态', async () => {
+      const stored = new Map<string, EngineState>();
+      const checkpointer: Checkpointer = {
+        load: vi.fn(async key => stored.get(key) ?? null),
+        save: vi.fn(async (key, state) => {
+          stored.set(key, structuredClone(state));
+        }),
+        clear: vi.fn(async key => {
+          stored.delete(key);
+        }),
+      };
+      stored.set('run-hitl', {
+        nodeId: 'wait_user',
+        revision: 4,
+        local: { conversationId: 'conversation-1', history: [] },
+      });
+      const sessionExecutor = new GraphExecutor(checkpointer, { maxSteps: 10 });
+      sessionExecutor.registerNode({
+        id: 'llm',
+        run: vi.fn(async (state: EngineState) => {
+          expect(state.local?.conversationId).toBe('conversation-1');
+          expect(state.local?.newEvents).toEqual([{ type: 'tool_output' }]);
+          return { kind: 'yield', events: [] } satisfies NodeResult;
+        }),
+      });
+
+      await expect(
+        sessionExecutor.resumeSession('run-hitl', {
+          expectedRevision: 4,
+          localPatch: { newEvents: [{ type: 'tool_output' }] },
+        })
+      ).resolves.toMatchObject({ checkpoint: { nodeId: 'llm' } });
+
+      await expect(
+        sessionExecutor.resumeSession('run-hitl', {
+          expectedRevision: 4,
+          localPatch: { newEvents: [{ type: 'tool_output' }] },
+        })
+      ).rejects.toThrow('revision conflict');
+    });
+
+    it('进入 llm 节点时应显式标记首次调用与续跑调用', async () => {
+      const llmInvocationStates: Array<Record<string, unknown>> = [];
+      const userNode: GraphNode = {
+        id: 'user',
+        run: vi.fn().mockResolvedValue({
+          kind: 'route',
+          nextNodeId: 'llm',
+          events: [],
+        }),
+      };
+      const llmNode: GraphNode = {
+        id: 'llm',
+        run: vi.fn((state: EngineState) => {
+          const executorLocal = state.local?.executorLocal;
+          llmInvocationStates.push({
+            stepCount: executorLocal?.stepCount,
+            llmInvocationKind: executorLocal?.llmInvocationKind,
+            llmInvocationCount: executorLocal?.llmInvocationCount,
+          });
+          return Promise.resolve({
+            kind: llmInvocationStates.length === 1 ? 'route' : 'yield',
+            nextNodeId: llmInvocationStates.length === 1 ? 'tool' : undefined,
+            events: [],
+          } satisfies NodeResult);
+        }),
+      };
+      const toolNode: GraphNode = {
+        id: 'tool',
+        run: vi.fn().mockResolvedValue({
+          kind: 'route',
+          nextNodeId: 'llm',
+          events: [],
+        }),
+      };
+
+      executor.registerNode(userNode);
+      executor.registerNode(llmNode);
+      executor.registerNode(toolNode);
+
+      vi.mocked(mockCheckpointer.load).mockResolvedValue({
+        nodeId: 'user',
+        local: {},
+      });
+
+      await executor.runUntilYield('conv_1');
+
+      expect(llmInvocationStates).toEqual([
+        {
+          stepCount: 2,
+          llmInvocationKind: 'user_initiated',
+          llmInvocationCount: 1,
+        },
+        {
+          stepCount: 4,
+          llmInvocationKind: 'continuation',
+          llmInvocationCount: 2,
+        },
+      ]);
+    });
+
+    it('直接从 llm 节点启动时，第一次 LLM 调用仍应是 user_initiated', async () => {
+      const llmInvocationStates: Array<Record<string, unknown>> = [];
+      const llmNode: GraphNode = {
+        id: 'llm',
+        run: vi.fn((state: EngineState) => {
+          const executorLocal = state.local?.executorLocal;
+          llmInvocationStates.push({
+            stepCount: executorLocal?.stepCount,
+            llmInvocationKind: executorLocal?.llmInvocationKind,
+            llmInvocationCount: executorLocal?.llmInvocationCount,
+          });
+          return Promise.resolve({ kind: 'yield', events: [] } satisfies NodeResult);
+        }),
+      };
+
+      executor.registerNode(llmNode);
+
+      vi.mocked(mockCheckpointer.load).mockResolvedValue({
+        nodeId: 'llm',
+        local: {},
+      });
+
+      await executor.runUntilYield('child_run_checkpoint');
+
+      expect(llmInvocationStates).toEqual([
+        {
+          stepCount: 1,
+          llmInvocationKind: 'user_initiated',
+          llmInvocationCount: 1,
+        },
+      ]);
+    });
   });
 
   describe('4. 错误处理', () => {
+    it('节点绕过 admission 返回草稿事实时立即拒绝写入 journal', async () => {
+      const node: GraphNode = {
+        id: 'draft-producer',
+        run: vi.fn().mockResolvedValue({
+          kind: 'yield',
+          events: [
+            createThoughtEvent('draft-event', 'conv_test', 'turn_test', 'unpublished', {
+              is_complete: true,
+            }),
+          ],
+        }),
+      };
+      executor.registerNode(node);
+      vi.mocked(mockCheckpointer.load).mockResolvedValue({
+        nodeId: 'draft-producer',
+        local: {},
+      });
+
+      await expect(executor.runUntilYield('run_test')).rejects.toThrow(
+        'Graph node returned an event before run admission: draft-event'
+      );
+    });
+
     it('应该在没有可执行节点时正确返回', async () => {
       vi.mocked(mockCheckpointer.load).mockResolvedValue({
         nodeId: 'nonexistent',
@@ -349,12 +749,12 @@ describe('GraphExecutor - 核心单元测试', () => {
         run: vi.fn().mockResolvedValue({
           kind: 'route',
           nextNodeId: 'nonexistent',
-          events: [{ type: 'routed' }],
+          events: [createRoutedTestEvent('routed')],
         }),
       };
 
       executor.registerNode(node);
-      
+
       vi.mocked(mockCheckpointer.load).mockResolvedValue({
         nodeId: 'start',
         local: {},
@@ -374,15 +774,13 @@ describe('GraphExecutor - 核心单元测试', () => {
       };
 
       executor.registerNode(node);
-      
+
       vi.mocked(mockCheckpointer.load).mockResolvedValue({
         nodeId: 'failing',
         local: {},
       });
 
-      await expect(executor.runUntilYield('conv_1')).rejects.toThrow(
-        'Node execution failed'
-      );
+      await expect(executor.runUntilYield('conv_1')).rejects.toThrow('Node execution failed');
     });
 
     it('应该传播 checkpointer.save 错误', async () => {
@@ -415,7 +813,7 @@ describe('GraphExecutor - 核心单元测试', () => {
 
       executor.registerNode(testNode);
       executor.registerNode(userNode);
-      
+
       vi.mocked(mockCheckpointer.load).mockResolvedValue({
         nodeId: 'test',
         local: {},
@@ -438,7 +836,7 @@ describe('GraphExecutor - 核心单元测试', () => {
       const node: GraphNode = {
         id: 'test',
         run: vi.fn().mockImplementation(async () => {
-          await new Promise((r) => setTimeout(r, 5));
+          await new Promise(r => setTimeout(r, 5));
           return { kind: 'yield', events: [] } as NodeResult;
         }),
       };
@@ -446,14 +844,17 @@ describe('GraphExecutor - 核心单元测试', () => {
 
       vi.mocked(mockCheckpointer.load).mockResolvedValue({
         nodeId: 'test',
-        local: { conversationId: 'runtime_conversation', turnId: 'turn_x' },
+        local: {
+          conversationId: 'runtime_conversation',
+          runId: 'run_real_1',
+          parentRunId: 'run_parent_1',
+          turnId: 'turn_x',
+        },
       } as EngineState);
 
       await telemetryExecutor.runUntilYield('checkpoint_telemetry');
 
-      const graphNodeEvents = emit.mock.calls
-        .map((c) => c[0])
-        .filter((e) => e.kind === 'graph_node');
+      const graphNodeEvents = emit.mock.calls.map(c => c[0]).filter(e => e.kind === 'graph_node');
       expect(graphNodeEvents).toHaveLength(1);
       const event = graphNodeEvents[0];
       expect(event.nodeId).toBe('test');
@@ -461,6 +862,8 @@ describe('GraphExecutor - 核心单元测试', () => {
       expect(event.durationMs).toBeGreaterThanOrEqual(0);
       expect(event.scope).toEqual({
         conversationId: 'runtime_conversation',
+        runId: 'run_real_1',
+        parentRunId: 'run_parent_1',
         turnId: 'turn_x',
       });
     });
@@ -483,13 +886,14 @@ describe('GraphExecutor - 核心单元测试', () => {
       telemetryExecutor.registerNode(start);
       telemetryExecutor.registerNode(end);
 
-      vi.mocked(mockCheckpointer.load).mockResolvedValue({ nodeId: 'start', local: {} } as EngineState);
+      vi.mocked(mockCheckpointer.load).mockResolvedValue({
+        nodeId: 'start',
+        local: {},
+      } as EngineState);
 
       await telemetryExecutor.runUntilYield('conv_multi');
 
-      const graphNodeEvents = emit.mock.calls
-        .map((c) => c[0])
-        .filter((e) => e.kind === 'graph_node');
+      const graphNodeEvents = emit.mock.calls.map(c => c[0]).filter(e => e.kind === 'graph_node');
       expect(graphNodeEvents).toHaveLength(2);
       expect(graphNodeEvents[0].nodeId).toBe('start');
       expect(graphNodeEvents[1].nodeId).toBe('end');
@@ -507,12 +911,13 @@ describe('GraphExecutor - 核心单元测试', () => {
         run: vi.fn().mockRejectedValue(new Error('boom')),
       };
       telemetryExecutor.registerNode(exploding);
-      vi.mocked(mockCheckpointer.load).mockResolvedValue({ nodeId: 'boom', local: {} } as EngineState);
+      vi.mocked(mockCheckpointer.load).mockResolvedValue({
+        nodeId: 'boom',
+        local: {},
+      } as EngineState);
 
       await expect(telemetryExecutor.runUntilYield('conv_boom')).rejects.toThrow('boom');
-      const graphNodeEvents = emit.mock.calls
-        .map((c) => c[0])
-        .filter((e) => e.kind === 'graph_node');
+      const graphNodeEvents = emit.mock.calls.map(c => c[0]).filter(e => e.kind === 'graph_node');
       expect(graphNodeEvents).toHaveLength(1);
       expect(graphNodeEvents[0]).toMatchObject({ kind: 'graph_node', nodeId: 'boom' });
     });
@@ -524,7 +929,10 @@ describe('GraphExecutor - 核心单元测试', () => {
         run: vi.fn().mockResolvedValue({ kind: 'yield', events: [] }),
       };
       executor.registerNode(node);
-      vi.mocked(mockCheckpointer.load).mockResolvedValue({ nodeId: 'test', local: {} } as EngineState);
+      vi.mocked(mockCheckpointer.load).mockResolvedValue({
+        nodeId: 'test',
+        local: {},
+      } as EngineState);
 
       await expect(executor.runUntilYield('conv_default')).resolves.toBeDefined();
     });
@@ -553,22 +961,54 @@ describe('GraphExecutor - 核心单元测试', () => {
 
       await exec.runUntilYield('checkpoint_lifecycle');
 
-      const lifecycle = emit.mock.calls
-        .map((c) => c[0])
-        .filter((e) => e.kind === 'run_lifecycle');
+      const lifecycle = emit.mock.calls.map(c => c[0]).filter(e => e.kind === 'run_lifecycle');
       expect(lifecycle).toHaveLength(2);
       expect(lifecycle[0].phase).toBe('spawned');
       expect(lifecycle[1].phase).toBe('completed');
       expect(lifecycle[0].runId).toBe(lifecycle[1].runId);
-      expect(lifecycle[0].runId).toMatch(/^run_/);
+      expect(lifecycle[0].runId).toBe('checkpoint_lifecycle');
       expect(lifecycle[0].scope).toEqual({
         conversationId: 'runtime_lifecycle',
+        runId: 'checkpoint_lifecycle',
         turnId: 'turn_lifecycle',
       });
       expect(lifecycle[1].scope).toEqual({
         conversationId: 'runtime_lifecycle',
+        runId: 'checkpoint_lifecycle',
         turnId: 'turn_lifecycle',
       });
+    });
+
+    it('run_lifecycle 使用运行时真实 runId，而不是生成临时 runId', async () => {
+      const emit = vi.fn();
+      const exec = createEmittingExecutor(emit);
+      const node: GraphNode = {
+        id: 'test',
+        run: vi.fn().mockResolvedValue({ kind: 'yield', events: [] }),
+      };
+      exec.registerNode(node);
+      vi.mocked(mockCheckpointer.load).mockResolvedValue({
+        nodeId: 'test',
+        local: {
+          conversationId: 'runtime_lifecycle',
+          runId: 'run_real_lifecycle',
+          parentRunId: 'run_parent_lifecycle',
+          turnId: 'turn_lifecycle',
+        },
+      } as EngineState);
+
+      await exec.runUntilYield('checkpoint_lifecycle');
+
+      const lifecycle = emit.mock.calls.map(c => c[0]).filter(e => e.kind === 'run_lifecycle');
+      expect(lifecycle).toHaveLength(2);
+      expect(lifecycle.map(event => event.runId)).toEqual([
+        'run_real_lifecycle',
+        'run_real_lifecycle',
+      ]);
+      expect(lifecycle.every(event => event.scope.runId === 'run_real_lifecycle')).toBe(true);
+      expect(lifecycle.every(event => event.scope.parentRunId === 'run_parent_lifecycle')).toBe(
+        true
+      );
     });
 
     it('node 抛非 AbortError：phase=failed', async () => {
@@ -579,14 +1019,15 @@ describe('GraphExecutor - 核心单元测试', () => {
         run: vi.fn().mockRejectedValue(new Error('boom')),
       };
       exec.registerNode(node);
-      vi.mocked(mockCheckpointer.load).mockResolvedValue({ nodeId: 'boom', local: {} } as EngineState);
+      vi.mocked(mockCheckpointer.load).mockResolvedValue({
+        nodeId: 'boom',
+        local: {},
+      } as EngineState);
 
       await expect(exec.runUntilYield('conv_fail')).rejects.toThrow('boom');
 
-      const lifecycle = emit.mock.calls
-        .map((c) => c[0])
-        .filter((e) => e.kind === 'run_lifecycle');
-      expect(lifecycle.map((e) => e.phase)).toEqual(['spawned', 'failed']);
+      const lifecycle = emit.mock.calls.map(c => c[0]).filter(e => e.kind === 'run_lifecycle');
+      expect(lifecycle.map(e => e.phase)).toEqual(['spawned', 'failed']);
     });
 
     it('AbortSignal 命中：phase=cancelled', async () => {
@@ -605,10 +1046,8 @@ describe('GraphExecutor - 核心单元测试', () => {
 
       await expect(exec.runUntilYield('conv_abort')).rejects.toMatchObject({ name: 'AbortError' });
 
-      const lifecycle = emit.mock.calls
-        .map((c) => c[0])
-        .filter((e) => e.kind === 'run_lifecycle');
-      expect(lifecycle.map((e) => e.phase)).toEqual(['spawned', 'cancelled']);
+      const lifecycle = emit.mock.calls.map(c => c[0]).filter(e => e.kind === 'run_lifecycle');
+      expect(lifecycle.map(e => e.phase)).toEqual(['spawned', 'cancelled']);
     });
 
     it('checkpointer.load 抛错：仍 emit spawned + failed（finally 兜底）', async () => {
@@ -618,10 +1057,8 @@ describe('GraphExecutor - 核心单元测试', () => {
 
       await expect(exec.runUntilYield('conv_load_fail')).rejects.toThrow('load fail');
 
-      const lifecycle = emit.mock.calls
-        .map((c) => c[0])
-        .filter((e) => e.kind === 'run_lifecycle');
-      expect(lifecycle.map((e) => e.phase)).toEqual(['spawned', 'failed']);
+      const lifecycle = emit.mock.calls.map(c => c[0]).filter(e => e.kind === 'run_lifecycle');
+      expect(lifecycle.map(e => e.phase)).toEqual(['spawned', 'failed']);
     });
   });
 });

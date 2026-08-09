@@ -1,4 +1,23 @@
-import type { RuntimeEvent } from '../../contracts';
+import { createUserInputEvent, type RuntimeEvent } from '../../contracts';
+import {
+  findLatestProgressAnswer,
+  findTerminalFinalAnswer,
+} from '../events/finalAnswerCompletion';
+
+export function createChildRunUserInput(params: {
+  id: string;
+  conversationId: string;
+  turnId: string;
+  content: string;
+}): Extract<RuntimeEvent, { type: 'user_input' }> {
+  return createUserInputEvent(
+    params.id,
+    params.conversationId,
+    params.turnId,
+    params.content,
+    { source: 'system' },
+  );
+}
 
 export function appendUniqueEvents(target: RuntimeEvent[], events: ReadonlyArray<RuntimeEvent>): void {
   if (events.length === 0) return;
@@ -23,36 +42,19 @@ export function extractJudgeToolOutput(
     if (evt.type !== 'tool_output') continue;
     if (evt.tool_name !== judgeToolName) continue;
     if (evt.status !== 'success') continue;
-    if (typeof evt.output === 'string' && evt.output.length > 0) {
-      return evt.output;
-    }
+    return JSON.stringify({ data: evt.data, observation: evt.observation });
   }
   return undefined;
 }
 
 export function extractFinalAnswer(events: ReadonlyArray<RuntimeEvent>): string | undefined {
-  for (let i = events.length - 1; i >= 0; i -= 1) {
-    const event = events[i];
-    if (event.type !== 'final_answer') continue;
-    const content = typeof event.content === 'string' ? event.content : '';
-    if (content.trim().length > 0) {
-      return content;
-    }
-  }
+  const content = findTerminalFinalAnswer(events)?.content;
+  return content && content.trim().length > 0 ? content : undefined;
+}
 
-  const chunks: Array<{ seq: number; content: string }> = [];
-  for (const event of events) {
-    if (event.type === 'final_answer_chunk') {
-      chunks.push({ seq: event.seq, content: event.content });
-    }
-  }
-  if (chunks.length === 0) {
-    return undefined;
-  }
-
-  chunks.sort((a, b) => a.seq - b.seq);
-  const stitched = chunks.map((chunk) => chunk.content).join('').trim();
-  return stitched.length > 0 ? stitched : undefined;
+export function extractLastProgress(events: ReadonlyArray<RuntimeEvent>): string | undefined {
+  const content = findLatestProgressAnswer(events)?.content;
+  return content && content.trim().length > 0 ? content : undefined;
 }
 
 function dedupeDecisionsForTranscript(events: RuntimeEvent[]): RuntimeEvent[] {

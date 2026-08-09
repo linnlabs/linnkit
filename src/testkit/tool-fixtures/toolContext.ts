@@ -1,12 +1,10 @@
 import { runtimeKernel } from '../..';
 import type { RuntimeEvent } from '../../contracts';
 
-type ToolContextCompatibilityFields = runtimeKernel.tools.ToolContextCompatibilityFields;
 type ToolExecutionContext = runtimeKernel.tools.ToolExecutionContext;
 type ToolContextPatch = runtimeKernel.tools.ToolContextPatch;
 
 export type ToolContextFixture = ToolExecutionContext &
-  ToolContextCompatibilityFields &
   Record<string, unknown>;
 
 export interface ToolContextFixtureOptions {

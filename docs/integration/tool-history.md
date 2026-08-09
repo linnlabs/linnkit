@@ -30,8 +30,6 @@ linnkit 的 agent preprocessor 支持三种工具历史保留窗口，host 可�
 | `toolHistory.keepLatestToolPairs` | `2`（仅 `strategy='per-pair'` 时生效）|
 | `toolHistory.maxInteractionGroups` | `12` |
 | `toolHistory.overflowStrategy` | `'keep-latest'` |
-| `toolHistory.maxPairTokens` | `6000` |
-| `toolHistory.maxOutputSummaryTokens` | `1000` |
 
 ## 3. 压缩与不压缩的行为边界
 
@@ -55,6 +53,10 @@ linnkit 的 agent preprocessor 支持三种工具历史保留窗口，host 可�
 
 Working memory 阶段还会再用同一个 `maxInteractionGroups` 控制最终 prompt 中的历史工具交互数量。此处的历史工具交互同时包括 raw 工具组和 `retentionMode: 'compress'` 生成的压缩摘要。
 
+构建期不再提供 `maxPairTokens` / `maxOutputSummaryTokens`。最近 2 个 turn 内的 tool input 原样保留；tool output 的尺寸治理只由执行期 `toolOutput.observationGovernance` 负责；超出 turn 窗口的旧 raw 工具组整组删除。
+
+注意：“原样保留工具组”不是说超长 output 可以无限进入上下文。工具执行完成时会先经过 observation governance，默认超过 `20_000` 字符或 `1_200` 行就落盘并替换为 preview；working memory 只是不再把这个 preview 再摘要成另一段文本。
+
 ## 5. `AgentSpecContextPolicy.toolHistory` 字段
 
 ```ts
@@ -72,7 +74,7 @@ interface AgentSpecContextPolicy {
      * 保留窗口策略类型（默认 'per-run'）
      * - 'per-pair'：按工具对个数裁（旧默认；适合 4K/8K 等超紧上下文模型）
      * - 'per-run'：按 user_input 划 run 边界，保留最近 K 个 run 完整工具序列（prompt cache 友好；通用默认）
-     * - 'none'：不压缩（适合 200K+ 长 context 模型；仅靠单 tool_output token cap 兜底）
+     * - 'none'：不压缩（适合 200K+ 长 context 模型；仅靠执行期 observationGovernance 兜底）
      *
      * 注：当前 run（最后一条 user_input 之后）所有工具对永不压缩，不受 strategy 影响。
      */
@@ -101,11 +103,6 @@ interface AgentSpecContextPolicy {
      */
     overflowStrategy?: 'keep-latest' | 'fail-fast';
 
-    /** 单组 tool pair token 上限（所有 strategy 共用，超过触发截断，默认 6000）*/
-    maxPairTokens?: number;
-
-    /** tool_output 摘要后的 token 上限（所有 strategy 共用，默认 1000）*/
-    maxOutputSummaryTokens?: number;
   };
 
   summarization?: {

@@ -2,7 +2,9 @@ import type { AgentAiEngine } from '../ports';
 import type {
   AgentSpec,
   AgentSpecContextPolicyInput,
+  RoutedRuntimeEvent,
   RuntimeEvent,
+  SerializableJsonRecord,
 } from '../contracts';
 import type {
   BaseTool,
@@ -44,6 +46,12 @@ export interface RunAgentOptions {
   input: string;
   llm: AgentAiEngine;
   modelId?: string;
+  /**
+   * Quickstart graph loop 最大节点步数。默认 8。
+   *
+   * 中文备注：这里只控制 demo runtime 的 graph loop；生产 host 应按自身 run 装配决定。
+   */
+  maxSteps?: number;
   conversationId?: string;
   runId?: string;
   signal?: AbortSignal;
@@ -52,15 +60,15 @@ export interface RunAgentOptions {
    *
    * 中文备注：CLI 用它打印实时输出；生产 host 应直接接入 EventBus / EventStore。
    */
-  onEvent?: (event: RuntimeEvent) => void | Promise<void>;
+  onEvent?: (event: RoutedRuntimeEvent) => void | Promise<void>;
 }
 
 export interface RunAgentResult {
   runId: string;
   finalAnswer: string;
-  events: RuntimeEvent[];
+  events: RoutedRuntimeEvent[];
   cost: RunCost;
-  contextTrace?: unknown;
+  contextTrace?: SerializableJsonRecord;
 }
 
 type RunCost = runSupervisor.RunCost;
@@ -68,7 +76,6 @@ type RunCost = runSupervisor.RunCost;
 export interface QuickstartToolRuntime {
   getToolSchemas(toolNames?: string[]): OpenAIToolSchema[];
   getToolDefinition(toolName: string): ToolRuntimeDefinition | undefined;
-  getDisplayOptions(toolName: string): BaseTool<ToolArgs, string>['displayOptions'] | undefined;
   executeTool(
     toolName: string,
     args: ToolArgs,

@@ -1,6 +1,6 @@
-# Tool Development Guide · 工具开发推荐规范
+# Tool Development Guide · 工具开发规范
 
-> **What** · 写自定义工具的设计推荐规范 —— `data` / `observation` 分层、错误处理、`getExecutionSummary`、长 observation 治理、7 条协议约束。
+> **What** · 写自定义工具的强制协议与设计规范 —— `data` / `observation` 分层、错误处理、幂等执行、`getExecutionSummary` 与长 observation 治理。
 > **When to read** · 第一次写自定义工具；现有工具 token 偏多想优化；review 工具实现是否符合规范。
 > **Prerequisites** · [`tools.md`](./tools.md)（工具接入面基础）；[`02-quickstart.md`](./02-quickstart.md)。
 > **Key exports** · `BaseTool` / `ToolExecutionContext` from `@linnlabs/linnkit/runtime-kernel`。
@@ -38,25 +38,27 @@ linnkit 在协议层提供细粒度上下文工程能力（12 大分组 `context
 | `run(args, context): Promise<string>` 签名 | `BaseTool` 抽象类 | TS 编译失败 |
 | `parameters.required[]` 声明的字段缺失 | `BaseTool.validateArguments()` 自动校验 | `ToolExecutionResult.errorKind = 'protocol'`，不进入 `run` |
 | `run` 必须返回字符串（不是对象）| `BaseTool` 签名 | 下游解析失败 / 投影层崩溃 |
+| 成功结果必须是 `{ data, observation }`，且 observation 为非空字符串 | `StructuredToolResult` 类型 + `ToolNode` 运行时校验 | `TOOL_RESULT_CONTRACT_VIOLATION`，结果按工具执行错误返回 |
 | 工具配对：`tool_call` ↔ `tool_output` 严格 1:1 | tool 配对不变量 C10 + testkit invariant | 26 条 strict invariants 报错 |
 | 失败必须 `throw`，不能返回伪装成功的 JSON | runtime 接住 throw → `tool_output.status = 'error'` | UI 状态与实际不一致（最难排查的 bug 类） |
 | `tool_calls` / `tool_outputs` 不可单独删（只能成对压缩）| `toolHistoryCompressor` + `ToolReplayProtocolGuard` | provider replay 协议违反 → LLM 调用失败 |
 
 ---
 
-## 2. `run` 的返回值结构（强烈推荐 `JSON.stringify({ data, observation })`）
+## 2. `run` 的必填返回结构：`JSON.stringify({ data, observation })`
 
-linnkit 不强制 `data` / `observation` 这套分层（host 可以自己决定），但**强烈推荐**——这是已有项目实战验证的最佳实践，能让一个工具同时满足两类消费者：
+所有进入 Agent 工具循环的成功结果都必须使用 `data` / `observation` 分层。TypeScript 通过 `StructuredToolResult` 检查，ToolNode 在运行时再次校验，覆盖 JavaScript 工具、插件和缓存回放结果：
 
 | 字段 | 服务对象 | 设计原则 |
 |------|---------|---------|
 | `data` | **UI 渲染** | 结构化、字段名稳定、避免重复正文；UI 不应做"二次加工"，前端只忠实渲染 |
-| `observation` | **AI 上下文** | 纯文本、可读、信息密度高；**禁止**重复 `data` 中的字段、**禁止**拼大段 JSON、**禁止**加 emoji 等噪音 |
+| `observation` | **AI 上下文** | 必须包含非空白字符的纯文本，是模型唯一可见的业务结果；允许正文自然产生的首尾换行，**禁止**拼大段 JSON、**禁止**加 emoji 等噪音 |
 
 **为什么这套分层重要**：
 
 - 没有分层时，工具作者要么"AI 友好 UI 不友好"（observation 给前端解析 → 解析失败），要么"UI 友好 AI 不友好"（结构化 JSON 进 LLM 上下文 → token 爆炸 + 模型不擅长读嵌套 JSON）。
 - 有了分层后，`linnkit` 的 `enterAgentContext` 治理（`eventGovernance`）+ `observationGovernance`（治理超长 observation 落盘）能精准地只让 `observation` 进入 AI 上下文，`data` 留给前端。
+- 没有 UI 数据时，`data` 仍需返回空对象 `{}`；不得省略。工具真实执行失败应 `throw`，不要返回 `{ data: { error } }` 伪装成功。
 
 ### 2.1 最小返回值示例
 
@@ -93,10 +95,26 @@ interface DocHit {
   score: number;
 }
 
+interface DocumentSearchPort {
+  search(query: string, topK: number): Promise<DocHit[]>;
+}
+
+interface SearchDocsToolContext extends ToolExecutionContext {
+  documentSearch?: DocumentSearchPort;
+}
+
+function assertSearchDocsToolContext(
+  context: ToolExecutionContext,
+): asserts context is SearchDocsToolContext {
+  if (!context || typeof context !== 'object' || !('documentSearch' in context)) {
+    throw new Error('SearchDocsTool requires documentSearch in host ToolContext');
+  }
+}
+
 export class SearchDocsTool extends BaseTool<SearchDocsArgs> {
   readonly name = 'search_docs';
 
-  readonly description = `Search documents in the user's knowledge base.
+  readonly description = `Search documents through the host catalog.
 
 # When to Use
 
@@ -117,12 +135,13 @@ Returns top-K documents ranked by relevance, each with id / title / snippet.`;
   };
 
   async run(args: SearchDocsArgs, context: ToolExecutionContext): Promise<string> {
-    const knowledgeBase = context.knowledgeBaseService;
-    if (!knowledgeBase) {
-      throw new Error('SearchDocsTool requires knowledgeBaseService in ToolExecutionContext');
+    assertSearchDocsToolContext(context);
+    const documentSearch = context.documentSearch;
+    if (!documentSearch) {
+      throw new Error('SearchDocsTool requires documentSearch in host ToolContext');
     }
 
-    const hits: DocHit[] = await knowledgeBase.search(args.query, args.topK ?? 5);
+    const hits: DocHit[] = await documentSearch.search(args.query, args.topK ?? 5);
 
     const result = {
       data: { hits },
@@ -139,9 +158,9 @@ Returns top-K documents ranked by relevance, each with id / title / snippet.`;
 注意几点：
 
 1. **`description` 是写给 LLM 看的**：包含 "When to Use" / "Output" 等结构化指引，质量直接决定 LLM 的工具选择准确度。
-2. **`context.knowledgeBaseService` 来自 host patch**：linnkit 协议层只定义 `ToolExecutionContext` 的保留字段（`__runtime` / `__capabilities`），host 通过 `ensureToolContextRuntimeCapability` 把自己的服务注入 context。
-3. **`observation` 包含完整可读信息，但不重复 `data` 的字段名**：LLM 读完 `observation` 已经知道有哪些文档、引用 ID 是什么——不需要再 parse `data`。
-4. **失败 throw**：`knowledgeBase` 缺失是配置错误，不是业务失败——`throw` 让 `AuditEnvelope` 与 `tool_output.status` 准确反映"协议级错误"。
+2. **`context.documentSearch` 来自 host 扩展类型**：linnkit runtime 只定义 `ToolExecutionContext` 的执行期字段（如 `runId` / `conversationId` / `abortSignal` / child-run capability）。产品服务字段必须由 host 自己定义窄接口并注入，不要把具体存储、检索或 workflow 语义写回 framework。
+3. **`observation` 包含完整可读信息，但不复制 `data` 的结构化 JSON 或大段正文**：同一业务事实可以分别以 UI 结构和自然语言出现；LLM 读完 `observation` 必须知道有哪些文档、引用 ID 是什么，不需要也不能依赖读取 `data`。
+4. **失败 throw**：`documentSearch` 缺失是配置错误，不是业务失败——`throw` 让 `AuditEnvelope` 与 `tool_output.status` 准确反映"协议级错误"。
 
 ---
 
@@ -165,6 +184,28 @@ Returns top-K documents ranked by relevance, each with id / title / snippet.`;
 3. **`AuditEnvelope`**：tool retry / tool deny 等审计决策依赖 `tool_output.status` 准确
 
 **违反这一条的 bug 是最难排查的一类**。`throw` 一次，三处一致；伪装一次，三处全错。
+
+### 3.2 幂等执行合同
+
+`BaseTool.idempotency` 只用于**有副作用，且同一业务 scope 内同参重试必须复用成功结果**的工具。只读工具和天然无副作用的计算工具不要声明，避免把普通缓存误建模成幂等合同。
+
+```ts
+class CreateArtifactTool extends BaseTool {
+  readonly idempotency = { scope: 'conversation' } as const;
+  // ...
+}
+```
+
+强制语义：
+
+- scope 只能是 `conversation` 或 `turn`；对应的 `ToolExecutionContext.conversationId` / `turnId` 缺失时明确失败，不回退到其它身份。
+- key 由 scope identity、工具名和稳定序列化后的 args 生成，是 32 hex（128-bit）的 SHA-256 前缀。不要在 host 或具体工具复制 key 算法。
+- ToolNode 只缓存成功 `tool_output`；失败结果不携带幂等 metadata，也不能阻止后续重试。
+- 同一进程内会合并 in-flight 调用，并从 working history 复用最近的成功输出。跨进程、崩溃恢复和多实例并发的强幂等必须由 host 持久化锁或唯一索引保证。
+- 历史 16 hex key 不做前缀匹配或双读；升级后的旧调用按 cache miss 处理，再按 32 hex 合同写入新结果。
+- cache hit 复用的是原始结构化输出，不是旧 scope 下的 durable 附件。模型附件等后处理必须按当前 workspace/conversation scope 重新解析；解析失败时明确失败，不能重跑有副作用的工具，也不能降级成“文本成功、附件丢失”。
+
+业务测试至少覆盖：相同 scope + 相同规范化 args 命中；不同 scope 或 args 不命中；缺 scope identity 明确失败；执行失败不进入成功缓存；若有模型附件，cache replay 重新执行 scope 与能力校验。
 
 ---
 
@@ -254,13 +295,13 @@ async run(args, context) {
 async run(args, context) {
   const fullText = await fetchHugeContent(args);
   return JSON.stringify({
-    data: { text: fullText },
+    data: { sourceId: args.sourceId },
     observation: fullText,
   });
 }
 ```
 
-工具只负责"拿到完整内容、放进返回值"。当 `observation` 超过 `contextPolicy.toolOutput.observationGovernance.maxChars`（默认 20,000）或 `maxLines`（默认 1,200）时，`ToolNode` 会自动调用 host 的 `ObservationPreviewPort.truncateObservation()` 把全文落盘、生成 `blob_id`、把 observation 替换成"短预览 + 续读指引"。
+工具只负责取得完整内容并把它放进 `observation`；`data` 仍只承载该工具 owner 合同定义的程序化事实，不必复制正文。当 `observation` 超过 `contextPolicy.toolOutput.observationGovernance.maxChars`（默认 20,000）或 `maxLines`（默认 1,200）时，`ToolNode` 会自动调用 host 的 `ObservationPreviewPort.truncateObservation()` 把全文落盘、生成 `blob_id`、把 observation 替换成"短预览 + 续读指引"。blob 身份进入通用 `tool_output.metadata.observationTruncation.blobId`，不会污染具体工具的 owner `data`。
 
 详见 [`tools.md §6`](./tools.md#6-observationpreviewport配置超长-observation-存储路径)。
 
@@ -272,7 +313,11 @@ async run(args, context) {
 
 ---
 
-## 7. 交互工具（`requireUser`）的单消息协议
+## 7. 工具控制面（`control`）
+
+`StructuredToolResult.control` 是工具返回给 runtime 的控制面。它不是发给模型的 observation，也不是 system reminder；它只影响 ToolNode 在写完 `tool_output` 后怎么推进本轮 run。
+
+### 7.1 交互工具（`requireUser`）的单消息协议
 
 如果你的工具需要用户输入（如确认操作、问卷、多选），**不能**自己写"先返回一段提示 → 等用户输入 → 再返回结果"——这会破坏 `tool_call` ↔ `tool_output` 1:1 配对，违反 C10 不变量。
 
@@ -284,6 +329,45 @@ async run(args, context) {
 4. **第 4 段**：用户提交回复后，runtime 用**同一条** `tool_output` 事件继续——`metadata.interaction` 字段承载用户的 `approved / modified / submitted / skipped` 状态。
 
 **reload / replay 的关键**：交互卡片的初始内容**必须**能从 `tool_call.arguments` 直接重建——不要把"首次工具输出快照"当成唯一事实来源。
+
+### 7.2 最终产物工具（`terminateRun` / `finalAnswer`）
+
+有些工具执行完以后，本轮 run 就应该结束，不需要再回到 LLM 生成一段复述文本。典型例子是"工具结果就是最终答案/最终产物"：
+
+- `control.terminateRun = true`：ToolNode 写完本次 `tool_output` 后直接 yield，结束当前 run loop。
+- `control.finalAnswer = string`：请求 runtime 把这段文本投影成 `final_answer` 事件，供 UI / persistence / replay 使用。
+
+两者常一起出现，例如最终报告写入工具、确定性组装工具、writer 子 agent 的收口工具。普通读取、检索、编辑工具不要设置 `terminateRun`，否则会提前截断 agent 的正常思考/编排。
+
+```ts
+const result: StructuredToolResult<{ report: string }> = {
+  data: { report },
+  observation: `Final report accepted (${report.length} chars).`,
+  control: {
+    finalAnswer: report,
+    terminateRun: true,
+    reason: 'write_report: final artifact produced',
+  },
+};
+```
+
+### 7.3 `observationPreviewMeta`
+
+如果工具返回的 observation 可能被落盘为短预览，工具可以在 `StructuredToolResult.observationPreviewMeta` 中提供轻量元信息，例如 `filename` / `document_name` / `doc_type`。runtime 只负责把 meta 传给 host 的 `ObservationPreviewPort`，不按工具名猜业务含义。
+
+这条规则很重要：不要在 ToolNode 里写 `if toolName === ...` 的产品特判；需要特殊展示信息时，由工具自己把 meta 放进返回值。
+
+### 7.4 让模型读取工具产出的图片
+
+工具不能直接返回 durable attachment，更不能返回本地路径、bytes、base64、hash 或 data URL。工具只在 `StructuredToolResult.modelInput.attachments` 中返回有序 asset selection；selection 只包含调用内 ID、稳定 asset URI 和可选展示标签。
+
+host 必须通过 `ToolModelInputResolverPort` 把 selection 解析为当前 conversation/project 有权引用的 durable 图片身份，并通过 `ToolModelInputCapabilityValidatorPort` 按最近一次成功 LLM attempt 的真实模型做执行期校验。任一 selection 的 scope 或完整性失败时，整个工具结果失败，不产生半组附件。
+
+静态只会产生图片的工具应在 definition 上声明 `tool_result_image` requirement，让 schema admission 和 fallback 提前排除不兼容模型。既能读文本又能读图片的动态工具不能把图片 requirement 写成静态要求；只有实际返回图片 selection 时，ToolNode 才执行 resolver 与二次能力门禁。
+
+动态工具的 `resolveModelInputRequirement(args)` 必须是只依赖规范化参数的确定性规则，不得执行 I/O。若 resolver 抛错，ToolNode 会把本次 call 作为 capability deny，生成稳定的 error `tool_output` 和 `tool.deny` 审计后继续消费同批 sibling calls；宿主异常原文不会回显给模型。resolver 不能用异常表达“本次不需要图片”，该场景应正常返回 `undefined`。
+
+历史 cache hit 不能直接复用旧 durable ref。它应复用原始结构化输出，再按当前 workspace scope 重新解析 selection；selection 已失效时明确失败，不能重跑有副作用的工具，也不能退化成“文本成功、图片丢失”。root 与 child runtime 应注入同一类窄 resolver/validator，child 仍受自己的模型和附件继承策略约束。
 
 ---
 
@@ -300,22 +384,29 @@ const toolRuntime = new QuickstartMemoryToolRuntime([
 ]);
 ```
 
-生产 host 通常自己实现 `ToolRuntimePort`（实现 `ToolCatalogPort` + `ToolPresentationPort` + `ToolExecutionPort` 三个 sub-port），把工具与 host 的服务、权限、UI 渲染 registry 串起来——详见 [`tools.md`](./tools.md)。
+生产 host 通常自己实现 `ToolRuntimePort`（由 `ToolCatalogPort` + `ToolExecutionPort` 组成），把工具与 host 的服务、权限串起来。UI 渲染 registry 属于产品 Renderer，不经过 Linnkit 工具合同——详见 [`tools.md`](./tools.md)。
 
 ---
 
-## 9. 推荐遵守的 host 层约定
+## 9. Host 层约定
 
-以下几条规范是 **host 业务层强烈推荐**遵守的——linnkit 协议层不会守门，但它们对工具开发质量影响很大：
+下表同时包含运行时强制合同和 host 侧开发约定。`data` / `observation` 分层由 linnkit 协议层守门；其余项目由 host 的注册、评审和测试保证。
 
 | 约定 | 说明 |
 |------|------|
 | **`name` 用 `snake_case`** | 所有工具名小写下划线，避免与 LLM 自由生成的工具调用名混淆 |
 | **`description` 包含 "When to Use"** | 明确告诉 LLM 何时调用、避免误用 |
-| **`data` / `observation` 分层强制** | UI 字段稳定、observation 纯文本高密度（见 §2） |
+| **`data` / `observation` 分层强制** | linnkit 运行时校验；UI 字段稳定、observation 自包含且为纯文本（见 §2） |
 | **`tag/badge` 慎用** | 只在创建态 / 审核态 / 风险态等强调操作时用 |
-| **占位渲染白名单（早期 tool_call）** | 流式 tool_call delta 阶段，仅允许特定工具提前显示占位卡片 |
+| **流式生命周期声明** | 工具通过通用 policy 显式声明是否需要早期占位或参数快照 |
 | **`requireUser` 工具的单消息交互协议** | 见 §7 |
+| **幂等只用于副作用重试** | scope 与 key 由 runtime 合同管理；跨进程强幂等由 host 持久化能力保证（见 §3.2） |
+
+流式生命周期是 concrete tool 的显式 opt-in：在 `BaseTool.streaming` 声明
+`emitPlaceholder` 或 `emitArgumentSnapshots`，由 host 把本次实际暴露工具的 policy
+放进 invocation context。该字段不属于 provider options。Linnkit 只理解通用 policy，
+不得按工具名、插件名或产品领域维护白名单。参数快照尚未完成 owner admission；host 的
+展示层若消费它，必须使用独立的窄 lifecycle 合同，成功结果仍使用正式参数/结果 schema。
 
 ---
 
@@ -327,10 +418,14 @@ const toolRuntime = new QuickstartMemoryToolRuntime([
 | 返回值结构（`data` / `observation` 分层）| host（工具作者）| `BaseTool.run` 返回字符串 |
 | 错误处理（throw vs 返回）| host（遵守 §3）| runtime 接住 throw → `tool_output.status = 'error'` |
 | 必填参数校验 | linnkit 协议层 | `BaseTool.validateArguments()` |
+| 幂等策略、key 与进程内复用 | linnkit 协议层 | `BaseTool.idempotency` + `computeToolIdempotencyKey` + ToolNode |
+| 跨进程强幂等 | host | 持久化锁或唯一索引；Linnkit 不提供虚假保证 |
 | 超长 observation 治理 | linnkit 协议层 + host | `contextPolicy.toolOutput.observationGovernance` + `ObservationPreviewPort` |
 | 工具历史保留 / 可选压缩 | linnkit 协议层 | `contextPolicy.toolHistory.strategy` + `contextPolicy.toolHistory.retentionMode` + `getExecutionSummary` |
 | 工具配对一致性 | linnkit 协议层 | tool 配对不变量 C10 + `ToolReplayProtocolGuard` |
 | 交互工具的 wait_user 路由 | linnkit 协议层 | `WaitUserNode` + `requires_user_interaction` 事件 |
+| 工具图片 selection 与解析 | host 工具 + host resolver | `StructuredToolResult.modelInput` + `ToolModelInputResolverPort` |
+| 工具图片能力校验 | linnkit + host model catalog | definition requirement + `ToolModelInputCapabilityValidatorPort` |
 | `data` 字段名约定 / 前端 registry 注册 | host（工具作者 + 前端工程师）| linnkit 不规定 |
 | 工具的业务实现（数据库 / 外部服务调用）| host | linnkit 不规定 |
 
@@ -343,12 +438,14 @@ const toolRuntime = new QuickstartMemoryToolRuntime([
 - [ ] 必填参数全部放进 `parameters.required[]`
 - [ ] `additionalProperties: false`（如果不希望 LLM 传额外字段）
 - [ ] `run` 返回 `JSON.stringify({ data, observation })`
-- [ ] `data` 给前端，`observation` 给 AI，**两者不重复字段**
-- [ ] `observation` 是纯文本、无 emoji、信息密度高
+- [ ] `data` 给前端，`observation` 给 AI；不复制结构化 JSON 或大段正文，`observation` 自包含全部模型所需业务信息
+- [ ] `observation` 是包含非空白字符的纯文本、无 emoji、信息密度高；正文自然首尾空白不应被 `.trim()` 改写
 - [ ] 失败用 `throw new Error(...)`，**不**返回伪装成功的 JSON
+- [ ] 如果声明幂等：工具确有副作用；scope identity 完整；覆盖成功复用、失败重试、跨 scope 隔离与 cache replay 后处理
 - [ ] 实现 `getExecutionSummary(output)`，给 ToolHistoryCompressor 用
 - [ ] 不在工具内部做超长截断 / 落盘——交给 `ObservationPreviewPort`
 - [ ] 如果是交互工具：第一段返回 `result.control.requireUser = true`，复活路径只从 `tool_call.arguments` 重建
+- [ ] 如果工具让模型读取图片：只返回稳定 asset selection，并验证 scope、cache replay、能力拒绝和附件顺序
 - [ ] 单测用 `createToolContextFixture()` 直接测 `tool.run(args, fixtureContext)`
 - [ ] 在 host 的 `ToolRuntimePort` 实例化里注册
 
@@ -362,3 +459,4 @@ const toolRuntime = new QuickstartMemoryToolRuntime([
 - [`context-engineering.md`](./context-engineering.md) — 12 大分组 `contextPolicy` 总览，含 `toolOutput.observationGovernance`
 - [`audit.md`](./audit.md) — tool retry / tool deny 等审计决策
 - [`testing.md`](./testing.md) — testkit 提供的 26 条 strict invariants（含工具相关的 C10）
+- [`../../src/runtime-kernel/tools/README.md`](../../src/runtime-kernel/tools/README.md) — runtime-kernel Tool 合同与幂等 owner

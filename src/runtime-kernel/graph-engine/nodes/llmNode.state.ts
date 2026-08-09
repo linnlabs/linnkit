@@ -1,5 +1,9 @@
-import type { StandardToolCall } from '../types';
-import type { RuntimeEvent } from '../../../contracts';
+import type { ExecutorLocalPatch, ExecutorLocalState, StandardToolCall } from '../types';
+import type {
+  RoutedRuntimeEvent,
+  RuntimeEvent,
+  SerializableJsonRecord,
+} from '../../../contracts';
 
 // ---------------------------------------------------------------------------
 // State
@@ -20,7 +24,7 @@ export interface LlmNodeLocalState {
   /** 当前答案段内已发出的 chunk 序号（下一个 chunk 使用的值） */
   chunkSeq: number;
   /** 已缓冲的 RuntimeEvent（含 sink 回灌事件），最终并入历史 */
-  streamRuntimeEvents: RuntimeEvent[];
+  streamRuntimeEvents: RoutedRuntimeEvent[];
   /** 已缓冲的 RuntimeEvent ID 去重集合 */
   seenRuntimeIds: Set<string>;
 
@@ -46,18 +50,13 @@ export interface LlmNodeLocalState {
 export type LlmNodeAction =
   | {
       type: 'STREAM_CHUNK_RECEIVED';
-      /** 上游事件自带的 answer_id（可能为 undefined） */
-      incomingAnswerId: string | undefined;
-      /**
-       * 兜底 answer_id（调用方在 dispatch 前预生成）：
-       * - 若 state.answerId 已存在则传入该值（延续当前答案段）
-       * - 若 state.answerId 为 undefined 则传入新生成的 ID
-       */
-      generatedAnswerId: string;
+      answerId: string;
+      seq: number;
     }
   | { type: 'FINAL_ANSWER_IGNORED' }
   | { type: 'FINAL_ANSWER_RECEIVED' }
-  | { type: 'RUNTIME_EVENT_BUFFERED'; event: RuntimeEvent }
+  | { type: 'STREAM_RESET' }
+  | { type: 'RUNTIME_EVENT_BUFFERED'; event: RoutedRuntimeEvent }
   | { type: 'TOOL_CALLS_ACCEPTED'; toolCalls: StandardToolCall[] }
   | { type: 'TOOL_CALLS_REJECTED_BY_FORCE_FINAL' }
   | { type: 'FINAL_ANSWER_DECISION'; answer: string }
@@ -84,18 +83,23 @@ export function llmNodeReducer(
 ): LlmNodeLocalState {
   switch (action.type) {
     case 'STREAM_CHUNK_RECEIVED': {
-      const resolvedAnswerId = action.incomingAnswerId ?? action.generatedAnswerId;
-      const answerChanged = state.answerId !== resolvedAnswerId;
-      const baseSeq = answerChanged ? 0 : state.chunkSeq;
+      const answerChanged = state.answerId !== action.answerId;
+      const expectedSeq = answerChanged ? 0 : state.chunkSeq;
+      if (action.seq !== expectedSeq) {
+        throw new Error(
+          `final_answer_chunk sequence mismatch: answer=${action.answerId}, expected=${expectedSeq}, actual=${action.seq}`,
+        );
+      }
       return {
         ...state,
-        answerId: resolvedAnswerId,
-        chunkSeq: baseSeq + 1,
+        answerId: action.answerId,
+        chunkSeq: expectedSeq + 1,
       };
     }
 
     case 'FINAL_ANSWER_IGNORED':
-    case 'FINAL_ANSWER_RECEIVED': {
+    case 'FINAL_ANSWER_RECEIVED':
+    case 'STREAM_RESET': {
       return {
         ...state,
         answerId: undefined,
@@ -178,8 +182,9 @@ export interface WriteBackContext {
   turnId: string;
   /** tick 前的初始历史 */
   history: RuntimeEvent[];
-  /** tick 返回的 newEvents */
-  newEvents: RuntimeEvent[];
+  executorLocal?: ExecutorLocalState;
+  executorLocalPatch?: ExecutorLocalPatch;
+  contextTrace?: SerializableJsonRecord;
 }
 
 /**
@@ -187,7 +192,7 @@ export interface WriteBackContext {
  *
  * 中文备注：
  * - 返回的对象应以 `{ ...existingLocal, ...patch }` 形式合并回 state.local，
- *   保留 request / toolContext / sseSink / signal 等非 reducer 管辖字段。
+ *   保留 request / toolContext / runtimeEventSink / signal 等非 reducer 管辖字段。
  * - 只有被决策 action 显式设置的字段才出现在补丁中（pendingToolCalls 等），
  *   避免意外覆盖其他节点写入的同名字段。
  */
@@ -195,7 +200,7 @@ export function buildLocalPatch(
   nodeState: LlmNodeLocalState,
   ctx: WriteBackContext,
 ): Record<string, unknown> {
-  const updatedHistory = [...ctx.history, ...ctx.newEvents, ...nodeState.streamRuntimeEvents];
+  const updatedHistory = [...ctx.history, ...nodeState.streamRuntimeEvents];
 
   const patch: Record<string, unknown> = {
     answerId: nodeState.answerId,
@@ -216,6 +221,15 @@ export function buildLocalPatch(
   }
   if (nodeState.lastToolResult !== undefined) {
     patch.lastToolResult = nodeState.lastToolResult;
+  }
+  if (ctx.executorLocalPatch) {
+    patch.executorLocal = {
+      ...(ctx.executorLocal ?? {}),
+      ...ctx.executorLocalPatch,
+    };
+  }
+  if (ctx.contextTrace !== undefined) {
+    patch.contextTrace = ctx.contextTrace;
   }
 
   return patch;

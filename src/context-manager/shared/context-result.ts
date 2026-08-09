@@ -2,9 +2,13 @@ import type {
   AiMessage,
   ContextBuildTokenEstimate,
   ContextTokenComponent,
+  InternalLlmCallUsage,
   RuntimeEvent,
+  TokenCountConfidence,
+  TokenCountSource,
 } from '../../contracts';
 import type { ContextTrace } from './context-trace';
+import type { ImageInputAdmissionEvidence } from '../../ports';
 
 export interface RecommendationStats {
   phaseTokenUsage: Record<PropertyKey, { used: number; percentage: number }>;
@@ -25,10 +29,16 @@ export interface BuildContextResultOptions<TBuildStats> {
   estimateTokens: (message: AiMessage) => number;
   coreTypes: readonly string[];
   recommendations: string[];
+  tokenUsageMeasurement: {
+    source: TokenCountSource;
+    confidence: TokenCountConfidence;
+  };
   events?: RuntimeEvent[];
   contextTrace?: ContextTrace;
   tokenEstimate?: ContextBuildTokenEstimate;
   tokenComponents?: ContextTokenComponent[];
+  internalLlmCalls?: InternalLlmCallUsage[];
+  imageInputAdmissionEvidence?: ImageInputAdmissionEvidence;
 }
 
 export function buildContextResult<TBuildStats>(
@@ -45,10 +55,13 @@ export function buildContextResult<TBuildStats>(
     estimateTokens,
     coreTypes,
     recommendations,
+    tokenUsageMeasurement,
     events = [],
     contextTrace,
     tokenEstimate,
     tokenComponents,
+    internalLlmCalls,
+    imageInputAdmissionEvidence,
   } = options;
 
   const tokenDistribution = calculateTokenDistribution(
@@ -69,7 +82,12 @@ export function buildContextResult<TBuildStats>(
 
   return {
     messages: finalMessages,
-    tokenUsage: { used: finalTokens, remaining: totalBudget - finalTokens },
+    tokenUsage: {
+      used: finalTokens,
+      remaining: totalBudget - finalTokens,
+      source: tokenUsageMeasurement.source,
+      confidence: tokenUsageMeasurement.confidence,
+    },
     processingStats,
     truncated: originalCount !== finalMessages.length,
     truncatedCount:
@@ -84,6 +102,8 @@ export function buildContextResult<TBuildStats>(
     ...(contextTrace ? { contextTrace } : {}),
     ...(tokenEstimate ? { tokenEstimate } : {}),
     ...(tokenComponents ? { tokenComponents } : {}),
+    ...(internalLlmCalls && internalLlmCalls.length > 0 ? { internalLlmCalls } : {}),
+    ...(imageInputAdmissionEvidence ? { imageInputAdmissionEvidence } : {}),
   };
 }
 

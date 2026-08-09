@@ -1,11 +1,18 @@
 import { events as runtimeEvents } from '../../../../runtime-kernel';
-import type {
-  AiMessage,
-  FinalAnswerEvent,
-  ObservationTruncationMeta,
+import {
+  FinalAnswerCompletionReason,
+  ProviderReasoningDetailsPayload,
   RuntimeEvent,
-  ToolOutputEvent,
+  ToolOutputMeta,
+  type AiMessage,
+  type FinalAnswerEvent,
+  type ObservationTruncationMeta,
+  type ThoughtEvent,
+  type UserInputEvent,
 } from '../../../../contracts';
+import { Logger } from '../../../../shared/logger';
+
+const logger = new Logger('AgentEventConverter');
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
@@ -25,7 +32,9 @@ function readObservationTruncationMeta(value: unknown): ObservationTruncationMet
   }
   const originalLines = value['originalLines'];
   const previewLines = value['previewLines'];
+  const blobId = value['blobId'];
   return {
+    ...(typeof blobId === 'string' && blobId.trim() ? { blobId: blobId.trim() } : {}),
     originalChars,
     previewChars,
     ...(typeof originalLines === 'number' && Number.isInteger(originalLines) && originalLines >= 0
@@ -54,11 +63,11 @@ export function convertEventToAiMessage(event: RuntimeEvent): AiMessage {
   if (isHistorySummaryEvent(event)) {
     const replacedIds = Array.isArray(event.replaced_message_ids) ? event.replaced_message_ids : [];
 
-    console.log('[Agent-eventConverter] 📋 摘要事件转换:', {
+    logger.debug('Converted history_summary RuntimeEvent to AiMessage', {
       summaryId: event.id,
       replacedCount: replacedIds.length,
       summarySeq: event.summary_seq,
-      示例ID: replacedIds.slice(0, 3),
+      sampleIds: replacedIds.slice(0, 3),
     });
 
     return {
@@ -87,6 +96,7 @@ export function convertEventToAiMessage(event: RuntimeEvent): AiMessage {
         type: 'user_input',
         content: event.content || '',
         timestamp: event.timestamp,
+        ...(event.attachments ? { attachments: event.attachments } : {}),
       };
 
     case 'thought':
@@ -146,49 +156,25 @@ export function convertEventToAiMessage(event: RuntimeEvent): AiMessage {
       };
 
     case 'tool_output': {
-      const observationFromPayload = (() => {
-        const payload = (event as ToolOutputEvent).payload;
-        if (!isRecord(payload)) return undefined;
-        const result = payload['result'];
-        if (!isRecord(result)) return undefined;
-        const obs = result['observation'];
-        return typeof obs === 'string' && obs.trim().length > 0 ? obs : undefined;
-      })();
-
-      const rawOutput = (() => {
-        const payload = (event as ToolOutputEvent).payload;
-        if (isRecord(payload)) {
-          const out = payload['output'];
-          if (typeof out === 'string' && out.trim().length > 0) {
-            return out;
-          }
-        }
-        if (typeof event.output === 'string') {
-          return event.output;
-        }
-        try {
-          return JSON.stringify(event.output ?? '');
-        } catch {
-          return String(event.output ?? '');
-        }
-      })();
-
-      const outputContent = observationFromPayload ?? rawOutput;
       const observationTruncation = readObservationTruncationMeta(event.metadata?.observationTruncation);
 
       return {
         id: event.id,
         role: 'tool',
         type: 'tool_output',
-        content: outputContent,
+        content: event.observation,
         timestamp: event.timestamp,
         metadata: {
           tool_call_id: event.tool_call_id,
           tool_name: event.tool_name,
-          raw_output: rawOutput,
+          ...(event.data !== undefined ? { data: event.data } : {}),
+          ...(event.error !== undefined ? { error: event.error } : {}),
+          ...(event.metadata?.presentation !== undefined
+            ? { presentation: event.metadata.presentation }
+            : {}),
           ...(observationTruncation ? { observationTruncation } : {}),
-          ...(observationFromPayload ? { observation: observationFromPayload } : {}),
         },
+        ...(event.attachments ? { attachments: event.attachments } : {}),
       };
     }
 
@@ -200,19 +186,13 @@ export function convertEventToAiMessage(event: RuntimeEvent): AiMessage {
         content: event.content || '',
         timestamp: event.timestamp,
         metadata: {
+          completion_reason: event.completion_reason,
           reasoning_details: Array.isArray(event.reasoning_details) ? event.reasoning_details : undefined,
         },
       };
 
     default:
-      console.warn(`[eventConverter] Unsupported event type: ${event.type}`);
-      return {
-        id: event.id,
-        role: 'assistant',
-        type: 'final_answer',
-        content: '',
-        timestamp: event.timestamp || Date.now(),
-      };
+      throw new Error(`Unsupported RuntimeEvent type during AiMessage conversion: ${event.type}`);
   }
 }
 
@@ -221,61 +201,109 @@ export function convertEventsToAiMessages(events: RuntimeEvent[]): AiMessage[] {
   return filtered.map((event) => convertEventToAiMessage(event));
 }
 
+interface AiMessageEventContext {
+  conversation_id: string;
+  turn_id: string;
+  timestamp?: number;
+  metadata?: RuntimeEvent['metadata'];
+  ephemeral?: boolean;
+}
+
 export function convertAiMessageToEvent(
   message: AiMessage,
-  overrides?: Partial<RuntimeEvent>
+  context: AiMessageEventContext,
 ): RuntimeEvent {
-  const base = {
+  const base: Pick<
+    UserInputEvent,
+    'id' | 'timestamp' | 'conversation_id' | 'turn_id' | 'version' | 'metadata' | 'ephemeral'
+  > = {
     id: message.id,
-    timestamp: message.timestamp,
-    conversation_id: '',
-    turn_id: '',
+    timestamp: context.timestamp ?? message.timestamp,
+    conversation_id: context.conversation_id,
+    turn_id: context.turn_id,
     version: 1,
-    ...overrides,
+    ...(context.metadata ? { metadata: context.metadata } : {}),
+    ...(context.ephemeral !== undefined ? { ephemeral: context.ephemeral } : {}),
   };
 
   switch (message.role) {
-    case 'user':
-      return {
+    case 'user': {
+      const event: UserInputEvent = {
         ...base,
         type: 'user_input',
         content: message.content,
-      } as RuntimeEvent;
+        source: 'user',
+        ...(message.type === 'user_input' && message.attachments
+          ? { attachments: message.attachments }
+          : {}),
+      };
+      return event;
+    }
 
-    case 'tool':
-      return {
+    case 'tool': {
+      const toolMetadata = ToolOutputMeta.parse(message.metadata);
+      const result = typeof message.metadata?.error === 'string'
+        ? {
+            status: 'error' as const,
+            observation: message.content,
+            error: message.metadata.error,
+          }
+        : {
+            status: 'success' as const,
+            observation: message.content,
+            data: message.metadata?.data,
+          };
+      return RuntimeEvent.parse({
         ...base,
         type: 'tool_output',
-        tool_name: message.metadata?.tool_name || 'unknown',
-        tool_call_id: message.metadata?.tool_call_id || '',
-        output: message.metadata?.raw_output || message.content,
-        status: 'success',
-      } as RuntimeEvent;
+        tool_name: toolMetadata.tool_name,
+        tool_call_id: toolMetadata.tool_call_id,
+        ...result,
+        ...(message.metadata?.presentation !== undefined
+          ? { metadata: { ...(base.metadata ?? {}), presentation: message.metadata.presentation } }
+          : {}),
+        ...(message.attachments ? { attachments: message.attachments } : {}),
+      });
+    }
 
-    case 'assistant':
+    case 'assistant': {
       if (message.type === 'thought') {
-        return {
+        const event: ThoughtEvent = {
           ...base,
           type: 'thought',
           content: message.content,
-        } as RuntimeEvent;
+          is_complete: true,
+        };
+        return event;
+      }
+      if (message.type !== 'final_answer') {
+        throw new Error(`AiMessage type ${message.type} cannot be converted to a RuntimeEvent.`);
       }
 
-      return {
+      const rawReasoningDetails = message.metadata?.reasoning_details;
+      const completionReason = FinalAnswerCompletionReason.parse(message.metadata?.completion_reason);
+      const event: FinalAnswerEvent = {
         ...base,
         type: 'final_answer',
         content: message.content,
-        answer_id: (overrides as Partial<FinalAnswerEvent> | undefined)?.answer_id,
-        is_complete: true,
-        reasoning_details: Array.isArray(message.metadata?.reasoning_details)
-          ? message.metadata.reasoning_details
-          : undefined,
-      } as RuntimeEvent;
-    default:
-      return {
+        answer_id: message.id,
+        completion_reason: completionReason,
+        is_complete: completionReason !== 'interrupted',
+        ...(Array.isArray(rawReasoningDetails)
+          ? { reasoning_details: ProviderReasoningDetailsPayload.parse(rawReasoningDetails) }
+          : {}),
+      };
+      return event;
+    }
+
+    case 'system': {
+      const event: UserInputEvent = {
         ...base,
         type: 'user_input',
         content: message.content,
-      } as RuntimeEvent;
+        source: 'system',
+      };
+      return event;
+    }
   }
 }

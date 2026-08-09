@@ -1,6 +1,6 @@
 import { createHash } from 'crypto';
 import type { ToolExecutionContext } from '../toolExecutionContext';
-import type { RuntimeEvent } from '../../../contracts';
+import type { RuntimeEvent, RuntimeResourceRef } from '../../../contracts';
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -30,13 +30,24 @@ function stableStringify(v: unknown): string {
 }
 
 function resolveScopeKey(scope: ToolIdempotencyScope, context: ToolExecutionContext): string {
-  const ctx = context as unknown as UnknownRecord;
   if (scope === 'conversation') {
-    const conversationId = ctx['conversationId'];
-    if (typeof conversationId === 'string' && conversationId.trim().length > 0) return conversationId.trim();
+    const conversationId = context.conversationId;
+    if (typeof conversationId === 'string' && conversationId.trim().length > 0) {
+      return conversationId.trim();
+    }
+    throw new Error('Tool idempotency scope "conversation" requires ToolExecutionContext.conversationId.');
   }
-  const turnId = ctx['turnId'];
-  return typeof turnId === 'string' && turnId.trim().length > 0 ? turnId.trim() : 'unknown_turn';
+
+  if (scope === 'turn') {
+    const turnId = context.turnId;
+    if (typeof turnId === 'string' && turnId.trim().length > 0) {
+      return turnId.trim();
+    }
+    throw new Error('Tool idempotency scope "turn" requires ToolExecutionContext.turnId.');
+  }
+
+  const unsupportedScope: never = scope;
+  throw new Error(`Unsupported tool idempotency scope: ${String(unsupportedScope)}`);
 }
 
 export function computeToolIdempotencyKey(params: {
@@ -47,28 +58,33 @@ export function computeToolIdempotencyKey(params: {
 }): string {
   const scopeKey = resolveScopeKey(params.policy.scope, params.context);
   const json = stableStringify({ tool: params.toolName, args: params.args });
-  return createHash('sha256').update(`${scopeKey}|${json}`).digest('hex').slice(0, 16);
+  return createHash('sha256').update(`${scopeKey}|${json}`).digest('hex').slice(0, 32);
 }
 
 export function findCachedToolOutputByIdempotencyKey(params: {
   history: ReadonlyArray<RuntimeEvent>;
   toolName: string;
   idempotencyKey: string;
-}): { output: string } | undefined {
+}): { result: string; attachments?: readonly RuntimeResourceRef[] } | undefined {
   for (let i = params.history.length - 1; i >= 0; i -= 1) {
-    const e = params.history[i] as unknown as UnknownRecord;
-    if (!e || typeof e !== 'object') continue;
-    if (e['type'] !== 'tool_output') continue;
-    if (e['tool_name'] !== params.toolName) continue;
-    if (e['status'] !== 'success') continue;
-    const meta = e['metadata'];
+    const e = params.history[i];
+    if (e.type !== 'tool_output') continue;
+    if (e.tool_name !== params.toolName) continue;
+    if (e.status !== 'success') continue;
+    const meta = e.metadata;
     if (!isRecord(meta)) continue;
     const idem = meta['idempotency'];
     if (!isRecord(idem)) continue;
     if (idem['key'] !== params.idempotencyKey) continue;
-    const output = e['output'];
-    if (typeof output !== 'string') continue;
-    return { output };
+    const structuredResult: UnknownRecord = { data: e.data, observation: e.observation };
+    const presentation = meta?.presentation;
+    if (isRecord(presentation) && presentation['media'] !== undefined) {
+      structuredResult['media'] = presentation['media'];
+    }
+    return {
+      result: JSON.stringify(structuredResult),
+      ...(e.attachments ? { attachments: e.attachments } : {}),
+    };
   }
   return undefined;
 }

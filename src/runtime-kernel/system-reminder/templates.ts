@@ -47,19 +47,19 @@ export const toolCallStreakTemplate: SystemReminderContentTemplate = (ctx) => {
   const count = countToolCallsInCurrentRequest(ctx.history);
   return [
     `你已连续执行了 ${count} 次工具调用。`,
-    '如果问题比较复杂，考虑创建sub-agent，也就是task，以降低上下文占用。',
+    '如果问题比较复杂，考虑把工作拆成更小的执行单元，降低上下文占用。',
     '如果问题即将解决，请忽略本条提醒。',
   ].join('\n');
 };
 
-export const periodicTaskstateReflectionTemplate: SystemReminderContentTemplate = (ctx) => {
+export const periodicProgressReflectionTemplate: SystemReminderContentTemplate = (ctx) => {
   const stepCount = ctx.executorLocal?.stepCount ?? 0;
   const displayStep = toDisplayStep(stepCount);
   return [
     `你已执行了 ${displayStep} 步。请暂停当前工作，花一步反思和整理：`,
-    '1. 回顾你最近的 taskstate_write 输出，确认当前工作方向正确（没有偏离 Goal）。',
-    '2. 调用 taskstate_write 更新 progress 和 next_steps，如有必要调整 current_plan。',
-    '3. 如果任务复杂但尚未创建 TaskState，现在是创建的好时机。',
+    '1. 核对当前目标、关键约束、已完成事项和下一步是否一致。',
+    '2. 如果当前流程已经偏离目标，请先收敛计划，再继续执行。',
+    '3. 如果宿主提供了状态或检查点能力，请在确有需要时更新。',
     '完成整理后继续执行任务。',
   ].join('\n');
 };
@@ -71,19 +71,38 @@ export const contextBudgetWarningTemplate: SystemReminderContentTemplate = (ctx)
   const displayMax = toDisplayStep(maxSteps);
   const checkpointToolName = readContextCheckpointToolName(ctx);
   return [
-    `⚠️ 上下文预算告警：你已执行了 ${displayStep}/${displayMax} 步，上下文空间即将耗尽。`,
+    `上下文预算告警：你已执行了 ${displayStep}/${displayMax} 步，上下文空间即将耗尽。`,
     '你必须立即执行以下操作以避免上下文溢出：',
-    '1. 先确认关键进展、约束、下一步已经进入 TaskState；如果没有，请调用 taskstate_write 更新。',
-    `2. 调用 ${checkpointToolName} 工具，传入 summary（阶段过渡摘要）和 taskstate（最新任务状态）。`,
-    '   这会一次性完成"保存状态 + 清理历史"，checkpoint tool_output 中会保留你的 TaskState 快照。',
-    '3. 清理后你的上下文将只保留：checkpoint 工具对（含摘要 + TaskState）+ 最近 2 对工具交互。需要长期交付给用户的内容请写入 Workspace 文件。',
+    '1. 先整理关键进展、约束、已完成事项、未解决问题和下一步。',
+    `2. 调用 ${checkpointToolName} 工具，写入足够接续的阶段摘要。`,
+    '3. 清理后请基于摘要和最近工具交互继续推进，避免依赖即将被裁剪的历史细节。',
   ].join('\n');
 };
+
+function readHostReminderText(args: Record<string, unknown> | undefined): string {
+  const body = args?.body;
+  if (typeof body === 'string' && body.trim().length > 0) {
+    return body.trim();
+  }
+
+  const lines = args?.lines;
+  if (!Array.isArray(lines)) {
+    return '';
+  }
+  return lines
+    .map((line) => (typeof line === 'string' ? line.trimEnd() : ''))
+    .filter((line) => line.length > 0)
+    .join('\n')
+    .trim();
+}
+
+export const hostReminderTextTemplate: SystemReminderContentTemplate = (_ctx, args) => readHostReminderText(args);
 
 export const BUILTIN_SYSTEM_REMINDER_TEMPLATES: Record<string, SystemReminderContentTemplate> = {
   maxStepsForceFinalAnswer: maxStepsForceFinalAnswerTemplate,
   lastStepsHint: lastStepsHintTemplate,
   toolCallStreak: toolCallStreakTemplate,
-  periodicTaskstateReflection: periodicTaskstateReflectionTemplate,
+  periodicProgressReflection: periodicProgressReflectionTemplate,
   contextBudgetWarning: contextBudgetWarningTemplate,
+  hostReminderText: hostReminderTextTemplate,
 };

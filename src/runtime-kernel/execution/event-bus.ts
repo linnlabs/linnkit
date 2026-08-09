@@ -11,13 +11,14 @@
  */
 
 import { Logger } from '../../shared/logger';
-import type { EventEnvelope, RuntimeEvent } from '../../contracts';
+import { isRoutedRuntimeEvent } from '../../contracts';
+import type { EventEnvelope, RoutedRuntimeEvent, RuntimeEvent } from '../../contracts';
 
 const logger = new Logger('EventBus');
 
 // 定义事件总线可以发出的事件类型
 type EventBusEvents = {
-  'event': (envelope: EventEnvelope<RuntimeEvent>) => void;
+  'event': (envelope: EventEnvelope<RoutedRuntimeEvent>) => void;
   'error': (error: Error) => void;
   'close': () => void;
 };
@@ -124,7 +125,20 @@ export class EventBus extends TypedEventEmitter<EventBusEvents> {
       return;
     }
 
-    this.emit('event', envelope);
+    if (!isRoutedRuntimeEvent(envelope.payload)) {
+      const error = new Error(
+        'EventBus only accepts RuntimeEvent with formal run routing identity.',
+      );
+      logger.error('RuntimeEvent is missing formal run routing identity', {
+        executionId: this.executionId,
+        eventId: envelope.payload.id,
+        eventType: envelope.payload.type,
+      });
+      this.emit('error', error);
+      return;
+    }
+
+    this.emit('event', { ...envelope, payload: envelope.payload });
   }
 
   /**

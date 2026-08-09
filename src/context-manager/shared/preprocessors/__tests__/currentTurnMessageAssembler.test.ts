@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { AiMessage } from '../../../../contracts';
+import type { AiMessage, RuntimeResourceRef } from '../../../../contracts';
 import { createFenceRegistry } from '../../fences';
 import { CurrentTurnMessageAssembler } from '../currentTurnMessageAssembler';
 
@@ -94,6 +94,52 @@ describe('CurrentTurnMessageAssembler', () => {
       'user-quote',
       'follow-up-context',
     ]);
+  });
+
+  it('组装当前轮 fence 时保持 user_input 附件身份和顺序', async () => {
+    const attachments: RuntimeResourceRef[] = [
+      {
+        id: 'attachment-1',
+        kind: 'image',
+        resourceId: 'resource-1',
+        mediaType: 'image/png',
+        byteLength: 1024,
+        width: 640,
+        height: 480,
+        sha256: 'a'.repeat(64),
+      },
+      {
+        id: 'attachment-2',
+        kind: 'image',
+        resourceId: 'resource-2',
+        mediaType: 'image/webp',
+        byteLength: 2048,
+        width: 800,
+        height: 600,
+        sha256: 'b'.repeat(64),
+      },
+    ];
+    const userMessage: AiMessage = {
+      id: 'user',
+      role: 'user',
+      type: 'user_input',
+      content: '',
+      timestamp: 1,
+      attachments,
+    };
+    const messages: AiMessage[] = [
+      message('doc', 'user', 'context_injection', 'selected source', {
+        fenceKind: 'document-context',
+      }),
+      userMessage,
+    ];
+
+    const result = await new CurrentTurnMessageAssembler({ fenceRegistry: registry }).process(messages, {});
+    const assembledUser = result.messages.find(item => item.id === 'user');
+
+    expect(assembledUser && 'attachments' in assembledUser
+      ? assembledUser.attachments?.map(attachment => attachment.id)
+      : undefined).toEqual(['attachment-1', 'attachment-2']);
   });
 
   it('does not assemble non-adjacent system-side fences', async () => {

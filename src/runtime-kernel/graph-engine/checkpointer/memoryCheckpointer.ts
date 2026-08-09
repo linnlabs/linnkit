@@ -1,4 +1,5 @@
 import { ENGINE_STATE_SCHEMA_VERSION, type EngineState } from '../types';
+import { cloneEngineStateValue } from '../functions/engineStateSnapshot';
 import {
   summarizeCheckpoint,
   type Checkpointer,
@@ -11,14 +12,12 @@ export class MemoryCheckpointer implements Checkpointer {
   private store = new Map<string, { state: EngineState; savedAt: number }>();
 
   private cloneState(state: EngineState): EngineState {
-    return {
+    const cloned: EngineState = {
       ...state,
       schemaVersion: state.schemaVersion ?? ENGINE_STATE_SCHEMA_VERSION,
-      local:
-        state.local && typeof state.local === 'object' && !Array.isArray(state.local)
-          ? { ...state.local }
-          : state.local,
+      local: cloneEngineStateValue(state.local),
     };
+    return cloned;
   }
 
   async load(checkpointKey: string): Promise<EngineState | null> {

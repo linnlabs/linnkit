@@ -1,5 +1,4 @@
 import type { MessageProcessingState } from '../providers/base';
-import { TokenCalculator } from '../../../shared/TokenCalculator';
 import type { SummarizationProviderContext } from './config';
 
 export class SummarizationTrigger {
@@ -15,7 +14,7 @@ export class SummarizationTrigger {
 
   static shouldTriggerSummarization(
     states: MessageProcessingState[],
-    remainingBudget: number,
+    _remainingBudget: number,
     totalBudget: number,
     context: SummarizationProviderContext,
     debugFn: (
@@ -24,34 +23,23 @@ export class SummarizationTrigger {
       context: SummarizationProviderContext,
     ) => void,
   ): boolean {
-    const usedTokensRough = this.calculateUsedTokens(states);
+    const usedTokens = this.calculateUsedTokens(states);
     const threshold = totalBudget * context.config.SUMMARIZATION_TRIGGER_THRESHOLD;
     const lowerBound = threshold * 0.9;
-    if (usedTokensRough < lowerBound) {
+    if (usedTokens < lowerBound) {
       return false;
     }
 
-    debugFn('📝 估算Token接近摘要阈值，切换到精确计算', {
-      usedTokensRough,
+    // 中文备注：state.tokens 已由 ContextManagerBase 的 TokenizerPort + calibration 统一写入。
+    // 这里不能再直接调用 TokenCalculator，否则 host 自定义 tokenizer 会在摘要触发分支失效。
+    const shouldTrigger = usedTokens >= threshold;
+    debugFn('📝 统一Token估算接近摘要阈值，检查是否触发摘要', {
+      usedTokens,
       threshold,
+      shouldTrigger,
     }, context);
 
-    const messagesToKeep = states
-      .filter((s) => s.action.startsWith('keep_'))
-      .map((s) => s.message);
-    const modelIdentifier = context.config.TOKEN_ENCODING_NAME;
-    const usedTokensPrecise = messagesToKeep.reduce(
-      (total, msg) => total + TokenCalculator.estimateTokensPrecise(msg.content, modelIdentifier),
-      0
-    );
-
-    debugFn('📊 精确计算结果', {
-      usedTokensPrecise,
-      threshold,
-      shouldTrigger: usedTokensPrecise >= threshold,
-    }, context);
-
-    return usedTokensPrecise >= threshold;
+    return shouldTrigger;
   }
 
   static calculateUsedTokens(states: MessageProcessingState[]): number {

@@ -15,18 +15,17 @@ interface CreateTestTickPipelineContextOverrides {
  * 仅供 packages/linnkit 内部 *.test.ts 使用。
  *
  * 默认值挑选原则：
- * - request：带最常用字段（query/promptKey/model_id/mode/maxSteps），调用方可通过 overrides.request 局部覆盖
+ * - request：带最常用字段（query/promptKey/model_id/maxSteps），调用方可通过 overrides.request 局部覆盖
  * - telemetry：默认 noopTelemetry，调用方需要断言 emit 时可在 overrides.context.telemetry 注入 spy
  * - 其他字段：所有 TickPipelineContext 必填字段都给出无副作用的零值
  */
 export function createTestTickPipelineContext(
-  overrides: CreateTestTickPipelineContextOverrides = {},
+  overrides: CreateTestTickPipelineContextOverrides = {}
 ): TickPipelineContext {
   const request: AgentInvocationRequest = {
     query: '继续执行',
     promptKey: 'default',
     model_id: 'mock-model',
-    mode: 'agent',
     maxSteps: 8,
     enableTools: false,
     availableTools: [],
@@ -39,15 +38,14 @@ export function createTestTickPipelineContext(
       history: [],
       stream: false,
     },
-    newEvents: [],
     request,
     history: [],
     forceFinalAnswer: false,
     modelId: '',
     toolSchemas: [],
+    toolCallStreamingPolicies: {},
     llmOptions: {},
     llmMessages: [],
-    mode: 'agent',
     conversationId: 'conv_test',
     turnId: 'turn_test',
     telemetry: noopTelemetry,

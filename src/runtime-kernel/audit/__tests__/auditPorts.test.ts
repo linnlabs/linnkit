@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AuditEnvelope } from '../../../contracts';
+import type { AuditPort } from '../../../ports';
 import { MemoryEventStore } from '../../graph-engine/event-store/memoryEventStore';
 import {
   AuditEnvelopePersistenceError,
@@ -12,17 +13,18 @@ import {
   createFileAudit,
   noopAudit,
 } from '../index';
+import { RunIdSchema } from '../../../contracts';
 
 const envelope: AuditEnvelope = {
   envelopeId: 'audit-1',
-  runId: 'run-1',
+  runId: RunIdSchema.parse('run-1'),
   ts: 1000,
   actor: { kind: 'host' },
   action: 'run.cancel',
   decision: { outcome: 'cancelled', reason: '用户取消' },
   scope: {
     conversationId: 'conv-1',
-    runId: 'run-1',
+    runId: RunIdSchema.parse('run-1'),
     turnId: 'turn-1',
   },
 };
@@ -72,11 +74,14 @@ describe('audit ports', () => {
 
     const persisted = await eventStore.range('conv-1');
     expect(persisted).toHaveLength(1);
-    expect(persisted[0]?.runId).toBe('run-1');
+    expect(persisted[0]?.event.run_id).toBe('run-1');
     expect(persisted[0]?.event).toMatchObject({
       type: 'audit_envelope',
       conversation_id: 'conv-1',
       turn_id: 'turn-1',
+      run_id: 'run-1',
+      lane: 'auxiliary',
+      visibility: 'none',
       envelope: {
         envelopeId: 'audit-1',
         action: 'run.cancel',
@@ -88,16 +93,18 @@ describe('audit ports', () => {
     const eventStore = new MemoryEventStore();
     const audit = createEventStoreAudit({ eventStore });
 
-    await expect(audit.emit({
-      ...envelope,
-      envelopeId: 'audit-no-conv',
-      scope: { runId: 'run-1' },
-    })).rejects.toBeInstanceOf(AuditEnvelopePersistenceError);
+    await expect(
+      audit.emit({
+        ...envelope,
+        envelopeId: 'audit-no-conv',
+        scope: { runId: RunIdSchema.parse('run-1') },
+      })
+    ).rejects.toBeInstanceOf(AuditEnvelopePersistenceError);
   });
 
   it('compositeAudit emits to every sink in order', async () => {
-    const first = { emit: vi.fn<[(typeof envelope)]>() };
-    const second = { emit: vi.fn<[(typeof envelope)]>() };
+    const first = { emit: vi.fn<AuditPort['emit']>() };
+    const second = { emit: vi.fn<AuditPort['emit']>() };
     const audit = createCompositeAudit({ ports: [first, second] });
 
     await audit.emit(envelope);

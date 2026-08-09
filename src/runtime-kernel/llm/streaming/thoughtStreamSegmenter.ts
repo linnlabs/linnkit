@@ -8,7 +8,7 @@
  * - 低耦合：不直接发事件，由上层（LlmCaller）决定如何映射为 AnyAgentEvent。
  */
 
-import { generateMessageId } from '../../../shared/ids';
+import { generateThoughtMessageId } from '../../../contracts';
 import { normalizeThoughtDeltaForMarkdown } from './markdownHeadingNormalizer';
 
 export type ThoughtDeltaEmission = {
@@ -39,7 +39,7 @@ export class ThoughtStreamSegmenter {
 
   private beginIfNeeded(now: number): void {
     if (this.currentThoughtMessageId) return;
-    this.currentThoughtMessageId = generateMessageId();
+    this.currentThoughtMessageId = generateThoughtMessageId();
     this.currentThoughtBuffer = '';
     this.thoughtStartedAt = now;
     this.lastThoughtDeltaAt = now;
@@ -76,9 +76,13 @@ export class ThoughtStreamSegmenter {
     // 标题行修正：基于展示缓冲拼接
     const normalized = normalizeThoughtDeltaForMarkdown(this.currentThoughtBuffer, thought);
     this.currentThoughtBuffer += normalized;
+    const thoughtMessageId = this.currentThoughtMessageId;
+    if (!thoughtMessageId) {
+      throw new Error('ThoughtStreamSegmenter must admit a thought identity before emitting a delta.');
+    }
 
     return {
-      thoughtMessageId: this.currentThoughtMessageId ?? generateMessageId(),
+      thoughtMessageId,
       timestamp: now,
       delta: normalized,
       thoughtStartedAt: this.thoughtStartedAt ?? now,

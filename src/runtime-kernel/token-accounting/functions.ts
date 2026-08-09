@@ -59,6 +59,7 @@ export function aggregateCanonicalUsage(usages: readonly CanonicalLlmUsage[]): T
 
   return {
     inputTokens: usages.reduce((total, usage) => total + usage.inputTokens, 0),
+    imageInputTokens: sumReportedOptional(usages.map((usage) => usage.imageInputTokens)),
     outputTokens: usages.reduce((total, usage) => total + usage.outputTokens, 0),
     reasoningTokens: sumReportedOptional(usages.map((usage) => usage.reasoningTokens)),
     cacheReadTokens: sumReportedOptional(usages.map((usage) => usage.cacheReadTokens)),
@@ -99,6 +100,7 @@ export function addUsageTotals(
 
   return {
     inputTokens: left.inputTokens + right.inputTokens,
+    imageInputTokens: sumReportedOptional([left.imageInputTokens, right.imageInputTokens]),
     outputTokens: left.outputTokens + right.outputTokens,
     reasoningTokens: sumReportedOptional([left.reasoningTokens, right.reasoningTokens]),
     cacheReadTokens: sumReportedOptional([left.cacheReadTokens, right.cacheReadTokens]),

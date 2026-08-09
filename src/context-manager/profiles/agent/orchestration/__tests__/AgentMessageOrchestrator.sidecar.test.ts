@@ -1,10 +1,14 @@
 import { describe, expect, it } from 'vitest';
 
 import type { AiMessage, RuntimeEvent, TokenRoute } from '../../../../../contracts';
-import { defineContextPolicy } from '../../../../../contracts';
+import { defineContextPolicy, ToolCallIdSchema } from '../../../../../contracts';
 import type { TokenCounterPort } from '../../../../../ports';
 import type { IAgentTask } from '../../tasks/base';
-import type { MessageProcessingState, ProviderContext, ProviderResult } from '../../context/providers';
+import type {
+  MessageProcessingState,
+  ProviderContext,
+  ProviderResult,
+} from '../../context/providers';
 import {
   AgentCoreContextProvider,
   AgentWorkingMemoryProvider,
@@ -16,6 +20,7 @@ import {
   contextPolicyToContextBuilderConfig,
   contextPolicyToProviderOptions,
 } from '../../../../shared/agentSpecAdapter';
+import { RuntimeEvent as RuntimeEventSchema } from '../../../../../contracts';
 
 const keepAllProvider = {
   name: 'KeepAllProvider',
@@ -24,10 +29,10 @@ const keepAllProvider = {
   async provide(
     states: MessageProcessingState[],
     _availableBudget: number,
-    _context: ProviderContext,
+    _context: ProviderContext
   ): Promise<ProviderResult> {
     return {
-      states: states.map((state) => ({ ...state, action: 'keep_working_memory' })),
+      states: states.map(state => ({ ...state, action: 'keep_working_memory' })),
       tokensUsed: 0,
       strategiesApplied: ['keep_all_for_test'],
       stats: {
@@ -67,6 +72,71 @@ const testToolRegistry: ToolManagerRegistry = {
   validateToolCall: () => ({ success: true }),
 };
 
+function createRemoteCountRoute(modelId: string): TokenRoute {
+  return {
+    providerId: 'test-provider',
+    modelId,
+    capabilities: {
+      supportsRemoteTokenCount: true,
+    },
+  };
+}
+
+function createToolHistoryForCompression(label: string): RuntimeEvent[] {
+  const longOutput = JSON.stringify({
+    observation: `${label} ${'x'.repeat(600)}`,
+  });
+  return [
+    RuntimeEventSchema.parse({
+      type: 'user_input',
+      id: `old_user_${label}`,
+      conversation_id: `conv_${label}`,
+      turn_id: `turn_${label}`,
+      timestamp: 1000,
+      version: 1,
+      content: '历史请求',
+      source: 'user',
+    }),
+    RuntimeEventSchema.parse({
+      type: 'tool_call_decision',
+      id: `old_tool_call_${label}`,
+      conversation_id: `conv_${label}`,
+      turn_id: `turn_${label}`,
+      timestamp: 1100,
+      version: 1,
+      tool_name: 'workspace_read',
+      tool_call_id: ToolCallIdSchema.parse(`call_${label}`),
+      phase: 'start',
+      status: 'loading',
+      payload: {
+        tool_calls: [
+          {
+            id: `call_${label}`,
+            type: 'function',
+            function: {
+              name: 'workspace_read',
+              arguments: JSON.stringify({ path: `${label}.md` }),
+            },
+          },
+        ],
+      },
+    }),
+    RuntimeEventSchema.parse({
+      type: 'tool_output',
+      id: `old_tool_output_${label}`,
+      conversation_id: `conv_${label}`,
+      turn_id: `turn_${label}`,
+      timestamp: 1200,
+      version: 1,
+      tool_name: 'workspace_read',
+      tool_call_id: ToolCallIdSchema.parse(`call_${label}`),
+      status: 'success',
+      observation: longOutput,
+      data: {},
+    }),
+  ];
+}
+
 function createOrchestrator(): AgentMessageOrchestrator {
   const providerRegistry = new ContextProviderRegistry();
   providerRegistry.register(keepAllProvider);
@@ -86,7 +156,7 @@ function createOrchestrator(): AgentMessageOrchestrator {
 
 function createMissingSidecarHistory(): RuntimeEvent[] {
   return [
-    {
+    RuntimeEventSchema.parse({
       type: 'user_input',
       id: 'old_user',
       conversation_id: 'conv_orchestrator_sidecar',
@@ -95,8 +165,8 @@ function createMissingSidecarHistory(): RuntimeEvent[] {
       version: 1,
       content: '先读文档',
       source: 'user',
-    } as RuntimeEvent,
-    {
+    }),
+    RuntimeEventSchema.parse({
       type: 'tool_call_decision',
       id: 'decision_missing_sidecar',
       conversation_id: 'conv_orchestrator_sidecar',
@@ -104,7 +174,7 @@ function createMissingSidecarHistory(): RuntimeEvent[] {
       timestamp: 1100,
       version: 1,
       tool_name: 'workspace_read',
-      tool_call_id: 'call_missing_sidecar',
+      tool_call_id: ToolCallIdSchema.parse('call_missing_sidecar'),
       phase: 'start',
       status: 'loading',
       payload: {
@@ -119,8 +189,8 @@ function createMissingSidecarHistory(): RuntimeEvent[] {
           },
         ],
       },
-    } as RuntimeEvent,
-    {
+    }),
+    RuntimeEventSchema.parse({
       type: 'tool_output',
       id: 'tool_output_missing_sidecar',
       conversation_id: 'conv_orchestrator_sidecar',
@@ -128,10 +198,11 @@ function createMissingSidecarHistory(): RuntimeEvent[] {
       timestamp: 1200,
       version: 1,
       tool_name: 'workspace_read',
-      tool_call_id: 'call_missing_sidecar',
+      tool_call_id: ToolCallIdSchema.parse('call_missing_sidecar'),
       status: 'success',
-      output: '{"observation":"README 内容"}',
-    } as RuntimeEvent,
+      observation: 'README 内容',
+      data: { content: 'README 内容' },
+    }),
   ];
 }
 
@@ -144,12 +215,14 @@ describe('AgentMessageOrchestrator provider sidecar policy', () => {
         model_id: 'cloud-deepseek-v4-flash',
       },
       createMissingSidecarHistory(),
-      new ToolManager(testToolRegistry),
+      new ToolManager(testToolRegistry)
     );
 
-    expect(result.messages.some((message) => message.type === 'tool_calls')).toBe(true);
-    expect(result.messages.some((message) => message.type === 'tool_output')).toBe(true);
-    expect(result.messages.some((message) => message.metadata?.isDegradedToolReplay === true)).toBe(false);
+    expect(result.messages.some(message => message.type === 'tool_calls')).toBe(true);
+    expect(result.messages.some(message => message.type === 'tool_output')).toBe(true);
+    expect(result.messages.some(message => message.metadata?.isDegradedToolReplay === true)).toBe(
+      false
+    );
   });
 
   it('应使用下游注入的 tool replay protocol policy 触发历史工具组协议守卫', async () => {
@@ -165,13 +238,14 @@ describe('AgentMessageOrchestrator provider sidecar policy', () => {
       },
       taskResolver: () => passThroughTask,
       providerRegistry,
-      resolveToolReplayProtocolPolicy: ({ modelId }) => modelId === 'cloud-deepseek-v4-flash'
-        ? {
-            provider: 'deepseek',
-            requiresReasoningDetailsForToolReplay: true,
-            missingSidecarBehavior: 'degrade_to_text',
-          }
-        : undefined,
+      resolveToolReplayProtocolPolicy: ({ modelId }) =>
+        modelId === 'cloud-deepseek-v4-flash'
+          ? {
+              provider: 'deepseek',
+              requiresReasoningDetailsForToolReplay: true,
+              missingSidecarBehavior: 'degrade_to_text',
+            }
+          : undefined,
     });
 
     const result = await orchestrator.processAgentConversation(
@@ -181,12 +255,14 @@ describe('AgentMessageOrchestrator provider sidecar policy', () => {
         model_id: 'cloud-deepseek-v4-flash',
       },
       createMissingSidecarHistory(),
-      new ToolManager(testToolRegistry),
+      new ToolManager(testToolRegistry)
     );
 
-    expect(result.messages.some((message) => message.type === 'tool_calls')).toBe(false);
-    expect(result.messages.some((message) => message.type === 'tool_output')).toBe(false);
-    expect(result.messages.some((message) => message.metadata?.isDegradedToolReplay === true)).toBe(true);
+    expect(result.messages.some(message => message.type === 'tool_calls')).toBe(false);
+    expect(result.messages.some(message => message.type === 'tool_output')).toBe(false);
+    expect(result.messages.some(message => message.metadata?.isDegradedToolReplay === true)).toBe(
+      true
+    );
   });
 
   it('request contextPolicy.providerReplay 应覆盖模型默认 sidecar replay 策略', async () => {
@@ -202,11 +278,12 @@ describe('AgentMessageOrchestrator provider sidecar policy', () => {
       },
       taskResolver: () => passThroughTask,
       providerRegistry,
-      resolveContextPolicy: () => defineContextPolicy({
-        providerReplay: {
-          missingSidecarBehavior: 'allow',
-        },
-      }),
+      resolveContextPolicy: () =>
+        defineContextPolicy({
+          providerReplay: {
+            missingSidecarBehavior: 'allow',
+          },
+        }),
       resolveToolReplayProtocolPolicy: () => ({
         provider: 'deepseek',
         requiresReasoningDetailsForToolReplay: true,
@@ -221,12 +298,14 @@ describe('AgentMessageOrchestrator provider sidecar policy', () => {
         model_id: 'cloud-deepseek-v4-flash',
       },
       createMissingSidecarHistory(),
-      new ToolManager(testToolRegistry),
+      new ToolManager(testToolRegistry)
     );
 
-    expect(result.messages.some((message) => message.type === 'tool_calls')).toBe(true);
-    expect(result.messages.some((message) => message.type === 'tool_output')).toBe(true);
-    expect(result.messages.some((message) => message.metadata?.isDegradedToolReplay === true)).toBe(false);
+    expect(result.messages.some(message => message.type === 'tool_calls')).toBe(true);
+    expect(result.messages.some(message => message.type === 'tool_output')).toBe(true);
+    expect(result.messages.some(message => message.metadata?.isDegradedToolReplay === true)).toBe(
+      false
+    );
   });
 });
 
@@ -267,16 +346,19 @@ describe('AgentMessageOrchestrator contextPolicy provider registry', () => {
       },
       taskResolver: () => task,
       providerRegistry: initialRegistry,
-      resolveContextPolicy: () => defineContextPolicy({
-        mustKeep: {
-          alwaysKeepFenceKinds: ['additional-context'],
-        },
-      }),
+      resolveContextPolicy: () =>
+        defineContextPolicy({
+          mustKeep: {
+            alwaysKeepFenceKinds: ['additional-context'],
+          },
+        }),
       createProviderRegistry: ({ contextPolicy }) => {
         const registry = new ContextProviderRegistry();
-        registry.register(new AgentCoreContextProvider({
-          mustKeepPolicy: contextPolicyToProviderOptions(contextPolicy).mustKeep,
-        }));
+        registry.register(
+          new AgentCoreContextProvider({
+            mustKeepPolicy: contextPolicyToProviderOptions(contextPolicy).mustKeep,
+          })
+        );
         return registry;
       },
     });
@@ -287,11 +369,11 @@ describe('AgentMessageOrchestrator contextPolicy provider registry', () => {
         promptKey: 'default',
       },
       [],
-      new ToolManager(testToolRegistry),
+      new ToolManager(testToolRegistry)
     );
 
-    expect(result.messages.map((message) => message.id)).toContain('fence_1');
-    expect(result.messages.map((message) => message.id)).toContain('current_user');
+    expect(result.messages.map(message => message.id)).toContain('fence_1');
+    expect(result.messages.map(message => message.id)).toContain('current_user');
   });
 
   it('按 request 的 workingMemory policy 重建 provider registry，并限制历史工具组', async () => {
@@ -307,7 +389,7 @@ describe('AgentMessageOrchestrator contextPolicy provider registry', () => {
           metadata: {
             tool_calls: [
               {
-                id: toolCallId,
+                id: ToolCallIdSchema.parse(toolCallId),
                 type: 'function',
                 function: {
                   name: 'workspace_read',
@@ -324,8 +406,9 @@ describe('AgentMessageOrchestrator contextPolicy provider registry', () => {
           content: `工具结果 ${index}`,
           timestamp: 1000 + index * 10 + 1,
           metadata: {
-            tool_call_id: toolCallId,
+            tool_call_id: ToolCallIdSchema.parse(toolCallId),
             tool_name: 'workspace_read',
+            data: { index },
           },
         },
       ];
@@ -357,20 +440,23 @@ describe('AgentMessageOrchestrator contextPolicy provider registry', () => {
       },
       taskResolver: () => task,
       providerRegistry: initialRegistry,
-      resolveContextPolicy: () => defineContextPolicy({
-        toolHistory: {
-          maxInteractionGroups: 1,
-        },
-        workingMemory: {
-          maxRecentToolInteractions: 1,
-          minToolInteractionsToKeep: 0,
-        },
-      }),
+      resolveContextPolicy: () =>
+        defineContextPolicy({
+          toolHistory: {
+            maxInteractionGroups: 1,
+          },
+          workingMemory: {
+            maxRecentToolRuns: 1,
+            minToolInteractionsToKeep: 0,
+          },
+        }),
       createProviderRegistry: ({ contextPolicy }) => {
         const registry = new ContextProviderRegistry();
-        registry.register(new AgentWorkingMemoryProvider(
-          contextPolicy ? contextPolicyToContextBuilderConfig(contextPolicy) : {},
-        ));
+        registry.register(
+          new AgentWorkingMemoryProvider(
+            contextPolicy ? contextPolicyToContextBuilderConfig(contextPolicy) : {}
+          )
+        );
         return registry;
       },
     });
@@ -381,9 +467,9 @@ describe('AgentMessageOrchestrator contextPolicy provider registry', () => {
         promptKey: 'default',
       },
       [],
-      new ToolManager(testToolRegistry),
+      new ToolManager(testToolRegistry)
     );
-    const ids = result.messages.map((message) => message.id);
+    const ids = result.messages.map(message => message.id);
 
     expect(ids).not.toContain('tool_calls_1');
     expect(ids).not.toContain('tool_output_1');
@@ -403,15 +489,16 @@ describe('AgentMessageOrchestrator contextPolicy provider registry', () => {
       },
       taskResolver: () => passThroughTask,
       providerRegistry,
-      resolveContextPolicy: () => defineContextPolicy({
-        budget: {
-          maxTokens: 20_000,
-          reservedForResponse: 3000,
-        },
-        contextTrace: {
-          enabled: true,
-        },
-      }),
+      resolveContextPolicy: () =>
+        defineContextPolicy({
+          budget: {
+            maxTokens: 20_000,
+            reservedForResponse: 3000,
+          },
+          contextTrace: {
+            enabled: true,
+          },
+        }),
     });
 
     const result = await orchestrator.processAgentConversation(
@@ -420,7 +507,7 @@ describe('AgentMessageOrchestrator contextPolicy provider registry', () => {
         promptKey: 'default',
       },
       [],
-      new ToolManager(testToolRegistry),
+      new ToolManager(testToolRegistry)
     );
 
     expect(result.metadata.tokenUsage.budget).toBe(17_000);
@@ -430,17 +517,14 @@ describe('AgentMessageOrchestrator contextPolicy provider registry', () => {
 
   it('按 resolveTokenRoute 注入 route-aware TokenCounterPort，不按模型名猜 route', async () => {
     const route: TokenRoute = {
+      ...createRemoteCountRoute('cloud:claude-sonnet-4-6'),
       providerId: 'anthropic',
-      baseURL: 'https://api.linnyai.com/proxy/anthropic',
-      modelId: 'cloud:claude-sonnet-4-6',
+      baseURL: 'https://api.example.com/proxy/anthropic',
       providerModelId: 'claude-sonnet-4-6',
-      capabilities: {
-        supportsRemoteTokenCount: true,
-      },
     };
     const calls: Array<Parameters<TokenCounterPort['countMessages']>[0]> = [];
     const tokenCounter: TokenCounterPort = {
-      countMessages: async (input) => {
+      countMessages: async input => {
         calls.push(input);
         return {
           inputTokens: 123,
@@ -462,17 +546,19 @@ describe('AgentMessageOrchestrator contextPolicy provider registry', () => {
       taskResolver: () => passThroughTask,
       providerRegistry,
       tokenCounter,
-      resolveTokenRoute: ({ modelId }) => modelId === 'cloud:claude-sonnet-4-6' ? route : undefined,
-      resolveContextPolicy: () => defineContextPolicy({
-        tokenEstimation: {
-          remoteCount: {
+      resolveTokenRoute: ({ modelId }) =>
+        modelId === 'cloud:claude-sonnet-4-6' ? route : undefined,
+      resolveContextPolicy: () =>
+        defineContextPolicy({
+          tokenEstimation: {
+            remoteCount: {
+              enabled: true,
+            },
+          },
+          contextTrace: {
             enabled: true,
           },
-        },
-        contextTrace: {
-          enabled: true,
-        },
-      }),
+        }),
     });
 
     const result = await orchestrator.processAgentConversation(
@@ -482,18 +568,121 @@ describe('AgentMessageOrchestrator contextPolicy provider registry', () => {
         model_id: 'cloud:claude-sonnet-4-6',
       },
       [],
-      new ToolManager(testToolRegistry),
+      new ToolManager(testToolRegistry)
     );
 
     expect(calls).toHaveLength(1);
     expect(calls[0]?.route).toEqual(route);
     expect(result.metadata.tokenUsage.estimated).toBe(123);
+    expect(result.metadata.tokenUsage.source).toBe('test-fixture');
+    expect(result.metadata.tokenUsage.confidence).toBe('provider-estimate');
     expect(result.contextBuildResult.contextTrace?.remoteTokenCount).toMatchObject({
       enabled: true,
       attempted: true,
       applied: true,
       route,
       inputTokens: 123,
+    });
+  });
+
+  it('并发请求不应通过共享 AgentContextManager 串用 token route', async () => {
+    const routeA = createRemoteCountRoute('model-a');
+    const routeB = createRemoteCountRoute('model-b');
+    const countedRoutes: string[] = [];
+    const tokenCounter: TokenCounterPort = {
+      countMessages: async input => {
+        countedRoutes.push(input.route.modelId);
+        return {
+          inputTokens: input.route.modelId === routeA.modelId ? 101 : 202,
+          source: 'test-fixture',
+          confidence: 'provider-estimate',
+        };
+      },
+    };
+    const providerRegistry = new ContextProviderRegistry();
+    providerRegistry.register(keepAllProvider);
+    let orchestrator: AgentMessageOrchestrator | undefined;
+    let requestB: ReturnType<AgentMessageOrchestrator['processAgentConversation']> | undefined;
+    const toolRegistry: ToolManagerRegistry = {
+      ...testToolRegistry,
+      getTool: toolName =>
+        toolName === 'workspace_read'
+          ? {
+              getExecutionSummary: output => {
+                if (output.includes('request-a')) {
+                  if (!orchestrator) {
+                    throw new Error('orchestrator must be initialized before preprocessing');
+                  }
+                  requestB = orchestrator.processAgentConversation(
+                    {
+                      query: 'B',
+                      promptKey: 'default',
+                      model_id: routeB.modelId,
+                    },
+                    [],
+                    new ToolManager(testToolRegistry)
+                  );
+                }
+                return 'summary';
+              },
+            }
+          : undefined,
+    };
+    orchestrator = new AgentMessageOrchestrator({
+      tokenBudget: {
+        maxTokens: 100_000,
+        reservedForResponse: 1000,
+      },
+      processing: {
+        debugMode: false,
+      },
+      taskResolver: () => passThroughTask,
+      providerRegistry,
+      tokenCounter,
+      resolveTokenRoute: ({ modelId }) => {
+        if (modelId === routeA.modelId) return routeA;
+        if (modelId === routeB.modelId) return routeB;
+        return undefined;
+      },
+      resolveContextPolicy: () =>
+        defineContextPolicy({
+          tokenEstimation: {
+            remoteCount: {
+              enabled: true,
+            },
+          },
+          contextTrace: {
+            enabled: true,
+          },
+          toolHistory: {
+            retentionMode: 'compress',
+            keepLatestRuns: 0,
+          },
+        }),
+    });
+
+    const resultA = await orchestrator.processAgentConversation(
+      {
+        query: 'A',
+        promptKey: 'default',
+        model_id: routeA.modelId,
+      },
+      createToolHistoryForCompression('request-a'),
+      new ToolManager(toolRegistry)
+    );
+    if (!requestB) {
+      throw new Error('request B should be started from request A preprocessor');
+    }
+    const resultB = await requestB;
+
+    expect(countedRoutes).toEqual(expect.arrayContaining(['model-a', 'model-b']));
+    expect(resultA.contextBuildResult.contextTrace?.remoteTokenCount).toMatchObject({
+      route: routeA,
+      inputTokens: 101,
+    });
+    expect(resultB.contextBuildResult.contextTrace?.remoteTokenCount).toMatchObject({
+      route: routeB,
+      inputTokens: 202,
     });
   });
 });

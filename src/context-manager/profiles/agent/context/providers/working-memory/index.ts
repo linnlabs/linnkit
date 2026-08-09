@@ -4,8 +4,8 @@
  *
  * 该模块包含 AgentWorkingMemoryProvider 的辅助类：
  * - ToolPairMatcher: 工具对配对器
- * - ToolPairTruncator: 工具对截断器
  * - ReplacementSourceTagger: 替换源标记器
+ * - ToolRunWindow: 工具 turn 保护窗口计算
  * - CurrentToolInteractionRetention: P1 当前轮工具组保留策略
  * - HistoricalToolInteractionRetention: P3 历史工具组保留策略
  * - ToolGroupKeeper: 工具组保留原语
@@ -14,9 +14,12 @@
  */
 
 export { ToolPairMatcher } from './ToolPairMatcher';
-export { ToolPairTruncator } from './ToolPairTruncator';
 export { ReplacementSourceTagger } from './ReplacementSourceTagger';
 export { buildHistoricalToolCandidates } from './HistoricalToolCandidates';
+export {
+  isGroupInProtectedToolRunWindow,
+  resolveProtectedToolRunWindow,
+} from './ToolRunWindow';
 export { promoteMostRecentToolPair } from './PostToolCallRetention';
 export { processTextConversations } from './TextConversationRetention';
 export { processToolInteractions } from './CurrentToolInteractionRetention';
@@ -28,6 +31,5 @@ export type {
   HistoricalToolRetentionResult,
   ToolInteractionRetentionResult,
   ToolPairFitResult,
-  TruncationResult,
   WorkingMemoryRetentionResult,
 } from './types';

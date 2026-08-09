@@ -1,7 +1,6 @@
 import type { AgentInvocationRequest } from '../../ports';
-import type { AnyAgentEvent } from '../events/agentEvents';
 import type { ToolExecutionContext } from '../tools/toolExecutionContext';
-import type { EngineLocalState, ExecutorLocalState } from './types';
+import type { EngineLocalState, ExecutorLocalState, RuntimeEventSink } from './types';
 import type { RuntimeEvent } from '../../contracts';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -12,7 +11,6 @@ function isAgentInvocationRequest(value: unknown): value is AgentInvocationReque
   if (!isRecord(value)) return false;
   if (typeof value.query !== 'string') return false;
   if (typeof value.promptKey !== 'string') return false;
-  if (value.mode !== undefined && value.mode !== 'agent' && value.mode !== 'chat') return false;
   if (value.maxSteps !== undefined && typeof value.maxSteps !== 'number') return false;
   if (value.enableTools !== undefined && typeof value.enableTools !== 'boolean') return false;
   if (value.availableTools !== undefined) {
@@ -40,9 +38,7 @@ function isSummarizationCallbacks(value: unknown): value is SummarizationCallbac
   return isRecord(value);
 }
 
-type GraphSseSink = (evt: AnyAgentEvent | RuntimeEvent) => RuntimeEvent[] | void;
-
-function isGraphSseSink(value: unknown): value is GraphSseSink {
+function isRuntimeEventSink(value: unknown): value is RuntimeEventSink {
   return typeof value === 'function';
 }
 
@@ -52,7 +48,7 @@ export interface GraphAgentLocalView {
   request?: AgentInvocationRequest;
   toolContext?: ToolExecutionContext;
   history: RuntimeEvent[];
-  sseSink?: GraphSseSink;
+  runtimeEventSink: RuntimeEventSink;
   executorLocal?: ExecutorLocalState;
   answerId?: string;
   chunkSeq: number;
@@ -77,7 +73,7 @@ export function readGraphAgentLocal(local: EngineLocalState | undefined): GraphA
     request: isAgentInvocationRequest(source.request) ? source.request : undefined,
     toolContext: isToolExecutionContext(source.toolContext) ? source.toolContext : undefined,
     history: isRuntimeEventArray(source.history) ? source.history : [],
-    sseSink: isGraphSseSink(source.sseSink) ? source.sseSink : undefined,
+    runtimeEventSink: requireRuntimeEventSink(source),
     executorLocal: isExecutorLocalState(source.executorLocal) ? source.executorLocal : undefined,
     answerId,
     chunkSeq,
@@ -86,4 +82,15 @@ export function readGraphAgentLocal(local: EngineLocalState | undefined): GraphA
       ? source.summarizationCallbacks
       : undefined,
   };
+}
+
+/** 可执行 Graph 必须由装配层显式提供 admission sink，节点不得返回未路由草稿。 */
+export function requireRuntimeEventSink(
+  local: EngineLocalState | Record<string, unknown> | undefined,
+): RuntimeEventSink {
+  const source = local ?? {};
+  if (!isRuntimeEventSink(source.runtimeEventSink)) {
+    throw new Error('Graph execution requires an explicit runtimeEventSink.');
+  }
+  return source.runtimeEventSink;
 }

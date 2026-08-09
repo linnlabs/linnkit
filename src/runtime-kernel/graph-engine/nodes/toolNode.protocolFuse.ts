@@ -1,9 +1,23 @@
-import { recordToolProtocolError } from '../../../shared/llmAuditRecorder';
+import { ENGINE_ERROR_CODES } from '../../../shared/errorClassifier';
+import type { ToolCallId } from '../../../contracts';
 
 export const TOOL_PROTOCOL_ERROR_FUSE_THRESHOLD = 4;
 
+export interface ToolProtocolFuseError extends Error {
+  readonly name: 'ToolProtocolFuseError';
+  readonly errorCode: typeof ENGINE_ERROR_CODES.TOOL_PROTOCOL_FUSE;
+}
+
+export interface ToolProtocolErrorAudit {
+  toolName: string;
+  toolCallId?: ToolCallId;
+  rawArguments?: string;
+  parsedArguments: Record<string, unknown>;
+  error: string;
+}
+
 type ProtocolExecLike = {
-  errorKind?: 'protocol' | 'execution';
+  errorKind?: 'protocol' | 'execution' | 'capability';
   error?: string;
 };
 
@@ -20,22 +34,26 @@ export function checkProtocolFuse(params: {
   local: Record<string, unknown>;
   exec: ProtocolExecLike;
   toolName: string;
-  toolCallId?: string;
+  toolCallId?: ToolCallId;
   rawArguments?: string;
   parsedArguments: Record<string, unknown>;
-}): { isProtocolError: boolean; nextCount: number; shouldFuse: boolean } {
+}): {
+  isProtocolError: boolean;
+  nextCount: number;
+  shouldFuse: boolean;
+  protocolErrorAudit?: ToolProtocolErrorAudit;
+} {
   const isProtocolError = params.exec.errorKind === 'protocol';
 
-  if (isProtocolError) {
-    recordToolProtocolError({
-      mode: 'agent',
-      toolName: params.toolName,
-      toolCallId: params.toolCallId,
-      rawArguments: params.rawArguments,
-      parsedArguments: params.parsedArguments,
-      error: params.exec.error ?? 'unknown protocol error',
-    });
-  }
+  const protocolErrorAudit = isProtocolError
+    ? {
+        toolName: params.toolName,
+        ...(params.toolCallId === undefined ? {} : { toolCallId: params.toolCallId }),
+        ...(params.rawArguments === undefined ? {} : { rawArguments: params.rawArguments }),
+        parsedArguments: params.parsedArguments,
+        error: params.exec.error ?? 'unknown protocol error',
+      }
+    : undefined;
 
   const previousCount =
     typeof params.local._consecutiveToolProtocolErrors === 'number'
@@ -47,13 +65,27 @@ export function checkProtocolFuse(params: {
     isProtocolError,
     nextCount,
     shouldFuse: isProtocolError && nextCount >= TOOL_PROTOCOL_ERROR_FUSE_THRESHOLD,
+    ...(protocolErrorAudit === undefined ? {} : { protocolErrorAudit }),
   };
 }
 
-export function createToolProtocolFuseError(nextCount: number, error: string | undefined): Error {
+export function createToolProtocolFuseError(
+  nextCount: number,
+  error: string | undefined
+): ToolProtocolFuseError {
   const fuseError = new Error(
     `[ToolNode] Consecutive tool protocol errors reached fuse threshold (${nextCount}): ${error ?? 'unknown protocol error'}`
-  );
-  fuseError.name = 'ToolProtocolFuseError';
+  ) as ToolProtocolFuseError;
+  Object.defineProperty(fuseError, 'name', {
+    value: 'ToolProtocolFuseError',
+    enumerable: false,
+    writable: true,
+    configurable: true,
+  });
+  Object.defineProperty(fuseError, 'errorCode', {
+    value: ENGINE_ERROR_CODES.TOOL_PROTOCOL_FUSE,
+    enumerable: true,
+    writable: false,
+  });
   return fuseError;
 }

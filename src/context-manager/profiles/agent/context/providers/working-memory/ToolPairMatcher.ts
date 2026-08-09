@@ -1,6 +1,5 @@
-import type { AgentContextBuilderConfig } from '../../config';
 import type { MessageProcessingState } from '../base';
-import type { ToolPairFitResult, DebugFn } from './types';
+import type { ToolPairFitResult } from './types';
 import {
   buildToolInteractionGroupsFromStates,
   type ToolInteractionGroup,
@@ -13,8 +12,6 @@ import type { AiMessage } from '../../../../../../contracts';
  * 负责工具调用与工具结果的配对匹配，确保工具交互的完整性
  */
 export class ToolPairMatcher {
-  constructor(private readonly config: AgentContextBuilderConfig) {}
-
   /**
    * 判断是否为"预处理阶段压缩的工具历史摘要消息"
    * - 该类消息不再是 tool_calls/tool_output 的原始结构，而是 assistant 的自然语言记录
@@ -70,7 +67,6 @@ export class ToolPairMatcher {
     group: ToolInteractionGroup<MessageProcessingState>,
     currentTokens: number,
     budgetLimit: number,
-    debugFn?: DebugFn
   ): ToolPairFitResult {
     const pair = group.messages;
     const pairTokens = pair.reduce((sum, state) => sum + state.tokens, 0);
@@ -79,7 +75,6 @@ export class ToolPairMatcher {
     if (currentTokens + pairTokens > budgetLimit) {
       return {
         canFit: false,
-        needsTruncation: true,
         group,
         pair: pair,
         totalTokens: pairTokens,
@@ -87,25 +82,8 @@ export class ToolPairMatcher {
       };
     }
 
-    // 检查单个工具交互对的最大Token限制
-    if (pairTokens > this.config.MAX_TOOL_PAIR_TOKENS) {
-      debugFn?.('⚠️ 工具交互对超过最大Token限制', {
-        pairTokens,
-        maxAllowed: this.config.MAX_TOOL_PAIR_TOKENS
-      });
-      return {
-        canFit: false,
-        needsTruncation: true,
-        group,
-        pair: pair,
-        totalTokens: pairTokens,
-        reason: 'pair_too_large'
-      };
-    }
-
     return {
       canFit: true,
-      needsTruncation: false,
       group,
       pair: pair,
       totalTokens: pairTokens

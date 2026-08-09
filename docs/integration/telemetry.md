@@ -1,35 +1,50 @@
 # Telemetry · 接 TelemetryPort（可选）
 
-> **What** · `TelemetryPort` 接入 —— LLM 调用耗时 / token usage / tool 时延上报（含 `runId` / `parentRunId` 用于成本聚合）。
+> **What** · `TelemetryPort` 接入 —— LLM 调用耗时 / token usage / context build / tool 时延 / graph node / run lifecycle 上报（含 `runId` / `parentRunId` 用于成本聚合）。
 > **When to read** · 接 Datadog / OpenTelemetry / Prometheus；做成本预警；监控 P99 时延；做多租户用量统计。
 > **Prerequisites** · [`02-quickstart.md`](./02-quickstart.md)。
-> **Key exports** · `TelemetryPort` / `telemetry` namespace + `withLLMTelemetryContext` from `@linnlabs/linnkit/runtime-kernel`。
-> **Related** · [`audit.md`](./audit.md) · [`run-supervisor.md`](./run-supervisor.md) · [`testing.md`](./testing.md)（`createMockTelemetryPort`）
+> **Key exports** · `TelemetryPort` / `telemetry` namespace from `@linnlabs/linnkit/runtime-kernel` · `withLLMTelemetryContext` from `@linnlabs/linnkit`（兼容旧 benchmark / hook）。
+> **Related** · [`token-management.md`](./token-management.md) · [`audit.md`](./audit.md) · [`run-supervisor.md`](./run-supervisor.md) · [`testing.md`](./testing.md)（`createMockTelemetryPort`）
 
 ## 1. linnkit 给你的合同
 
 - `TelemetryPort`（来自 `@linnlabs/linnkit/runtime-kernel`，在 `telemetry` namespace 下）：`emit(event)` + 可选 `flush()`。
-- `TelemetryEvent` / `TelemetryEventKind` / `TelemetryScope`（同上）：4 类 kind（`llm_call` / `tool_call` / `graph_node` / `run_lifecycle`）的事实 schema。
-- `withLLMTelemetryContext`（来自 `@linnlabs/linnkit` 根入口）：把 run 作用域的 telemetry context 通过 AsyncLocalStorage 挂上去，避免跨异步边界丢 trace。
+- `TelemetryEvent` / `TelemetryEventKind` / `TelemetryScope`（同上）：5 类 kind（`llm_call` / `tool_call` / `context_build` / `graph_node` / `run_lifecycle`）的事实 schema。
+- `withLLMTelemetryContext`（来自 `@linnlabs/linnkit` 根入口）：兼容旧 benchmark / hook 的 AsyncLocalStorage 聚合工具；runtime-kernel 生产路径不再直接写它。
+
+中文备注：Q-M13 后，kernel 内部只写显式 `TelemetryPort.emit(...)`。如果 host 仍需要 ALS 聚合，应在自己的 `TelemetryPort` adapter 外层实现，而不是让 stage / middleware 直接调用 `recordLlmCallTelemetry`。
 
 ## 2. linnkit 自带的 mock primitive
 
 - `noopTelemetry`（从 `runtimeKernel.telemetry` namespace 取）：默认无副作用实现，写测试时直接当 placeholder。
 - `createMockTelemetryPort()`（来自 `@linnlabs/linnkit/testkit`）：按 `scope.runId ?? scope.turnId` 收集 telemetry，并提供可被 `RunHandle.cost()` 读取的 `RunCostCollector`。
 
-## 3. 你必须做的
+## 3. 当前自动发出的事件
+
+| kind | 发出位置 | 用途 |
+|---|---|---|
+| `llm_call` | `llmTelemetryMiddleware`；context 内部摘要 LLM 调用 | LLM latency、usage、成本聚合 |
+| `context_build` | `buildContextStage` | context token estimate、component ledger、校准 |
+| `tool_call` | `ToolNode` | tool latency、成功/失败、错误码 |
+| `graph_node` | `runGraphNodeWithTelemetry` | 每个 graph node 执行耗时 |
+| `run_lifecycle` | `runWithLifecycleTelemetry` | spawned/completed/failed/cancelled |
+
+`llm_call.canonicalUsage` 是 provider 响应 usage 的标准口径，适合接成本聚合和 actual usage 统计；`context_build.tokenEstimate` 是上下文构建期估算，适合做裁剪解释和 calibration 配对。两者不是同一个数字，完整说明见 [`token-management.md`](./token-management.md)。
+
+## 4. 你必须做的
 
 1. 决定 telemetry 落到哪：日志、指标、tracing 管道、host 自家 telemetry sink。
 2. 把 `TelemetryPort` 作为可选能力接入 runtime-assembly。
-3. 用 `withLLMTelemetryContext(scope, () => ...)` 把每次 run 包起来，让 LLM 调用、tool 调用都自动继承 scope。
+3. 确保 adapter 按 `scope.runId` / `scope.parentRunId` 聚合成本；同步 child-run 必须保留父子关系。
 
-## 4. 你不要做的
+## 5. 你不要做的
 
 - 不要把 telemetry 直接和 UI 事件流绑死（UI 走实时通道，telemetry 走 sink）。
 - 不要把 tracing id / run id 透传到模型供应商请求体里。
 - 不要把"先埋点再说"的 ad-hoc 日志散在业务文件里——所有可观测点收敛进 telemetry port。
+- 不要在新 kernel 代码里直接调用 `recordLlmCallTelemetry`；它只是旧 ALS 聚合兼容层。
 
-## 5. Scope 字段与父子 run
+## 6. Scope 字段与父子 run
 
 | 字段 | 何时填 |
 |---|---|
@@ -41,8 +56,8 @@
 
 正确填写后，`RunCostCollector.snapshot(parentRunId)` 可以返回 `childrenTotal`，把同步子 agent 的 LLM cost 聚合到父 run。
 
-## 6. 最小验证
+## 7. 最小验证
 
-- 单测：注入一个 `Array.push`-style sink，断言一次 run 里 4 类 kind 各发了至少 1 次。
-- 集成测：`withLLMTelemetryContext` 内嵌的 LLM 调用拿到的 `scope` 与外层一致；并发两个 run 时 scope 不串。
+- 单测：注入一个 `Array.push`-style sink，断言一次 run 里关键 kind 发出且 scope 含 `runId`。
+- 集成测：并发两个 run 时 `scope.runId` 不串；child-run 的 `parentRunId` 不丢。
 - 集成测：父 agent 工具内 `invokeChildRun` → 父 run 的 `cost().childrenTotal.llmCost > 0`，且子 run 自身 cost 不重复计入父 run 的直接 cost。

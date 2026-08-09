@@ -1,5 +1,6 @@
 import type { CanonicalLlmUsage } from '../contracts';
-import type { LlmCallOptions, LlmRequestMessage, ProviderReasoningDetails, ToolCallChunk } from './ai-engine.types';
+import type { LlmCallOptions, ProviderReasoningDetails, ToolCallChunk } from './ai-engine.types';
+import type { ResolvedLlmInputMessage } from './llm-input-materialization';
 
 export type AgentAiEngineStreamContent =
   | string
@@ -13,13 +14,13 @@ export type AgentAiEngineStreamContent =
 export interface AgentAiEngine {
   chatCompletion(
     modelId: string,
-    messages: LlmRequestMessage[],
+    messages: ResolvedLlmInputMessage[],
     options?: LlmCallOptions & { signal?: AbortSignal }
   ): Promise<unknown>;
 
   chatCompletionStream(
     modelId: string,
-    messages: LlmRequestMessage[],
+    messages: ResolvedLlmInputMessage[],
     options?: LlmCallOptions & { signal?: AbortSignal; stream_options?: { include_usage?: boolean } },
     onContent?: (content: AgentAiEngineStreamContent) => void,
     onError?: (error: Error) => void,

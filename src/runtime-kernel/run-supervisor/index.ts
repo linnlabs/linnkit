@@ -1,7 +1,13 @@
 export { MemoryRunRegistryStore } from './memoryRunRegistryStore';
 export { DefaultRunHandle, runMetaFromRecord } from './runHandle';
 export { DefaultRunSupervisor } from './runSupervisor';
-export { NotImplementedError, RunAlreadyRegisteredError, RunNotFoundError } from './runErrors';
+export {
+  NotImplementedError,
+  RunAlreadyRegisteredError,
+  RunConcurrencyKeyOccupiedError,
+  RunConcurrencyLimitExceededError,
+  RunNotFoundError,
+} from './runErrors';
 
 export type {
   ListRunsFilter,
@@ -25,14 +31,17 @@ export type {
 export type {
   DefaultRunSupervisorOptions,
   FindActiveByConversationOptions,
+  FindRunsByConversationOptions,
   RunExecutionContext,
   RunExecutorPort,
   RunOutcome,
   RunRegistrationSpec,
+  RunResumeClaim,
+  RunResumeInteraction,
   RunSnapshot,
   RunSupervisor,
   RunTerminalError,
   RunTerminalEvent,
   RunTerminalStatus,
   RunWaitForTerminalOptions,
-} from './runSupervisor';
+} from './definitions/runSupervisorContracts';

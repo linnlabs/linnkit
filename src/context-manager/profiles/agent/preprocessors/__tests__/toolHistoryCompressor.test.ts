@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { AiMessage } from '../../../../../contracts';
 import { ToolHistoryCompressorPreprocessor } from '../toolHistoryCompressor';
+import { ToolCallIdSchema } from '../../../../../contracts';
 
 function createToolCallsMessage(opts: {
   id: string;
@@ -33,8 +34,8 @@ function createToolCallsMessage(opts: {
     timestamp: opts.timestamp,
     metadata: {
       ...(opts.reasoningDetails ? { reasoning_details: opts.reasoningDetails } : {}),
-      tool_calls: toolCalls.map((toolCall) => ({
-        id: toolCall.toolCallId,
+      tool_calls: toolCalls.map(toolCall => ({
+        id: ToolCallIdSchema.parse(toolCall.toolCallId),
         type: 'function',
         function: {
           name: toolCall.toolName,
@@ -52,7 +53,7 @@ function createToolOutputMessage(opts: {
   toolCallId: string;
   toolName: string;
   content: string;
-  rawOutput?: string;
+  checkpointData?: { _type: 'context_checkpoint'; summary: string };
 }): AiMessage {
   return {
     id: opts.id,
@@ -61,9 +62,9 @@ function createToolOutputMessage(opts: {
     content: opts.content,
     timestamp: opts.timestamp,
     metadata: {
-      tool_call_id: opts.toolCallId,
+      tool_call_id: ToolCallIdSchema.parse(opts.toolCallId),
       tool_name: opts.toolName,
-      ...(opts.rawOutput ? { raw_output: opts.rawOutput } : {}),
+      data: opts.checkpointData ?? { value: opts.content },
     },
   };
 }
@@ -80,7 +81,10 @@ function createUserInput(id: string, timestamp: number, content: string): AiMess
 
 describe('ToolHistoryCompressorPreprocessor', () => {
   it('drops older tool groups by default and keeps the latest two raw groups', async () => {
-    const preprocessor = new ToolHistoryCompressorPreprocessor({ strategy: 'per-pair', keepLatestToolPairs: 2 });
+    const preprocessor = new ToolHistoryCompressorPreprocessor({
+      strategy: 'per-pair',
+      keepLatestToolPairs: 2,
+    });
 
     const messages: AiMessage[] = [
       createUserInput('u_old', 1000, '旧问题'),
@@ -138,18 +142,18 @@ describe('ToolHistoryCompressorPreprocessor', () => {
 
     const result = await preprocessor.process(messages, { debugMode: false });
 
-    expect(result.messages.some((message) => message.id === 'a_tc_1')).toBe(false);
-    expect(result.messages.some((message) => message.id === 't_out_1')).toBe(false);
-    expect(result.messages.some((message) => message.id === 'a_tc_2')).toBe(true);
-    expect(result.messages.some((message) => message.id === 't_out_2')).toBe(true);
-    expect(result.messages.some((message) => message.id === 'a_tc_3')).toBe(true);
-    expect(result.messages.some((message) => message.id === 't_out_3')).toBe(true);
+    expect(result.messages.some(message => message.id === 'a_tc_1')).toBe(false);
+    expect(result.messages.some(message => message.id === 't_out_1')).toBe(false);
+    expect(result.messages.some(message => message.id === 'a_tc_2')).toBe(true);
+    expect(result.messages.some(message => message.id === 't_out_2')).toBe(true);
+    expect(result.messages.some(message => message.id === 'a_tc_3')).toBe(true);
+    expect(result.messages.some(message => message.id === 't_out_3')).toBe(true);
 
     const compressed = result.messages.find(
-      (message) =>
+      message =>
         message.role === 'assistant' &&
         message.type === 'final_answer' &&
-        message.metadata?.isCompressedToolHistory === true,
+        message.metadata?.isCompressedToolHistory === true
     );
 
     expect(compressed).toBeUndefined();
@@ -212,15 +216,15 @@ describe('ToolHistoryCompressorPreprocessor', () => {
 
     const result = await preprocessor.process(messages, { debugMode: false });
     const compressed = result.messages.find(
-      (message) =>
+      message =>
         message.role === 'assistant' &&
         message.type === 'final_answer' &&
-        message.metadata?.isCompressedToolHistory === true,
+        message.metadata?.isCompressedToolHistory === true
     );
 
     expect(compressed).toBeDefined();
     expect(compressed?.metadata?.replacementSourceIds).toEqual(
-      expect.arrayContaining(['a_tc_1', 't_out_1']),
+      expect.arrayContaining(['a_tc_1', 't_out_1'])
     );
     expect(compressed?.content).toContain('我已经调用了工具');
     expect(compressed?.content).not.toContain('[观察]');
@@ -232,11 +236,6 @@ describe('ToolHistoryCompressorPreprocessor', () => {
       strategy: 'per-pair',
       retentionMode: 'compress',
       keepLatestToolPairs: 2,
-    });
-
-    const checkpointRawOutput = JSON.stringify({
-      data: { _type: 'context_checkpoint', summary: 'phase done' },
-      observation: 'Context checkpoint created.',
     });
 
     const messages: AiMessage[] = [
@@ -296,7 +295,7 @@ describe('ToolHistoryCompressorPreprocessor', () => {
         toolCallId: 'tc_cp',
         toolName: 'context_checkpoint',
         content: 'Context checkpoint created.',
-        rawOutput: checkpointRawOutput,
+        checkpointData: { _type: 'context_checkpoint', summary: 'phase done' },
       }),
       {
         id: 'a_old',
@@ -310,14 +309,14 @@ describe('ToolHistoryCompressorPreprocessor', () => {
 
     const result = await preprocessor.process(messages, { debugMode: false });
 
-    expect(result.messages.some((message) => message.id === 'a_tc_1')).toBe(false);
-    expect(result.messages.some((message) => message.id === 't_out_1')).toBe(false);
-    expect(result.messages.some((message) => message.id === 'a_tc_2')).toBe(true);
-    expect(result.messages.some((message) => message.id === 't_out_2')).toBe(true);
-    expect(result.messages.some((message) => message.id === 'a_tc_3')).toBe(true);
-    expect(result.messages.some((message) => message.id === 't_out_3')).toBe(true);
-    expect(result.messages.some((message) => message.id === 'a_tc_cp')).toBe(true);
-    expect(result.messages.some((message) => message.id === 't_out_cp')).toBe(true);
+    expect(result.messages.some(message => message.id === 'a_tc_1')).toBe(false);
+    expect(result.messages.some(message => message.id === 't_out_1')).toBe(false);
+    expect(result.messages.some(message => message.id === 'a_tc_2')).toBe(true);
+    expect(result.messages.some(message => message.id === 't_out_2')).toBe(true);
+    expect(result.messages.some(message => message.id === 'a_tc_3')).toBe(true);
+    expect(result.messages.some(message => message.id === 't_out_3')).toBe(true);
+    expect(result.messages.some(message => message.id === 'a_tc_cp')).toBe(true);
+    expect(result.messages.some(message => message.id === 't_out_cp')).toBe(true);
     expect(result.appliedStrategies).toContain('tool_history_compression');
   });
 
@@ -382,20 +381,20 @@ describe('ToolHistoryCompressorPreprocessor', () => {
 
     const result = await preprocessor.process(messages, { debugMode: false });
 
-    expect(result.messages.some((message) => message.id === 'a_tc_multi')).toBe(false);
-    expect(result.messages.some((message) => message.id === 't_out_multi_1')).toBe(false);
-    expect(result.messages.some((message) => message.id === 't_out_multi_2')).toBe(false);
+    expect(result.messages.some(message => message.id === 'a_tc_multi')).toBe(false);
+    expect(result.messages.some(message => message.id === 't_out_multi_1')).toBe(false);
+    expect(result.messages.some(message => message.id === 't_out_multi_2')).toBe(false);
 
     const compressed = result.messages.find(
-      (message) => message.metadata?.isCompressedToolHistory === true,
+      message => message.metadata?.isCompressedToolHistory === true
     );
 
     expect(compressed).toBeDefined();
     expect(compressed?.metadata?.replacementSourceIds).toEqual(
-      expect.arrayContaining(['a_tc_multi', 't_out_multi_1', 't_out_multi_2']),
+      expect.arrayContaining(['a_tc_multi', 't_out_multi_1', 't_out_multi_2'])
     );
     expect(compressed?.metadata?.compressedToolCallIds).toEqual(
-      expect.arrayContaining(['tc_multi_1', 'tc_multi_2']),
+      expect.arrayContaining(['tc_multi_1', 'tc_multi_2'])
     );
     expect(compressed?.content).toContain('resource_list');
     expect(compressed?.content).toContain('resource_read');
@@ -459,9 +458,9 @@ describe('ToolHistoryCompressorPreprocessor', () => {
     ];
 
     const result = await preprocessor.process(messages, { debugMode: false });
-    const kept = result.messages.find((message) => message.id === 'a_tc_kept');
+    const kept = result.messages.find(message => message.id === 'a_tc_kept');
     const compressed = result.messages.find(
-      (message) => message.metadata?.isCompressedToolHistory === true,
+      message => message.metadata?.isCompressedToolHistory === true
     );
 
     expect(kept?.metadata?.reasoning_details).toEqual(keptReasoning);

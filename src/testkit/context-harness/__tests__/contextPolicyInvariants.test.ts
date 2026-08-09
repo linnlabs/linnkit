@@ -1,13 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import {
-  defineContextPolicy,
-  type AiMessage,
-} from '../../../contracts';
+import { defineContextPolicy, type AiMessage, ToolCallIdSchema } from '../../../contracts';
 import type { ContextTrace } from '../../../context-manager';
-import {
-  assertContextPolicyInvariants,
-  validateContextPolicyInvariants,
-} from '../invariants';
+import { assertContextPolicyInvariants, validateContextPolicyInvariants } from '../invariants';
 import { createMockTokenizerPort } from '../../mocks/tokenizerPort';
 
 function systemMessage(id: string, content: string): AiMessage {
@@ -42,7 +36,7 @@ function toolCallsMessage(id: string, toolCallId: string): AiMessage {
     metadata: {
       tool_calls: [
         {
-          id: toolCallId,
+          id: ToolCallIdSchema.parse(toolCallId),
           type: 'function',
           function: {
             name: 'search',
@@ -63,7 +57,7 @@ function toolOutputMessage(id: string, toolCallId: string): AiMessage {
     content: 'result',
     timestamp: 1,
     metadata: {
-      tool_call_id: toolCallId,
+      tool_call_id: ToolCallIdSchema.parse(toolCallId),
       tool_name: 'search',
     },
   } satisfies AiMessage;
@@ -73,7 +67,7 @@ function toolOutputMessage(id: string, toolCallId: string): AiMessage {
 function createHealthyTrace(
   policy: ReturnType<typeof defineContextPolicy>,
   originalMessages: readonly AiMessage[],
-  finalMessages: readonly AiMessage[],
+  finalMessages: readonly AiMessage[]
 ): ContextTrace {
   return {
     enabled: true,
@@ -153,16 +147,23 @@ describe('context policy invariants', () => {
   it('发现 contextTrace.enabled 与实际 trace 产出不一致', () => {
     const policy = defineContextPolicy();
     const messages = [userMessage('user-1', 'question')];
-    const trace = createHealthyTrace(defineContextPolicy({ contextTrace: { enabled: true } }), messages, messages);
+    const trace = createHealthyTrace(
+      defineContextPolicy({ contextTrace: { enabled: true } }),
+      messages,
+      messages
+    );
 
-    const report = validateContextPolicyInvariants({
-      expectedPolicy: policy,
-      trace,
-      originalMessages: messages,
-      finalMessages: messages,
-    }, {
-      enabled: ['C1_TRACE_ENABLED_MATCHES_POLICY'],
-    });
+    const report = validateContextPolicyInvariants(
+      {
+        expectedPolicy: policy,
+        trace,
+        originalMessages: messages,
+        finalMessages: messages,
+      },
+      {
+        enabled: ['C1_TRACE_ENABLED_MATCHES_POLICY'],
+      }
+    );
 
     expect(report.failures).toEqual([
       expect.objectContaining({
@@ -186,7 +187,7 @@ describe('context policy invariants', () => {
     trace.includeTokenBreakdown = false;
     trace.totalBudget = 1;
     trace.finalTokens = 2;
-    const providerEvent = trace.events.find((event) => event.kind === 'provider');
+    const providerEvent = trace.events.find(event => event.kind === 'provider');
     if (providerEvent?.kind === 'provider') {
       providerEvent.tokenDelta = 99;
     }
@@ -198,11 +199,13 @@ describe('context policy invariants', () => {
       finalMessages: messages,
     });
 
-    expect(report.failures.map((item) => item.id)).toEqual(expect.arrayContaining([
-      'C6_FINAL_TOKENS_WITHIN_BUDGET',
-      'C7_PROVIDER_TOKEN_DELTA',
-      'C8_TRACE_DETAIL_OPTIONS',
-    ]));
+    expect(report.failures.map(item => item.id)).toEqual(
+      expect.arrayContaining([
+        'C6_FINAL_TOKENS_WITHIN_BUDGET',
+        'C7_PROVIDER_TOKEN_DELTA',
+        'C8_TRACE_DETAIL_OPTIONS',
+      ])
+    );
   });
 
   it('发现 mustKeep 消息被丢弃以及 tool_calls / tool_output 保留决策被拆开', () => {
@@ -220,9 +223,9 @@ describe('context policy invariants', () => {
       toolOutputMessage('tool-output-1', 'call-1'),
     ];
     const trace = createHealthyTrace(policy, originalMessages, originalMessages.slice(1));
-    const decisions = trace.events.filter((event) => event.kind === 'message-decision');
-    const systemDecision = decisions.find((event) => event.messageId === 'system-1');
-    const toolOutputDecision = decisions.find((event) => event.messageId === 'tool-output-1');
+    const decisions = trace.events.filter(event => event.kind === 'message-decision');
+    const systemDecision = decisions.find(event => event.messageId === 'system-1');
+    const toolOutputDecision = decisions.find(event => event.messageId === 'tool-output-1');
     if (systemDecision) {
       systemDecision.kept = false;
       systemDecision.reason = 'dropped_by_budget_or_priority';
@@ -239,10 +242,9 @@ describe('context policy invariants', () => {
       finalMessages: originalMessages.slice(1),
     });
 
-    expect(report.failures.map((item) => item.id)).toEqual(expect.arrayContaining([
-      'C10_TOOL_PAIR_DECISIONS_STAY_TOGETHER',
-      'C11_MUST_KEEP_TYPES_KEPT',
-    ]));
+    expect(report.failures.map(item => item.id)).toEqual(
+      expect.arrayContaining(['C10_TOOL_PAIR_DECISIONS_STAY_TOGETHER', 'C11_MUST_KEEP_TYPES_KEPT'])
+    );
   });
 
   it('C12 校验 host 注入 tokenizer 后预算决策使用 host tokenizer', () => {
@@ -252,13 +254,10 @@ describe('context policy invariants', () => {
         includeTokenBreakdown: true,
       },
     });
-    const messages = [
-      systemMessage('system-1', 'system'),
-      userMessage('user-1', 'question'),
-    ];
+    const messages = [systemMessage('system-1', 'system'), userMessage('user-1', 'question')];
     const trace = createHealthyTrace(policy, messages, messages);
     trace.finalTokens = 2;
-    const providerEvent = trace.events.find((event) => event.kind === 'provider');
+    const providerEvent = trace.events.find(event => event.kind === 'provider');
     if (providerEvent?.kind === 'provider') {
       providerEvent.afterTokens = 2;
       providerEvent.tokenDelta = 2;
@@ -267,16 +266,19 @@ describe('context policy invariants', () => {
     }
     const tokenizer = createMockTokenizerPort({ tokensPerMessage: 1 });
 
-    const report = validateContextPolicyInvariants({
-      expectedPolicy: policy,
-      trace,
-      originalMessages: messages,
-      finalMessages: messages,
-      tokenizer,
-      tokenizerModelId: 'mock-model',
-    }, {
-      enabled: ['C12_HOST_TOKENIZER_DRIVES_BUDGET'],
-    });
+    const report = validateContextPolicyInvariants(
+      {
+        expectedPolicy: policy,
+        trace,
+        originalMessages: messages,
+        finalMessages: messages,
+        tokenizer,
+        tokenizerModelId: 'mock-model',
+      },
+      {
+        enabled: ['C12_HOST_TOKENIZER_DRIVES_BUDGET'],
+      }
+    );
 
     expect(report.ok).toBe(true);
   });
@@ -292,15 +294,18 @@ describe('context policy invariants', () => {
     const trace = createHealthyTrace(policy, messages, messages);
     const tokenizer = createMockTokenizerPort({ tokensPerMessage: 10 });
 
-    const report = validateContextPolicyInvariants({
-      expectedPolicy: policy,
-      trace,
-      originalMessages: messages,
-      finalMessages: messages,
-      tokenizer,
-    }, {
-      enabled: ['C12_HOST_TOKENIZER_DRIVES_BUDGET'],
-    });
+    const report = validateContextPolicyInvariants(
+      {
+        expectedPolicy: policy,
+        trace,
+        originalMessages: messages,
+        finalMessages: messages,
+        tokenizer,
+      },
+      {
+        enabled: ['C12_HOST_TOKENIZER_DRIVES_BUDGET'],
+      }
+    );
 
     expect(report.failures).toEqual([
       expect.objectContaining({

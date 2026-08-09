@@ -25,11 +25,9 @@ describe('agentSpecAdapter', () => {
       },
       toolHistory: {
         maxInteractionGroups: 8,
-        maxPairTokens: 4096,
-        maxOutputSummaryTokens: 512,
       },
       workingMemory: {
-        maxRecentToolInteractions: 4,
+        maxRecentToolRuns: 4,
         minToolInteractionsToKeep: 1,
         toolPairingSearchRange: 16,
       },
@@ -50,10 +48,8 @@ describe('agentSpecAdapter', () => {
       SUMMARIZATION_TRIGGER_THRESHOLD: 0.8,
       SUMMARY_BUDGET_PERCENTAGE: 0.15,
       SUMMARY_OLDEST_MESSAGES_PERCENTAGE: 0.5,
-      MAX_TOOL_PAIR_TOKENS: 4096,
-      MAX_TOOL_OUTPUT_SUMMARY_TOKENS: 512,
       MAX_TOOL_INTERACTION_GROUPS_TO_KEEP: 8,
-      MAX_RECENT_TOOL_INTERACTIONS_TO_KEEP: 4,
+      MAX_RECENT_TOOL_RUNS_TO_KEEP: 4,
       MIN_TOOL_INTERACTIONS_TO_KEEP: 1,
       TOOL_PAIRING_SEARCH_RANGE: 16,
       MAX_THOUGHTS_TO_KEEP: 3,
@@ -61,6 +57,38 @@ describe('agentSpecAdapter', () => {
       TOOL_CALL_OVERHEAD_TOKENS: 70,
       TOKEN_ENCODING_NAME: 'o200k_base',
     });
+  });
+
+  it('keeps maxRecentToolInteractions as a deprecated alias for maxRecentToolRuns', () => {
+    const policy = defineContextPolicy({
+      workingMemory: {
+        maxRecentToolInteractions: 5,
+      },
+    });
+
+    expect(policy.workingMemory?.maxRecentToolRuns).toBe(5);
+    expect(contextPolicyToContextBuilderConfig(policy)).toEqual(
+      expect.objectContaining({
+        MAX_RECENT_TOOL_RUNS_TO_KEEP: 5,
+      }),
+    );
+  });
+
+  it('prefers maxRecentToolRuns when both run and deprecated interaction fields are present', () => {
+    const policy = defineContextPolicy({
+      workingMemory: {
+        maxRecentToolRuns: 3,
+        maxRecentToolInteractions: 8,
+      },
+    });
+
+    expect(policy.workingMemory?.maxRecentToolRuns).toBe(3);
+    expect(policy.workingMemory?.maxRecentToolInteractions).toBe(3);
+    expect(contextPolicyToContextBuilderConfig(policy)).toEqual(
+      expect.objectContaining({
+        MAX_RECENT_TOOL_RUNS_TO_KEEP: 3,
+      }),
+    );
   });
 
   it('maps toolHistory into preprocessor options without unrelated policy groups', () => {
@@ -77,7 +105,7 @@ describe('agentSpecAdapter', () => {
         missingSidecarBehavior: 'provider_empty_replay_field',
       },
       workingMemory: {
-        maxRecentToolInteractions: 5,
+        maxRecentToolRuns: 5,
       },
     });
 

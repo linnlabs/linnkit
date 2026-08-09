@@ -1,7 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgentInvocationRequest } from '../../../ports/agent-invocation';
+import type { LlmRequestMessage } from '../../../ports';
 import type { ExecutorLocalState } from '../types';
 import type { RuntimeEvent } from '../../../contracts';
+import type { LlmFallbackObserver } from '../../llm';
+import { RunIdSchema } from '../../../contracts';
 
 const applySystemRemindersMock = vi.fn();
 const getModelByIdMock = vi.fn();
@@ -14,21 +17,12 @@ vi.mock('../../system-reminder/rules', () => ({
   SYSTEM_REMINDER_RULES: [],
 }));
 
-vi.mock('../../../shared/llmAuditRecorder', () => ({
-  recordBeforeContextManager: vi.fn(),
-  recordAfterContextManager: vi.fn(),
-  recordAfterContextManagerOnSystemReminderHit: vi.fn(),
-}));
-
-vi.mock('../../../shared/llmTelemetryContext', () => ({
-  normalizeLlmUsage: vi.fn(),
-  recordLlmCallTelemetry: vi.fn(),
-}));
-
 describe('GraphAgentExecutor - run 内 quota 模型锁定', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    applySystemRemindersMock.mockImplementation(({ llmMessages }: { llmMessages: unknown[] }) => llmMessages);
+    applySystemRemindersMock.mockImplementation(
+      ({ llmMessages }: { llmMessages: LlmRequestMessage[] }) => llmMessages
+    );
 
     getModelByIdMock.mockImplementation((modelId: string) => {
       if (modelId === 'cloud-primary-model') {
@@ -66,17 +60,28 @@ describe('GraphAgentExecutor - run 内 quota 模型锁定', () => {
           _options: unknown,
           _eventHandler: unknown,
           _signal: unknown,
-          onCloudQuotaFallbackApplied?: (fallbackModelId: string) => void,
+          fallbackObserver?: LlmFallbackObserver
         ) => {
           expect(modelId).toBe('cloud-primary-model');
-          onCloudQuotaFallbackApplied?.('cloud-deepseek-reasoner');
+          fallbackObserver?.onCloudQuotaFallbackApplied?.('cloud-deepseek-reasoner');
+          fallbackObserver?.onLlmAttemptSucceeded?.('cloud-deepseek-reasoner');
           return '第一次已自动降级';
         }
       )
-      .mockImplementationOnce(async (modelId: string) => {
-        expect(modelId).toBe('cloud-deepseek-reasoner');
-        return '第二次继续使用锁定模型';
-      });
+      .mockImplementationOnce(
+        async (
+          modelId: string,
+          _messages: unknown[],
+          _options: unknown,
+          _eventHandler: unknown,
+          _signal: unknown,
+          fallbackObserver?: LlmFallbackObserver
+        ) => {
+          expect(modelId).toBe('cloud-deepseek-reasoner');
+          fallbackObserver?.onLlmAttemptSucceeded?.('cloud-deepseek-reasoner');
+          return '第二次继续使用锁定模型';
+        }
+      );
 
     const llmCaller = {
       callWithRetries,
@@ -88,11 +93,10 @@ describe('GraphAgentExecutor - run 内 quota 模型锁定', () => {
 
     const toolRuntime = {
       getToolSchemas: vi.fn(() => []),
-      getDisplayOptions: vi.fn(() => undefined),
+      getToolDefinition: vi.fn(() => undefined),
     };
     const contextBuilder = {
       build: vi.fn().mockResolvedValue({
-        mode: 'agent',
         llmMessages: [
           {
             role: 'user',
@@ -107,8 +111,8 @@ describe('GraphAgentExecutor - run 内 quota 模型锁定', () => {
     };
 
     const executor = new GraphAgentExecutor({
-      llmCaller: llmCaller as never,
-      toolRuntime: toolRuntime as never,
+      llmCaller,
+      toolRuntime,
       contextBuilder,
       cloudQuotaFallbackModelId: 'cloud-deepseek-reasoner',
       modelCatalog: {
@@ -123,7 +127,6 @@ describe('GraphAgentExecutor - run 内 quota 模型锁定', () => {
       query: '继续执行任务',
       promptKey: 'default',
       model_id: 'cloud-primary-model',
-      mode: 'agent',
       maxSteps: 8,
       enableTools: false,
       availableTools: [],
@@ -132,22 +135,33 @@ describe('GraphAgentExecutor - run 内 quota 模型锁定', () => {
     const history: RuntimeEvent[] = [];
     const executorLocal: ExecutorLocalState = {
       stepCount: 1,
+      llmInvocationKind: 'continuation',
+    };
+    const toolContext = {
+      conversationId: 'conv-model-lock',
+      turnId: 'turn-model-lock',
+      runId: RunIdSchema.parse('run-model-lock'),
     };
 
-    await executor.tick({
+    const firstTick = await executor.tick({
       request,
       history,
       stream: false,
       executorLocal,
+      toolContext,
     });
 
+    expect(executorLocal.runLockedModelId).toBeUndefined();
+    Object.assign(executorLocal, firstTick.executorLocalPatch);
     expect(executorLocal.runLockedModelId).toBe('cloud-deepseek-reasoner');
+    expect(executorLocal.lastSuccessfulLlmModelId).toBe('cloud-deepseek-reasoner');
 
     await executor.tick({
       request,
       history,
       stream: false,
       executorLocal,
+      toolContext,
     });
 
     expect(resolveModelId.mock.calls[0]?.[0]).toBe('cloud-primary-model');
@@ -159,41 +173,43 @@ describe('GraphAgentExecutor - run 内 quota 模型锁定', () => {
     const { GraphAgentExecutor } = await import('../executor');
 
     const auditPort = { emit: vi.fn() };
-    const callWithRetries = vi.fn().mockImplementation(
-      async (
-        _modelId: string,
-        _messages: unknown[],
-        _options: unknown,
-        _eventHandler: unknown,
-        _signal: unknown,
-        onCloudQuotaFallbackApplied?: (fallbackModelId: string) => void,
-        onModelFallbackApplied?: (info: {
-          fromModelId: string;
-          toModelId: string;
-          reason: string;
-          policy: 'policy-switch' | 'cloud-quota';
-        }) => void,
-      ) => {
-        onCloudQuotaFallbackApplied?.('cloud-deepseek-reasoner');
-        onModelFallbackApplied?.({
-          fromModelId: 'cloud-primary-model',
-          toModelId: 'cloud-deepseek-reasoner',
-          reason: 'quota exhausted',
-          policy: 'cloud-quota',
-        });
-        return 'fallback ok';
-      },
-    );
+    const callWithRetries = vi
+      .fn()
+      .mockImplementation(
+        async (
+          _modelId: string,
+          _messages: unknown[],
+          _options: unknown,
+          _eventHandler: unknown,
+          _signal: unknown,
+          fallbackObserver?: LlmFallbackObserver
+        ) => {
+          fallbackObserver?.onModelFallbackRejected?.({
+            fromModelId: 'cloud-primary-model',
+            candidateModelId: 'cloud-text-only',
+            reason: 'image_input_unsupported',
+            policy: 'cloud-quota',
+            requiredPlacements: ['user_image'],
+          });
+          fallbackObserver?.onCloudQuotaFallbackApplied?.('cloud-deepseek-reasoner');
+          fallbackObserver?.onModelFallbackApplied?.({
+            fromModelId: 'cloud-primary-model',
+            toModelId: 'cloud-deepseek-reasoner',
+            reason: 'quota exhausted',
+            policy: 'cloud-quota',
+          });
+          return 'fallback ok';
+        }
+      );
 
     const executor = new GraphAgentExecutor({
       llmCaller: { callWithRetries } as never,
       toolRuntime: {
         getToolSchemas: vi.fn(() => []),
-        getDisplayOptions: vi.fn(() => undefined),
+        getToolDefinition: vi.fn(() => undefined),
       },
       contextBuilder: {
         build: vi.fn().mockResolvedValue({
-          mode: 'agent',
           llmMessages: [{ role: 'user', content: 'hi' }],
           summaryEvents: [],
         }),
@@ -204,7 +220,9 @@ describe('GraphAgentExecutor - run 内 quota 模型锁定', () => {
         getModelsByCapability: vi.fn(() => []),
         getModelsByUIVisibility: vi.fn(() => []),
       },
-      modelResolver: { resolveModelId: vi.fn((modelId?: string) => modelId ?? 'default-chat-model') },
+      modelResolver: {
+        resolveModelId: vi.fn((modelId?: string) => modelId ?? 'default-chat-model'),
+      },
       auditPort,
     });
 
@@ -213,40 +231,56 @@ describe('GraphAgentExecutor - run 内 quota 模型锁定', () => {
         query: '继续执行任务',
         promptKey: 'default',
         model_id: 'cloud-primary-model',
-        mode: 'agent',
         maxSteps: 8,
         enableTools: false,
         availableTools: [],
       },
       history: [],
       stream: false,
-      executorLocal: { stepCount: 1 },
+      executorLocal: { stepCount: 1, llmInvocationKind: 'continuation' },
       toolContext: {
         conversationId: 'conv-audit',
         turnId: 'turn-audit',
-        runId: 'run-audit',
+        runId: RunIdSchema.parse('run-audit'),
       },
     });
 
-    expect(auditPort.emit).toHaveBeenCalledWith(expect.objectContaining({
-      action: 'model.select',
-      runId: 'run-audit',
-      scope: expect.objectContaining({
-        conversationId: 'conv-audit',
-        turnId: 'turn-audit',
+    expect(auditPort.emit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'model.select',
         runId: 'run-audit',
-        modelId: 'cloud-primary-model',
-      }),
-    }));
-    expect(auditPort.emit).toHaveBeenCalledWith(expect.objectContaining({
-      action: 'model.fallback',
-      decision: expect.objectContaining({
-        outcome: 'fallback',
-        policy: 'cloud-quota',
-      }),
-      scope: expect.objectContaining({
-        modelId: 'cloud-deepseek-reasoner',
-      }),
-    }));
+        scope: expect.objectContaining({
+          conversationId: 'conv-audit',
+          turnId: 'turn-audit',
+          runId: 'run-audit',
+          modelId: 'cloud-primary-model',
+        }),
+      })
+    );
+    expect(auditPort.emit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'model.fallback',
+        decision: expect.objectContaining({
+          outcome: 'denied',
+          reason: 'image_input_unsupported',
+          metadata: expect.objectContaining({
+            candidateModelId: 'cloud-text-only',
+            requiredPlacements: ['user_image'],
+          }),
+        }),
+      })
+    );
+    expect(auditPort.emit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'model.fallback',
+        decision: expect.objectContaining({
+          outcome: 'fallback',
+          policy: 'cloud-quota',
+        }),
+        scope: expect.objectContaining({
+          modelId: 'cloud-deepseek-reasoner',
+        }),
+      })
+    );
   });
 });

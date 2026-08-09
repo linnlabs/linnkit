@@ -1,8 +1,17 @@
 import type { AgentInvocationRequest } from '../../ports';
-import type { ExecutorLocalState, GraphNode } from '../graph-engine/types';
+import type { ExecutorLocalState, GraphNode, RuntimeEventSink } from '../graph-engine/types';
 import type { LlmCaller } from '../llm/caller';
-import type { ObservationPreviewPort, ToolExecutionContext, ToolRuntimePort } from '../tools';
-import type { RuntimeEvent } from '../../contracts';
+import type {
+  ObservationPreviewPort,
+  ToolExecutionContext,
+  ToolModelInputCapabilityValidatorPort,
+  ToolModelInputResolverPort,
+  ToolRuntimePort,
+} from '../tools';
+import {
+  type RoutedRuntimeEvent,
+  type RuntimeEvent,
+} from '../../contracts';
 import { createDefaultGraphExecutor } from './defaultGraphExecutor';
 import type { AuditPort } from '../../ports';
 import type { TelemetryPort } from '../telemetry/telemetryPort';
@@ -15,6 +24,8 @@ export interface GraphLoopLlmNodeFactoryParams {
 export interface GraphLoopHarnessOptions {
   conversationId: string;
   turnId: string;
+  /** Graph checkpoint 身份；不传时测试 harness 以单次 turnId 作为 run-scoped key。 */
+  runId?: string;
   query: string;
   request: AgentInvocationRequest;
   toolContext: ToolExecutionContext;
@@ -28,12 +39,16 @@ export interface GraphLoopHarnessOptions {
   signal?: AbortSignal;
   auditPort?: AuditPort;
   telemetryPort?: TelemetryPort;
-  sseSink?: (evt: unknown) => RuntimeEvent[] | void;
+  modelInputCapabilityValidator?: ToolModelInputCapabilityValidatorPort;
+  modelInputResolver?: ToolModelInputResolverPort;
+  /** Host/testkit 装配提供的唯一 RuntimeEvent admission/publish 入口。 */
+  runtimeEventSink: RuntimeEventSink;
 }
 
 export interface GraphLoopHarnessRunResult {
   checkpointNodeId: string;
   stepCount: number;
+  events: RoutedRuntimeEvent[];
 }
 
 export interface GraphLoopHarness {
@@ -66,7 +81,7 @@ export function createGraphLoopHarness(options: GraphLoopHarnessOptions): GraphL
 
   return {
     async run(): Promise<GraphLoopHarnessRunResult> {
-      const checkpointKey = options.conversationId;
+      const checkpointKey = options.runId ?? options.turnId;
       const executor = createDefaultGraphExecutor({
         llmNode: options.createLlmNode({
           llmCaller: options.llmCaller,
@@ -77,6 +92,8 @@ export function createGraphLoopHarness(options: GraphLoopHarnessOptions): GraphL
         maxSteps,
         auditPort: options.auditPort,
         telemetryPort: options.telemetryPort,
+        modelInputCapabilityValidator: options.modelInputCapabilityValidator,
+        modelInputResolver: options.modelInputResolver,
       });
 
       const local = {
@@ -92,7 +109,7 @@ export function createGraphLoopHarness(options: GraphLoopHarnessOptions): GraphL
             query: options.query,
           }),
         ],
-        ...(options.sseSink ? { sseSink: options.sseSink } : {}),
+        runtimeEventSink: options.runtimeEventSink,
         signal: options.signal ?? options.toolContext.abortSignal,
         executorLocal,
       };
@@ -103,6 +120,7 @@ export function createGraphLoopHarness(options: GraphLoopHarnessOptions): GraphL
       return {
         checkpointNodeId: result.checkpoint.nodeId,
         stepCount: result.stepCount,
+        events: result.events,
       };
     },
   };

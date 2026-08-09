@@ -1,5 +1,6 @@
 import { get_encoding, Tiktoken } from 'tiktoken';
 import type { LlmRequestMessage } from '../ports';
+import { Logger } from './logger';
 
 export type TokenEncodingName = Parameters<typeof get_encoding>[0];
 
@@ -23,6 +24,7 @@ export class TokenCalculator {
   private static readonly OVERHEAD_PER_MESSAGE = 5;
   private static readonly OVERHEAD_PER_TOOL_CALL = 10;
   private static encoderCache = new Map<TokenEncodingName, Tiktoken>();
+  private static readonly failedEncodingWarnings = new Set<string>();
   private static readonly DEFAULT_ENCODING: TokenEncodingName = 'cl100k_base';
   private static readonly SUPPORTED_ENCODINGS = [
     'gpt2',
@@ -87,8 +89,9 @@ export class TokenCalculator {
     if (options.encoding) {
       try {
         return this.estimateTokensPrecise(text, options.encoding);
-      } catch {
+      } catch (error) {
         // 中文备注：tiktoken 运行时不可用时退回声明式 avgCharsPerToken，保证上下文构建不中断。
+        this.warnEncodingFallbackOnce(options.encoding, error);
       }
     }
 
@@ -116,7 +119,10 @@ export class TokenCalculator {
     const toolCallOverhead = normalizeNonNegativeInteger(options.toolCallOverhead, this.OVERHEAD_PER_TOOL_CALL);
     for (const toolCall of toolCalls) {
       totalTokens += toolCallOverhead;
-      const fn = toolCall['function'];
+      if (!toolCall || typeof toolCall !== 'object' || Array.isArray(toolCall)) {
+        continue;
+      }
+      const fn = (toolCall as Record<string, unknown>)['function'];
       if (fn && typeof fn === 'object' && !Array.isArray(fn)) {
         const fnRecord = fn as Record<string, unknown>;
         totalTokens += this.estimateTokens(String(fnRecord['name'] ?? ''), options);
@@ -208,6 +214,21 @@ export class TokenCalculator {
       encoder.free();
     }
     this.encoderCache.clear();
+    this.failedEncodingWarnings.clear();
+  }
+
+  private static warnEncodingFallbackOnce(modelIdentifierOrEncoding: string, error: unknown): void {
+    const encodingName = this.resolveEncodingFromModelIdentifier(modelIdentifierOrEncoding);
+    if (this.failedEncodingWarnings.has(encodingName)) {
+      return;
+    }
+    this.failedEncodingWarnings.add(encodingName);
+    const logger = new Logger('TokenCalculator');
+    logger.warn('tiktoken encoding unavailable, falling back to avgCharsPerToken estimator', {
+      encodingName,
+      requestedIdentifier: modelIdentifierOrEncoding,
+      error,
+    });
   }
 }
 

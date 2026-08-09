@@ -94,6 +94,26 @@ hello-linnkit/
 - `adapters/openai-compatible.mjs` 是 demo adapter，只证明 `AgentAiEngine` 怎么接；生产接入建议维护自己的 provider adapter。
 - `linnkit run` 内部用 `runAgent()` 自动装配内存版 EventStore / Checkpointer / RunSupervisor，只适合 quickstart 和小型 smoke test。
 
+### quickstart 的上下文边界
+
+`defineAgent({ contextPolicy })` 会把策略写进 `AgentSpec`，但 quickstart 的 `QuickstartContextBuilder` 只组装：
+
+- system prompt
+- 可回放历史
+- 当前用户输入
+
+它不会执行完整 `contextPolicy`（预算裁剪、工具历史压缩、摘要、checkpoint、provider replay、system reminder 等）。`runAgent()` 返回的 `contextTrace` 会标记 `contextPolicyExecution.executed=false` 和声明但未执行的字段。生产接入请使用 [context-engineering.md](./context-engineering.md) 中的 `AgentMessageOrchestrator` 装配。
+
+`runAgent()` 支持 `maxSteps` 选项，默认是 `8`：
+
+```ts
+await runAgent(agent, {
+  input: 'hi',
+  llm,
+  maxSteps: 12,
+});
+```
+
 ## 7. 下一步
 
 - 接你自己的 provider：看 [llm-provider.md](./llm-provider.md)

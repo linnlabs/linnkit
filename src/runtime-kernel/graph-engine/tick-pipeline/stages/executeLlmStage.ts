@@ -1,73 +1,187 @@
 import type { AnyAgentEvent } from '../../../events/agentEvents';
 import type { LlmCaller } from '../../../llm/caller';
-import type { TickPipelineContext, TickStage } from '../types';
+import { defineTickStage } from '../types';
+import type { ModelFallbackAudit, TickPipelineContext, TickStage } from '../types';
 import { readNonEmptyString } from '../helpers';
 import { emitAuditEnvelope } from '../../../audit/emitAudit';
+import type { GraphExecutorOutputProcessor } from '../../executorContextBuilder';
+import type { ModelFallbackRejectedInfo } from '../../../llm';
+import { runIdFromTurnId } from '../../../../contracts';
 
 export interface ExecuteLlmStageDependencies {
   llmCaller: Pick<LlmCaller, 'callWithRetries'>;
 }
 
-export function createExecuteLlmStage(
-  dependencies: ExecuteLlmStageDependencies,
-): TickStage {
-  return {
+export function createExecuteLlmStage(dependencies: ExecuteLlmStageDependencies): TickStage {
+  return defineTickStage({
     id: 'execute_llm',
-    async run(ctx: TickPipelineContext): Promise<void> {
-      ctx.cloudQuotaFallbackAppliedModelId = undefined;
-      ctx.modelFallbackAudit = undefined;
+    reads: [
+      'input',
+      'eventHandler',
+      'outputProcessor',
+      'modelId',
+      'llmMessages',
+      'toolModelInputRequirement',
+      'toolCallStreamingPolicies',
+      'imageInputAdmissionEvidence',
+      'llmOptions',
+      'signal',
+      'audit',
+      'conversationId',
+      'turnId',
+    ],
+    writes: [
+      'cloudQuotaFallbackAppliedModelId',
+      'modelFallbackAudit',
+      'llmCallStartedAt',
+      'llmResp',
+      'llmCallDurationMs',
+      'executorLocalPatch',
+    ],
+    async run(ctx) {
+      let cloudQuotaFallbackAppliedModelId: string | undefined;
+      let modelFallbackAudit: ModelFallbackAudit | undefined;
+      let lastSuccessfulLlmModelId: string | undefined;
+      const modelFallbackRejections: ModelFallbackRejectedInfo[] = [];
 
       const streamEventHandler: ((event: AnyAgentEvent) => void) | undefined =
         ctx.input.stream && ctx.eventHandler
           ? (event: AnyAgentEvent) => {
-              ctx.eventHandler?.(event);
+              const processedEvent = processStreamEvent(event, ctx.outputProcessor);
+              if (processedEvent) {
+                ctx.eventHandler?.(processedEvent);
+              }
             }
           : undefined;
 
-      ctx.llmCallStartedAt = Date.now();
-      ctx.llmResp = await dependencies.llmCaller.callWithRetries(
-        ctx.modelId,
-        ctx.llmMessages,
-        ctx.llmOptions,
-        streamEventHandler,
-        ctx.signal,
-        (fallbackModelId: string) => {
-          ctx.cloudQuotaFallbackAppliedModelId = readNonEmptyString(fallbackModelId);
-        },
-        (info) => {
-          ctx.modelFallbackAudit = info;
-        },
-      );
-      ctx.llmCallDurationMs = Date.now() - ctx.llmCallStartedAt;
+      const llmCallStartedAt = Date.now();
+      let llmResp: Awaited<ReturnType<typeof dependencies.llmCaller.callWithRetries>>;
+      try {
+        llmResp = await dependencies.llmCaller.callWithRetries(
+          ctx.modelId,
+          ctx.llmMessages,
+          ctx.llmOptions,
+          streamEventHandler,
+          ctx.signal,
+          {
+            onCloudQuotaFallbackApplied(fallbackModelId) {
+              cloudQuotaFallbackAppliedModelId = readNonEmptyString(fallbackModelId);
+            },
+            onLlmAttemptSucceeded(activeModelId) {
+              lastSuccessfulLlmModelId = readNonEmptyString(activeModelId);
+            },
+            onModelFallbackApplied(info) {
+              modelFallbackAudit = info;
+            },
+            onModelFallbackRejected(info) {
+              modelFallbackRejections.push(info);
+            },
+          },
+          {
+            imageInputAdmissionEvidence: ctx.imageInputAdmissionEvidence,
+            additionalModelInputRequirement: ctx.toolModelInputRequirement,
+            toolCallStreamingPolicies: ctx.toolCallStreamingPolicies,
+          }
+        );
+      } catch (error) {
+        await emitModelFallbackRejectionAudits(ctx, modelFallbackRejections);
+        throw error;
+      }
+      const llmCallDurationMs = Date.now() - llmCallStartedAt;
 
-      if (ctx.modelFallbackAudit) {
+      await emitModelFallbackRejectionAudits(ctx, modelFallbackRejections);
+
+      if (modelFallbackAudit) {
         await emitAuditEnvelope(ctx.audit, {
           action: 'model.fallback',
           actor: { kind: 'system' },
           decision: {
             outcome: 'fallback',
-            reason: ctx.modelFallbackAudit.reason,
-            policy: ctx.modelFallbackAudit.policy,
+            reason: modelFallbackAudit.reason,
+            policy: modelFallbackAudit.policy,
             metadata: {
-              fromModelId: ctx.modelFallbackAudit.fromModelId,
-              toModelId: ctx.modelFallbackAudit.toModelId,
+              fromModelId: modelFallbackAudit.fromModelId,
+              toModelId: modelFallbackAudit.toModelId,
             },
           },
           evidence: [
             {
               kind: 'llm_error',
-              summary: ctx.modelFallbackAudit.reason,
+              summary: modelFallbackAudit.reason,
             },
           ],
           scope: {
             conversationId: ctx.conversationId || undefined,
             turnId: ctx.turnId,
-            runId: ctx.input.toolContext?.runId ?? ctx.turnId,
+            runId: ctx.input.toolContext?.runId ?? runIdFromTurnId(ctx.turnId),
             parentRunId: ctx.input.toolContext?.parentRunId,
-            modelId: ctx.modelFallbackAudit.toModelId,
+            modelId: modelFallbackAudit.toModelId,
           },
         });
       }
+
+      return {
+        cloudQuotaFallbackAppliedModelId,
+        modelFallbackAudit,
+        llmCallStartedAt,
+        llmResp,
+        llmCallDurationMs,
+        executorLocalPatch: lastSuccessfulLlmModelId ? { lastSuccessfulLlmModelId } : undefined,
+      };
     },
+  });
+}
+
+async function emitModelFallbackRejectionAudits(
+  ctx: Readonly<Pick<TickPipelineContext, 'audit' | 'conversationId' | 'turnId' | 'input'>>,
+  rejections: readonly ModelFallbackRejectedInfo[]
+): Promise<void> {
+  for (const rejection of rejections) {
+    await emitAuditEnvelope(ctx.audit, {
+      action: 'model.fallback',
+      actor: { kind: 'system' },
+      decision: {
+        outcome: 'denied',
+        reason: rejection.reason,
+        policy: rejection.policy,
+        metadata: {
+          fromModelId: rejection.fromModelId,
+          ...(rejection.candidateModelId ? { candidateModelId: rejection.candidateModelId } : {}),
+          requiredPlacements: rejection.requiredPlacements,
+        },
+      },
+      evidence: [
+        {
+          kind: 'model_input_capability',
+          summary: rejection.reason,
+        },
+      ],
+      scope: {
+        conversationId: ctx.conversationId || undefined,
+        turnId: ctx.turnId,
+        runId: ctx.input.toolContext?.runId ?? runIdFromTurnId(ctx.turnId),
+        parentRunId: ctx.input.toolContext?.parentRunId,
+        modelId: rejection.candidateModelId ?? rejection.fromModelId,
+      },
+    });
+  }
+}
+
+function processStreamEvent(
+  event: AnyAgentEvent,
+  outputProcessor: GraphExecutorOutputProcessor | undefined
+): AnyAgentEvent | null {
+  if (!outputProcessor?.processStreamChunk || event.type !== 'stream_chunk') {
+    return event;
+  }
+
+  const processedContent = outputProcessor.processStreamChunk(event.content);
+  if (processedContent.length === 0) {
+    return null;
+  }
+
+  return {
+    ...event,
+    content: processedContent,
   };
 }

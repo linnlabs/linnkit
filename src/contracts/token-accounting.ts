@@ -20,12 +20,14 @@ export const ContextTokenComponentKind = z.enum([
   'working-memory',
   'fence',
   'system-reminder',
+  'image-attachment',
   'other',
 ]);
 export type ContextTokenComponentKind = z.infer<typeof ContextTokenComponentKind>;
 
 export const TokenUsageTotals = z.object({
   inputTokens: tokenCount,
+  imageInputTokens: tokenCount.optional(),
   outputTokens: tokenCount,
   reasoningTokens: tokenCount.optional(),
   cacheReadTokens: tokenCount.optional(),
@@ -49,6 +51,14 @@ export const ContextTokenComponent = z.object({
   truncatedAtExecution: z.boolean().optional(),
   originalTokensEstimate: tokenCount.optional(),
   droppedTokensEstimate: tokenCount.optional(),
+  attachmentId: z.string().optional(),
+  resourceId: z.string().optional(),
+  placement: z.enum(['user_image', 'tool_result_image']).optional(),
+  attachmentIndex: z.number().int().nonnegative().optional(),
+  width: z.number().int().positive().optional(),
+  height: z.number().int().positive().optional(),
+  profileId: z.string().optional(),
+  estimatorVersion: z.string().optional(),
 });
 export type ContextTokenComponent = z.infer<typeof ContextTokenComponent>;
 

@@ -67,6 +67,48 @@ describe('token accounting', () => {
     });
   });
 
+  it('汇总图片输入分项但不把它重复加进 input、total 或费用', () => {
+    const aggregate = aggregateCanonicalUsage([
+      actualUsage({
+        inputTokens: 100,
+        imageInputTokens: 25,
+        outputTokens: 20,
+        totalTokens: 120,
+      }),
+      actualUsage({
+        inputTokens: 40,
+        imageInputTokens: 10,
+        outputTokens: 5,
+        totalTokens: 45,
+      }),
+    ]);
+
+    expect(aggregate).toMatchObject({
+      inputTokens: 140,
+      imageInputTokens: 35,
+      outputTokens: 25,
+      totalTokens: 165,
+    });
+    expect(computeCost(
+      actualUsage({
+        inputTokens: 100,
+        imageInputTokens: 25,
+        outputTokens: 20,
+        totalTokens: 120,
+      }),
+      {
+        currency: 'USD',
+        unit: 'per_1m_tokens',
+        input: 10,
+        output: 20,
+      },
+    )).toMatchObject({
+      inputCost: 0.001,
+      outputCost: 0.0004,
+      totalCost: 0.0014,
+    });
+  });
+
   it('creates context component entries from explicit component tokens', () => {
     const entry = createContextComponentLedgerEntry({
       id: 'ledger-context-1',

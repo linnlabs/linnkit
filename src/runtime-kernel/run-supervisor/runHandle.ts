@@ -1,12 +1,23 @@
 import { AgentSpec as AgentSpecSchema } from '../../contracts';
-import type { AgentSpec, EventEnvelope, RunTokenUsageAggregate, RuntimeEvent } from '../../contracts';
+import type {
+  AgentSpec,
+  EventEnvelope,
+  RoutedRuntimeEvent,
+  RunTokenUsageAggregate,
+  RuntimeEvent,
+} from '../../contracts';
 import type { AuditPort } from '../../ports';
-import { generateAuditEnvelopeId } from '../../shared/ids';
-import type { EventBus } from '../execution/event-bus';
+import { generateAuditEnvelopeId } from '../../contracts';
+import { EventBus } from '../execution/event-bus';
 import type { EventStore, PersistedEvent } from '../graph-engine/event-store/base';
 import { createEventStoreAudit } from '../audit/eventStoreAudit';
 import { NotImplementedError } from './runErrors';
 import type { RunRecord, RunRegistryStore, RunStatus } from './runRegistryStorePort';
+import {
+  decideRunLifecycleTransition,
+  type RunLifecycleWriteStatus,
+} from './functions/runLifecycleTransition';
+import type { RunId, ToolCallId } from '../../contracts';
 
 export type RunRequestSnapshot = Readonly<object>;
 
@@ -27,7 +38,7 @@ export interface RunCost {
 }
 
 export interface RunCostCollector {
-  snapshot(runId: string): RunCost | Promise<RunCost>;
+  snapshot(runId: RunId): RunCost | Promise<RunCost>;
 }
 
 export interface RunLifecyclePatch {
@@ -38,6 +49,12 @@ export interface RunLifecyclePatch {
 export interface RunAwaitingUserPatch extends RunLifecyclePatch {
   reason?: string;
   eventId?: string;
+  interaction?: {
+    interactionId: string;
+    toolCallId: ToolCallId;
+    checkpointRevision: number;
+    resumeToken: string;
+  };
 }
 
 export interface RunFailureInfo {
@@ -47,8 +64,8 @@ export interface RunFailureInfo {
 }
 
 export interface RunMeta {
-  runId: string;
-  parentRunId?: string;
+  runId: RunId;
+  parentRunId?: RunId;
   agentSpecId?: string;
   conversationId: string;
   status: RunStatus;
@@ -69,12 +86,14 @@ export interface RunObserveFilter {
 }
 
 export interface RunHandle<TRequest extends RunRequestSnapshot = RunRequestSnapshot> {
-  readonly runId: string;
-  readonly parentRunId?: string;
+  readonly runId: RunId;
+  readonly parentRunId?: RunId;
   readonly signal: AbortSignal;
   spec(): Promise<AgentSpec>;
   request(): Promise<TRequest>;
-  cancel(opts: CancelOpts): Promise<void>;
+  /** 将同一个逻辑 run 重新挂载到当前请求的 transport 事件总线。 */
+  attachTransportEventBus(eventBus: EventBus): void;
+  cancel(opts: CancelOpts, patch?: RunLifecyclePatch): Promise<void>;
   observe(filter?: RunObserveFilter): AsyncIterable<RuntimeEvent>;
   cost(): Promise<RunCost>;
   meta(): Promise<RunMeta>;
@@ -96,7 +115,8 @@ export interface DefaultRunHandleOptions<TRequest extends RunRequestSnapshot = R
   costCollector: RunCostCollector;
   registryStore: RunRegistryStore;
   auditPort?: AuditPort;
-  onCancelled?: (runId: string, opts: CancelOpts) => void;
+  onCancelled?: (runId: RunId, opts: CancelOpts) => void;
+  onTerminal?: (runId: RunId) => void;
 }
 
 type EventQueueState = {
@@ -131,42 +151,12 @@ function runRecordToMeta(record: RunRecord): RunMeta {
   };
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
+function matchesPersistedRunId(runId: RunId, event: PersistedEvent): boolean {
+  return event.event.run_id === runId;
 }
 
-function readStringField(record: Record<string, unknown>, key: string): string | undefined {
-  const value = record[key];
-  return typeof value === 'string' ? value : undefined;
-}
-
-function getRunIdFromMetadata(event: RuntimeEvent): string | undefined {
-  const metadata = event.metadata;
-  if (!metadata) {
-    return undefined;
-  }
-
-  const camelCaseRunId = readStringField(metadata, 'runId');
-  if (camelCaseRunId) {
-    return camelCaseRunId;
-  }
-
-  const snakeCaseRunId = readStringField(metadata, 'run_id');
-  if (snakeCaseRunId) {
-    return snakeCaseRunId;
-  }
-
-  // 有些 host 会把 run id 写进 metadata.run_context.runId；persisted replay 必须识别这个真实形状。
-  const runContext = metadata['run_context'];
-  if (isRecord(runContext)) {
-    return readStringField(runContext, 'runId') ?? readStringField(runContext, 'run_id');
-  }
-
-  return undefined;
-}
-
-function matchesPersistedRunId(runId: string, event: PersistedEvent): boolean {
-  return event.runId === runId || getRunIdFromMetadata(event.event) === runId;
+function matchesRealtimeRunId(runId: RunId, event: RoutedRuntimeEvent): boolean {
+  return event.run_id === runId;
 }
 
 function matchesEventType(event: RuntimeEvent, filter?: RunObserveFilter): boolean {
@@ -175,7 +165,7 @@ function matchesEventType(event: RuntimeEvent, filter?: RunObserveFilter): boole
 }
 
 async function waitForEventQueue(state: EventQueueState): Promise<void> {
-  await new Promise<void>((resolve) => {
+  await new Promise<void>(resolve => {
     state.wake = resolve;
   });
   state.wake = null;
@@ -190,35 +180,50 @@ async function waitForEventQueue(state: EventQueueState): Promise<void> {
 export class DefaultRunHandle<TRequest extends RunRequestSnapshot = RunRequestSnapshot>
   implements RunHandle<TRequest>
 {
-  readonly runId: string;
-  readonly parentRunId?: string;
-  readonly signal: AbortSignal;
+  readonly runId: RunId;
+  readonly parentRunId?: RunId;
 
   private runRecord: RunRecord;
-  private readonly abortController: AbortController;
+  private abortController: AbortController;
   private readonly agentSpecSnapshot: AgentSpec;
   private readonly requestSnapshot: TRequest;
-  private readonly eventBus: EventBus;
+  private transportEventBus: EventBus;
+  private readonly observationEventBus: EventBus;
   private readonly eventStore: EventStore;
   private readonly costCollector: RunCostCollector;
   private readonly registryStore: RunRegistryStore;
   private readonly auditPort: AuditPort;
-  private readonly onCancelled?: (runId: string, opts: CancelOpts) => void;
+  private readonly onCancelled?: (runId: RunId, opts: CancelOpts) => void;
+  private readonly onTerminal?: (runId: RunId) => void;
 
   constructor(options: DefaultRunHandleOptions<TRequest>) {
     this.runRecord = { ...options.runRecord };
     this.runId = options.runRecord.runId;
     this.parentRunId = options.runRecord.parentRunId;
     this.abortController = options.abortController;
-    this.signal = options.abortController.signal;
     this.agentSpecSnapshot = AgentSpecSchema.parse(structuredClone(options.agentSpec));
     this.requestSnapshot = cloneRequest(options.request);
-    this.eventBus = options.eventBus;
+    this.transportEventBus = options.eventBus;
+    this.observationEventBus = new EventBus(`run-observer:${this.runId}`);
     this.eventStore = options.eventStore;
     this.costCollector = options.costCollector;
     this.registryStore = options.registryStore;
     this.auditPort = options.auditPort ?? createEventStoreAudit({ eventStore: options.eventStore });
     this.onCancelled = options.onCancelled;
+    this.onTerminal = options.onTerminal;
+    this.attachTransportBridge(this.transportEventBus);
+  }
+
+  get signal(): AbortSignal {
+    return this.abortController.signal;
+  }
+
+  /**
+   * awaiting_user 之后的 resume 是同一逻辑 run 的新 execution。
+   * 必须切换取消控制器，避免旧 transport 的迟到 abort 污染新 execution。
+   */
+  replaceExecutionAbortController(controller: AbortController): void {
+    this.abortController = controller;
   }
 
   async spec(): Promise<AgentSpec> {
@@ -229,21 +234,52 @@ export class DefaultRunHandle<TRequest extends RunRequestSnapshot = RunRequestSn
     return cloneRequest(this.requestSnapshot);
   }
 
-  async cancel(opts: CancelOpts): Promise<void> {
+  attachTransportEventBus(eventBus: EventBus): void {
+    if (this.transportEventBus === eventBus) {
+      return;
+    }
+    this.detachTransportBridge(this.transportEventBus);
+    this.transportEventBus = eventBus;
+    this.attachTransportBridge(eventBus);
+  }
+
+  async cancel(opts: CancelOpts, patch: RunLifecyclePatch = {}): Promise<void> {
     this.abortController.abort(opts.reason);
 
     const latestRecord = await this.registryStore.load(this.runId);
+    const baseRecord = latestRecord ?? this.runRecord;
+    const transition = decideRunLifecycleTransition(baseRecord.status, 'cancelled');
+    if (transition.kind === 'skip_terminal') {
+      if (transition.terminalStatus === 'cancelled' && hasLifecyclePatch(patch)) {
+        // 取消请求先触发 abort，执行器随后才知道真实迭代数。这里只允许补全同一
+        // cancelled 终态的执行进度，不重新触发审计、回调或终态资源释放。
+        const settledRecord: RunRecord = {
+          ...baseRecord,
+          updatedAt: Date.now(),
+          currentNode: patch.currentNode ?? baseRecord.currentNode,
+          iterationsUsed: patch.iterationsUsed ?? baseRecord.iterationsUsed,
+        };
+        await this.registryStore.save(settledRecord);
+        this.runRecord = { ...settledRecord };
+        return;
+      }
+      this.runRecord = { ...baseRecord };
+      return;
+    }
+
     const nextRecord: RunRecord = {
-      ...(latestRecord ?? this.runRecord),
+      ...baseRecord,
       status: 'cancelled',
       updatedAt: Date.now(),
+      currentNode: patch.currentNode ?? baseRecord.currentNode,
+      iterationsUsed: patch.iterationsUsed ?? baseRecord.iterationsUsed,
       errorIfAny: {
         errorCode: 'RUN_CANCELLED',
         message: opts.reason,
         recoverable: false,
       },
       metadata: {
-        ...((latestRecord ?? this.runRecord).metadata ?? {}),
+        ...(baseRecord.metadata ?? {}),
         cancel: {
           reason: opts.reason,
           forceCleanup: opts.forceCleanup ?? false,
@@ -282,6 +318,7 @@ export class DefaultRunHandle<TRequest extends RunRequestSnapshot = RunRequestSn
         agentSpecId: nextRecord.agentSpecId,
       },
     });
+    this.closeObservationChannel();
     this.onCancelled?.(this.runId, opts);
   }
 
@@ -289,7 +326,10 @@ export class DefaultRunHandle<TRequest extends RunRequestSnapshot = RunRequestSn
     if (filter.includePersisted) {
       const persistedEvents = await this.eventStore.range(this.runRecord.conversationId);
       for (const persistedEvent of persistedEvents) {
-        if (matchesPersistedRunId(this.runId, persistedEvent) && matchesEventType(persistedEvent.event, filter)) {
+        if (
+          matchesPersistedRunId(this.runId, persistedEvent) &&
+          matchesEventType(persistedEvent.event, filter)
+        ) {
           yield cloneRuntimeEvent(persistedEvent.event);
         }
       }
@@ -305,8 +345,11 @@ export class DefaultRunHandle<TRequest extends RunRequestSnapshot = RunRequestSn
     const wake = (): void => {
       state.wake?.();
     };
-    const onEvent = (envelope: EventEnvelope<RuntimeEvent>): void => {
-      if (matchesEventType(envelope.payload, filter)) {
+    const onEvent = (envelope: EventEnvelope<RoutedRuntimeEvent>): void => {
+      if (
+        matchesRealtimeRunId(this.runId, envelope.payload) &&
+        matchesEventType(envelope.payload, filter)
+      ) {
         state.queue.push(cloneRuntimeEvent(envelope.payload));
         wake();
       }
@@ -320,9 +363,9 @@ export class DefaultRunHandle<TRequest extends RunRequestSnapshot = RunRequestSn
       wake();
     };
 
-    this.eventBus.on('event', onEvent);
-    this.eventBus.on('error', onError);
-    this.eventBus.on('close', onClose);
+    this.observationEventBus.on('event', onEvent);
+    this.observationEventBus.on('error', onError);
+    this.observationEventBus.on('close', onClose);
 
     try {
       while (!state.closed || state.queue.length > 0) {
@@ -337,9 +380,9 @@ export class DefaultRunHandle<TRequest extends RunRequestSnapshot = RunRequestSn
         await waitForEventQueue(state);
       }
     } finally {
-      this.eventBus.off('event', onEvent);
-      this.eventBus.off('error', onError);
-      this.eventBus.off('close', onClose);
+      this.observationEventBus.off('event', onEvent);
+      this.observationEventBus.off('error', onError);
+      this.observationEventBus.off('close', onClose);
     }
   }
 
@@ -380,13 +423,20 @@ export class DefaultRunHandle<TRequest extends RunRequestSnapshot = RunRequestSn
   }
 
   private async saveLifecycleStatus(
-    status: Extract<RunStatus, 'running' | 'awaiting_user' | 'completed' | 'failed'>,
+    status: Extract<RunLifecycleWriteStatus, 'running' | 'awaiting_user' | 'completed' | 'failed'>,
     patch: RunLifecyclePatch | RunAwaitingUserPatch,
-    errorIfAny?: RunFailureInfo,
+    errorIfAny?: RunFailureInfo
   ): Promise<void> {
     const latestRecord = await this.registryStore.load(this.runId);
     const baseRecord = latestRecord ?? this.runRecord;
-    const awaitingUserPatch = status === 'awaiting_user' ? patch as RunAwaitingUserPatch : undefined;
+    const transition = decideRunLifecycleTransition(baseRecord.status, status);
+    if (transition.kind === 'skip_terminal') {
+      this.runRecord = { ...baseRecord };
+      return;
+    }
+
+    const awaitingUserPatch =
+      status === 'awaiting_user' ? (patch as RunAwaitingUserPatch) : undefined;
     const updatedAt = Date.now();
     const nextRecord: RunRecord = {
       ...baseRecord,
@@ -394,7 +444,10 @@ export class DefaultRunHandle<TRequest extends RunRequestSnapshot = RunRequestSn
       updatedAt,
       currentNode: patch.currentNode ?? baseRecord.currentNode,
       iterationsUsed: patch.iterationsUsed ?? baseRecord.iterationsUsed,
-      pauseReason: status === 'awaiting_user' ? awaitingUserPatch?.reason ?? baseRecord.pauseReason : undefined,
+      pauseReason:
+        status === 'awaiting_user'
+          ? (awaitingUserPatch?.reason ?? baseRecord.pauseReason)
+          : undefined,
       pausedAt: status === 'awaiting_user' ? updatedAt : undefined,
       errorIfAny,
       metadata: awaitingUserPatch?.eventId
@@ -403,6 +456,9 @@ export class DefaultRunHandle<TRequest extends RunRequestSnapshot = RunRequestSn
             awaitingUser: {
               eventId: awaitingUserPatch.eventId,
               reason: awaitingUserPatch.reason,
+              ...(awaitingUserPatch.interaction
+                ? { interaction: { ...awaitingUserPatch.interaction, status: 'pending' } }
+                : {}),
             },
           }
         : baseRecord.metadata,
@@ -410,7 +466,44 @@ export class DefaultRunHandle<TRequest extends RunRequestSnapshot = RunRequestSn
 
     await this.registryStore.save(nextRecord);
     this.runRecord = { ...nextRecord };
+    if (status === 'completed' || status === 'failed') {
+      this.closeObservationChannel();
+      this.onTerminal?.(this.runId);
+    }
   }
+
+  private readonly forwardTransportEvent = (envelope: EventEnvelope<RoutedRuntimeEvent>): void => {
+    this.observationEventBus.emit('event', envelope);
+  };
+
+  private readonly forwardTransportError = (error: Error): void => {
+    this.observationEventBus.emit('error', error);
+  };
+
+  private readonly detachClosedTransport = (): void => {
+    this.detachTransportBridge(this.transportEventBus);
+  };
+
+  private attachTransportBridge(eventBus: EventBus): void {
+    eventBus.on('event', this.forwardTransportEvent);
+    eventBus.on('error', this.forwardTransportError);
+    eventBus.on('close', this.detachClosedTransport);
+  }
+
+  private detachTransportBridge(eventBus: EventBus): void {
+    eventBus.off('event', this.forwardTransportEvent);
+    eventBus.off('error', this.forwardTransportError);
+    eventBus.off('close', this.detachClosedTransport);
+  }
+
+  private closeObservationChannel(): void {
+    this.detachTransportBridge(this.transportEventBus);
+    this.observationEventBus.close();
+  }
+}
+
+function hasLifecyclePatch(patch: RunLifecyclePatch): boolean {
+  return patch.currentNode !== undefined || patch.iterationsUsed !== undefined;
 }
 
 export function runMetaFromRecord(record: RunRecord): RunMeta {

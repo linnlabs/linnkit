@@ -1,14 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import {
   defineContextPolicy,
-  type AiMessage,
+  AiMessage,
+  type AgentSpecTokenEstimationPolicy,
   type TokenRoute,
   type TokenUsageCalibrationSample,
+  ToolCallIdSchema,
 } from '../../../../../contracts';
 import type { TokenCounterPort, TokenizerPort } from '../../../../../ports';
 import { createContextComponentLedgerEntry } from '../../../../../runtime-kernel';
 import { AgentContextManager } from '../AgentContextManager';
-import { ConversationSession } from '../ConversationSession';
+import { AgentBuildPhase } from '../config';
 import {
   AgentCoreContextProvider,
   AgentWorkingMemoryProvider,
@@ -21,9 +23,9 @@ function message(
   role: AiMessage['role'],
   type: AiMessage['type'],
   content: string,
-  timestamp: number,
+  timestamp: number
 ): AiMessage {
-  return { id, role, type, content, timestamp };
+  return AiMessage.parse({ id, role, type, content, timestamp });
 }
 
 function createManager(): AgentContextManager {
@@ -38,17 +40,18 @@ function createManager(): AgentContextManager {
 function createManagerWithWorkingMemory(): AgentContextManager {
   const registry = new ContextProviderRegistry();
   registry.register(new AgentCoreContextProvider());
-  registry.register(new AgentWorkingMemoryProvider({
-    WORKING_MEMORY_BUDGET_PERCENTAGE: 1,
-    MAX_TOOL_PAIR_TOKENS: 10_000,
-    MIN_TOOL_INTERACTIONS_TO_KEEP: 1,
-  }));
+  registry.register(
+    new AgentWorkingMemoryProvider({
+      WORKING_MEMORY_BUDGET_PERCENTAGE: 1,
+      MIN_TOOL_INTERACTIONS_TO_KEEP: 1,
+    })
+  );
   return new AgentContextManager({
     debugMode: false,
     providerRegistry: registry,
     tokenizer: {
-      estimateText: (text) => text.length,
-      estimateMessage: (msg) => msg.content.length,
+      estimateText: text => text.length,
+      estimateMessage: msg => msg.content?.length ?? 0,
     },
   });
 }
@@ -56,7 +59,7 @@ function createManagerWithWorkingMemory(): AgentContextManager {
 function createManagerWithCalibration(input: {
   route?: TokenRoute;
   samples?: readonly TokenUsageCalibrationSample[];
-  policy?: ReturnType<typeof defineContextPolicy>['tokenEstimation']['calibration'];
+  policy?: AgentSpecTokenEstimationPolicy['calibration'];
   tokenizer?: TokenizerPort;
 }): AgentContextManager {
   const registry = new ContextProviderRegistry();
@@ -76,7 +79,7 @@ function createManagerWithCalibration(input: {
 
 function createManagerWithRemoteCounter(input: {
   route?: TokenRoute;
-  remoteCount?: ReturnType<typeof defineContextPolicy>['tokenEstimation']['remoteCount'];
+  remoteCount?: AgentSpecTokenEstimationPolicy['remoteCount'];
   tokenCounter?: TokenCounterPort;
   tokenizer?: TokenizerPort;
 }): AgentContextManager {
@@ -122,7 +125,7 @@ const fixedTokenizer: TokenizerPort = {
 function calibrationSample(
   sampleRoute: TokenRoute,
   id: string,
-  actualInputTokens: number,
+  actualInputTokens: number
 ): TokenUsageCalibrationSample {
   return {
     route: sampleRoute,
@@ -139,13 +142,12 @@ describe('AgentContextManager ContextTrace', () => {
     const manager = createManager();
     const result = await manager.buildContextFromPreprocessedMessages(
       { promptKey: 'default', query: '当前问题' },
-      new ConversationSession(''),
       [
         message('system_1', 'system', 'system_prompt', '系统提示', 1),
         message('assistant_1', 'assistant', 'final_answer', '旧回答', 2),
         message('user_1', 'user', 'user_input', '当前问题', 3),
       ],
-      1000,
+      1000
     );
 
     expect(result.contextTrace).toBeUndefined();
@@ -164,7 +166,6 @@ describe('AgentContextManager ContextTrace', () => {
 
     const result = await manager.buildContextFromPreprocessedMessages(
       { promptKey: 'default', query: '当前问题' },
-      new ConversationSession(''),
       [
         message('system_1', 'system', 'system_prompt', '系统提示', 1),
         message('assistant_1', 'assistant', 'final_answer', '旧回答', 2),
@@ -177,7 +178,7 @@ describe('AgentContextManager ContextTrace', () => {
       {
         policy: effectivePolicy.contextTrace,
         effectiveContextPolicy: effectivePolicy,
-      },
+      }
     );
 
     expect(result.contextTrace).toMatchObject({
@@ -212,7 +213,7 @@ describe('AgentContextManager ContextTrace', () => {
           kept: false,
           reason: 'dropped_by_budget_or_priority',
         }),
-      ]),
+      ])
     );
     expect(result.contextTrace?.tokenComponents).toEqual(
       expect.arrayContaining([
@@ -231,9 +232,40 @@ describe('AgentContextManager ContextTrace', () => {
           messageId: 'user_1',
           kept: true,
         }),
-      ]),
+      ])
     );
     expect(result.tokenComponents).toEqual(result.contextTrace?.tokenComponents);
+  });
+
+  it('真实 provider 名称应写入对应 phase 统计', async () => {
+    const manager = createManagerWithWorkingMemory();
+
+    const result = await manager.buildContextFromPreprocessedMessages(
+      { promptKey: 'default', query: '当前问题' },
+      [
+        message('system_1', 'system', 'system_prompt', '系统提示', 1),
+        message('assistant_1', 'assistant', 'final_answer', '旧回答', 2),
+        message('user_1', 'user', 'user_input', '当前问题', 3),
+      ],
+      1000
+    );
+
+    const buildStats = result.processingStats.buildStats;
+    expect(buildStats).toBeDefined();
+    expect(buildStats?.phaseTiming[AgentBuildPhase.CORE_CONTEXT]).toBeGreaterThanOrEqual(0);
+    expect(buildStats?.phaseTiming[AgentBuildPhase.WORKING_MEMORY]).toBeGreaterThanOrEqual(0);
+    expect(buildStats?.phaseTokenUsage[AgentBuildPhase.CORE_CONTEXT]).toEqual(
+      expect.objectContaining({
+        used: expect.any(Number),
+        percentage: expect.any(Number),
+      })
+    );
+    expect(buildStats?.phaseTokenUsage[AgentBuildPhase.WORKING_MEMORY]).toEqual(
+      expect.objectContaining({
+        used: expect.any(Number),
+        percentage: expect.any(Number),
+      })
+    );
   });
 
   it('尊重 includeMessageIds=false 与 maxTraceEvents 上限', async () => {
@@ -249,7 +281,6 @@ describe('AgentContextManager ContextTrace', () => {
 
     const result = await manager.buildContextFromPreprocessedMessages(
       { promptKey: 'default', query: '当前问题' },
-      new ConversationSession(''),
       [
         message('system_1', 'system', 'system_prompt', '系统提示', 1),
         message('assistant_1', 'assistant', 'final_answer', '旧回答', 2),
@@ -262,7 +293,7 @@ describe('AgentContextManager ContextTrace', () => {
       {
         policy: effectivePolicy.contextTrace,
         effectiveContextPolicy: effectivePolicy,
-      },
+      }
     );
 
     expect(result.contextTrace?.overflowed).toBe(true);
@@ -293,15 +324,16 @@ describe('AgentContextManager ContextTrace', () => {
 
     const result = await manager.buildContextFromPreprocessedMessages(
       { promptKey: 'default', query: '当前问题' },
-      new ConversationSession(''),
       [
         message('system_1', 'system', 'system_prompt', '系统提示', 1),
         message('user_1', 'user', 'user_input', '当前问题', 2),
       ],
-      1000,
+      1000
     );
 
     expect(result.tokenUsage.used).toBe(20);
+    expect(result.tokenUsage.source).toBe('local-estimate');
+    expect(result.tokenUsage.confidence).toBe('estimate');
     expect(result.contextTrace).toBeUndefined();
   });
 
@@ -329,7 +361,6 @@ describe('AgentContextManager ContextTrace', () => {
 
     const result = await manager.buildContextFromPreprocessedMessages(
       { promptKey: 'default', query: '当前问题' },
-      new ConversationSession(''),
       [
         message('system_1', 'system', 'system_prompt', '系统提示', 1),
         message('user_1', 'user', 'user_input', '当前问题', 2),
@@ -341,7 +372,7 @@ describe('AgentContextManager ContextTrace', () => {
       {
         policy: effectivePolicy.contextTrace,
         effectiveContextPolicy: effectivePolicy,
-      },
+      }
     );
 
     expect(result.tokenUsage.used).toBe(20);
@@ -381,7 +412,6 @@ describe('AgentContextManager ContextTrace', () => {
 
     const result = await manager.buildContextFromPreprocessedMessages(
       { promptKey: 'default', query: '当前问题' },
-      new ConversationSession(''),
       [
         message('system_1', 'system', 'system_prompt', '系统提示', 1),
         message('user_1', 'user', 'user_input', '当前问题', 2),
@@ -393,7 +423,7 @@ describe('AgentContextManager ContextTrace', () => {
       {
         policy: effectivePolicy.contextTrace,
         effectiveContextPolicy: effectivePolicy,
-      },
+      }
     );
 
     expect(result.tokenUsage.used).toBe(40);
@@ -418,7 +448,7 @@ describe('AgentContextManager ContextTrace', () => {
             deltaTokens: 10,
           }),
         }),
-      ]),
+      ])
     );
   });
 
@@ -438,15 +468,11 @@ describe('AgentContextManager ContextTrace', () => {
       route,
       tokenizer: fixedTokenizer,
       policy: effectivePolicy.tokenEstimation?.calibration,
-      samples: [
-        calibrationSample(route, 'ledger_1', 20),
-        calibrationSample(route, 'ledger_2', 20),
-      ],
+      samples: [calibrationSample(route, 'ledger_1', 20), calibrationSample(route, 'ledger_2', 20)],
     });
 
     const result = await manager.buildContextFromPreprocessedMessages(
       { promptKey: 'default', query: '当前问题' },
-      new ConversationSession(''),
       [
         message('system_1', 'system', 'system_prompt', '系统提示', 1),
         message('user_1', 'user', 'user_input', '当前问题', 2),
@@ -458,7 +484,7 @@ describe('AgentContextManager ContextTrace', () => {
       {
         policy: effectivePolicy.contextTrace,
         effectiveContextPolicy: effectivePolicy,
-      },
+      }
     );
 
     expect(result.tokenEstimate).toEqual({
@@ -487,15 +513,11 @@ describe('AgentContextManager ContextTrace', () => {
       route,
       tokenizer: fixedTokenizer,
       policy: effectivePolicy.tokenEstimation?.calibration,
-      samples: [
-        calibrationSample(route, 'ledger_1', 4),
-        calibrationSample(route, 'ledger_2', 4),
-      ],
+      samples: [calibrationSample(route, 'ledger_1', 4), calibrationSample(route, 'ledger_2', 4)],
     });
 
     const result = await manager.buildContextFromPreprocessedMessages(
       { promptKey: 'default', query: '当前问题' },
-      new ConversationSession(''),
       [
         message('system_1', 'system', 'system_prompt', '系统提示', 1),
         message('user_1', 'user', 'user_input', '当前问题', 2),
@@ -507,7 +529,7 @@ describe('AgentContextManager ContextTrace', () => {
       {
         policy: effectivePolicy.contextTrace,
         effectiveContextPolicy: effectivePolicy,
-      },
+      }
     );
 
     expect(result.contextTrace?.tokenCalibration).toMatchObject({
@@ -540,15 +562,11 @@ describe('AgentContextManager ContextTrace', () => {
       route,
       tokenizer: fixedTokenizer,
       policy: effectivePolicy.tokenEstimation?.calibration,
-      samples: [
-        calibrationSample(route, 'ledger_1', 4),
-        calibrationSample(route, 'ledger_2', 4),
-      ],
+      samples: [calibrationSample(route, 'ledger_1', 4), calibrationSample(route, 'ledger_2', 4)],
     });
 
     const result = await manager.buildContextFromPreprocessedMessages(
       { promptKey: 'default', query: '当前问题' },
-      new ConversationSession(''),
       [
         message('system_1', 'system', 'system_prompt', '系统提示', 1),
         message('user_1', 'user', 'user_input', '当前问题', 2),
@@ -560,7 +578,7 @@ describe('AgentContextManager ContextTrace', () => {
       {
         policy: effectivePolicy.contextTrace,
         effectiveContextPolicy: effectivePolicy,
-      },
+      }
     );
 
     expect(result.contextTrace?.tokenCalibration).toMatchObject({
@@ -578,7 +596,7 @@ describe('AgentContextManager ContextTrace', () => {
   it('remote count 默认关闭时不调用 TokenCounterPort，保持本地估算', async () => {
     const calls: unknown[] = [];
     const tokenCounter: TokenCounterPort = {
-      countMessages: async (input) => {
+      countMessages: async input => {
         calls.push(input);
         return {
           inputTokens: 100,
@@ -595,12 +613,11 @@ describe('AgentContextManager ContextTrace', () => {
 
     const result = await manager.buildContextFromPreprocessedMessages(
       { promptKey: 'default', query: '当前问题' },
-      new ConversationSession(''),
       [
         message('system_1', 'system', 'system_prompt', '系统提示', 1),
         message('user_1', 'user', 'user_input', '当前问题', 2),
       ],
-      1000,
+      1000
     );
 
     expect(result.tokenUsage.used).toBe(20);
@@ -610,7 +627,7 @@ describe('AgentContextManager ContextTrace', () => {
   it('remote count 只在 policy 与 route capability 都开启时调用，并写入 ContextTrace', async () => {
     const calls: Array<Parameters<TokenCounterPort['countMessages']>[0]> = [];
     const tokenCounter: TokenCounterPort = {
-      countMessages: async (input) => {
+      countMessages: async input => {
         calls.push(input);
         return {
           inputTokens: 33,
@@ -638,7 +655,6 @@ describe('AgentContextManager ContextTrace', () => {
 
     const result = await manager.buildContextFromPreprocessedMessages(
       { promptKey: 'default', query: '当前问题' },
-      new ConversationSession(''),
       [
         message('system_1', 'system', 'system_prompt', '系统提示', 1),
         message('user_1', 'user', 'user_input', '当前问题', 2),
@@ -650,13 +666,15 @@ describe('AgentContextManager ContextTrace', () => {
       {
         policy: effectivePolicy.contextTrace,
         effectiveContextPolicy: effectivePolicy,
-      },
+      }
     );
 
     expect(calls).toHaveLength(1);
     expect(calls[0]?.route).toEqual(remoteCountRoute);
     expect(calls[0]?.messages).toHaveLength(2);
     expect(result.tokenUsage.used).toBe(33);
+    expect(result.tokenUsage.source).toBe('test-fixture');
+    expect(result.tokenUsage.confidence).toBe('provider-estimate');
     expect(result.contextTrace?.remoteTokenCount).toMatchObject({
       enabled: true,
       attempted: true,
@@ -686,7 +704,7 @@ describe('AgentContextManager ContextTrace', () => {
       route,
       tokenizer: fixedTokenizer,
       tokenCounter: {
-        countMessages: async (input) => {
+        countMessages: async input => {
           calls.push(input);
           return {
             inputTokens: 100,
@@ -700,7 +718,6 @@ describe('AgentContextManager ContextTrace', () => {
 
     const result = await manager.buildContextFromPreprocessedMessages(
       { promptKey: 'default', query: '当前问题' },
-      new ConversationSession(''),
       [
         message('system_1', 'system', 'system_prompt', '系统提示', 1),
         message('user_1', 'user', 'user_input', '当前问题', 2),
@@ -712,7 +729,7 @@ describe('AgentContextManager ContextTrace', () => {
       {
         policy: effectivePolicy.contextTrace,
         effectiveContextPolicy: effectivePolicy,
-      },
+      }
     );
 
     expect(calls).toEqual([]);
@@ -747,7 +764,7 @@ describe('AgentContextManager ContextTrace', () => {
         timestamp: 1,
         version: 1,
         tool_name: 'search',
-        tool_call_id: 'call-search-1',
+        tool_call_id: ToolCallIdSchema.parse('call-search-1'),
         phase: 'start',
         status: 'loading',
         payload: {
@@ -768,9 +785,10 @@ describe('AgentContextManager ContextTrace', () => {
         timestamp: 2,
         version: 1,
         tool_name: 'search',
-        tool_call_id: 'call-search-1',
+        tool_call_id: ToolCallIdSchema.parse('call-search-1'),
         status: 'success',
-        output: preview,
+        observation: preview,
+        data: {},
         metadata: {
           observationTruncation: {
             originalChars,
@@ -784,11 +802,7 @@ describe('AgentContextManager ContextTrace', () => {
 
     const result = await manager.buildContextFromPreprocessedMessages(
       { promptKey: 'default', query: '继续基于工具结果回答' },
-      new ConversationSession(''),
-      [
-        ...history,
-        message('user-followup', 'user', 'user_input', '继续基于工具结果回答', 3),
-      ],
+      [...history, message('user-followup', 'user', 'user_input', '继续基于工具结果回答', 3)],
       1000,
       undefined,
       undefined,
@@ -796,10 +810,10 @@ describe('AgentContextManager ContextTrace', () => {
       {
         policy: effectivePolicy.contextTrace,
         effectiveContextPolicy: effectivePolicy,
-      },
+      }
     );
 
-    const toolComponent = result.contextTrace?.tokenComponents?.find((component) => {
+    const toolComponent = result.contextTrace?.tokenComponents?.find(component => {
       return component.messageId === 'tool-output-truncated';
     });
     expect(toolComponent).toMatchObject({
@@ -813,7 +827,7 @@ describe('AgentContextManager ContextTrace', () => {
 
     const ledger = createContextComponentLedgerEntry({
       id: 'context-ledger-truncation',
-      components: result.tokenComponents?.filter((component) => component.kept !== false) ?? [],
+      components: result.tokenComponents?.filter(component => component.kept !== false) ?? [],
     });
     expect(ledger.components).toEqual(
       expect.arrayContaining([
@@ -822,10 +836,10 @@ describe('AgentContextManager ContextTrace', () => {
           tokens: preview.length,
           droppedTokensEstimate: originalChars - preview.length,
         }),
-      ]),
+      ])
     );
     expect(ledger.totalTokens).toBe(
-      ledger.components.reduce((sum, component) => sum + component.tokens, 0),
+      ledger.components.reduce((sum, component) => sum + component.tokens, 0)
     );
   });
 });

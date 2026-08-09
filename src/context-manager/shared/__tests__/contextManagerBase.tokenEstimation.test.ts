@@ -6,6 +6,7 @@ import {
   type ContextManagerBaseOptions,
 } from '../context-manager-base';
 import { ContextProviderRegistry } from '../providers/registry';
+import { ToolCallIdSchema } from '../../../contracts';
 
 interface TestContextConfig extends ContextManagerBaseConfig {
   AVG_CHARS_PER_TOKEN: number;
@@ -22,7 +23,12 @@ class TestContextManager extends ContextManagerBase<
   TestContextConfig,
   ContextProviderRegistry<TestContextConfig>
 > {
-  constructor(options: ContextManagerBaseOptions<TestContextConfig, ContextProviderRegistry<TestContextConfig>> = {}) {
+  constructor(
+    options: ContextManagerBaseOptions<
+      TestContextConfig,
+      ContextProviderRegistry<TestContextConfig>
+    > = {}
+  ) {
     super(options, {
       defaultConfig: DEFAULT_CONFIG,
       validateConfig: () => true,
@@ -57,7 +63,7 @@ function makeToolCallMessage(): AiMessage {
     metadata: {
       tool_calls: [
         {
-          id: 'call_1',
+          id: ToolCallIdSchema.parse('call_1'),
           type: 'function',
           function: {
             name: 'search',
@@ -93,7 +99,9 @@ describe('ContextManagerBase token estimation', () => {
       },
     });
 
-    expect(highOverheadManager.estimate(makeToolCallMessage()) - lowOverheadManager.estimate(makeToolCallMessage()))
-      .toBe(60);
+    expect(
+      highOverheadManager.estimate(makeToolCallMessage()) -
+        lowOverheadManager.estimate(makeToolCallMessage())
+    ).toBe(60);
   });
 });

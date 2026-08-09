@@ -13,13 +13,22 @@ import type {
   TokenRoute,
   TokenUsageCalibrationSample,
 } from '../../contracts';
-import type { LlmRequestMessage, TokenCounterPort, TokenizerPort } from '../../ports';
+import type {
+  LlmImageInputEstimatorPort,
+  LlmRequestMessage,
+  TokenCounterPort,
+  TokenizerPort,
+} from '../../ports';
 import type { ContextTraceCollector } from './context-trace';
 import type { RemoteTokenCountTrace } from './providers/base';
 import {
   buildTokenUsageCalibrationState,
   calibrateTokenEstimate,
 } from './token-calibration';
+import {
+  estimateMessageImageInputs,
+  type MessageImageInputEstimate,
+} from './image-input-estimation';
 
 export interface ContextManagerBaseConfig {
   AVG_CHARS_PER_TOKEN: number;
@@ -41,6 +50,7 @@ export interface ContextManagerBaseOptions<TConfig, TRegistry> {
     route?: TokenRoute;
     samples?: readonly TokenUsageCalibrationSample[];
   };
+  imageInputEstimator?: LlmImageInputEstimatorPort;
 }
 
 interface ContextManagerBaseInit<TConfig, TRegistry> {
@@ -68,6 +78,7 @@ export abstract class ContextManagerBase<
   private readonly validateConfigFn: (config: TConfig) => boolean;
   private readonly invalidConfigMessage: string;
   private readonly hasCustomTokenizer: boolean;
+  private readonly imageInputEstimator?: LlmImageInputEstimatorPort;
 
   protected constructor(
     options: ContextManagerBaseOptions<TConfig, TRegistry>,
@@ -88,6 +99,7 @@ export abstract class ContextManagerBase<
     this.tokenRoute = options.tokenRoute;
     this.remoteCountPolicy = options.remoteCount;
     this.tokenCalibrationState = buildTokenUsageCalibrationState(options.tokenCalibration ?? {});
+    this.imageInputEstimator = options.imageInputEstimator;
 
     if (!this.validateConfigFn(this.config)) {
       throw new Error(this.invalidConfigMessage);
@@ -104,10 +116,14 @@ export abstract class ContextManagerBase<
 
   protected estimateTokens(message: AiMessage): number {
     const localEstimateTokens = this.tokenizer.estimateMessage(message as LlmRequestMessage, this.tokenizerModelId);
-    return calibrateTokenEstimate({
+    const calibratedTextTokens = calibrateTokenEstimate({
       localEstimateTokens,
       state: this.tokenCalibrationState,
     }).tokens;
+    return calibratedTextTokens + this.estimateImageInputs(message).reduce(
+      (total, attachment) => total + attachment.estimatedTokens,
+      0,
+    );
   }
 
   protected estimateTokensWithCalibrationTrace(message: AiMessage): {
@@ -120,9 +136,20 @@ export abstract class ContextManagerBase<
       state: this.tokenCalibrationState,
     });
     return {
-      tokens: calibrated.tokens,
+      tokens: calibrated.tokens + this.estimateImageInputs(message).reduce(
+        (total, attachment) => total + attachment.estimatedTokens,
+        0,
+      ),
       calibrationTrace: calibrated.trace,
     };
+  }
+
+  protected estimateImageInputs(message: AiMessage): MessageImageInputEstimate[] {
+    return estimateMessageImageInputs({
+      message,
+      activeModelId: this.tokenizerModelId,
+      estimator: this.imageInputEstimator,
+    });
   }
 
   protected getTokenCalibrationTrace(): ReturnType<typeof calibrateTokenEstimate>['trace'] {
@@ -138,7 +165,12 @@ export abstract class ContextManagerBase<
 
   protected estimateLocalTokens(messages: readonly AiMessage[]): number {
     return messages.reduce(
-      (total, message) => total + this.tokenizer.estimateMessage(message as LlmRequestMessage, this.tokenizerModelId),
+      (total, message) => total
+        + this.tokenizer.estimateMessage(message as LlmRequestMessage, this.tokenizerModelId)
+        + this.estimateImageInputs(message).reduce(
+          (imageTotal, attachment) => imageTotal + attachment.estimatedTokens,
+          0,
+        ),
       0,
     );
   }
@@ -160,6 +192,16 @@ export abstract class ContextManagerBase<
       localEstimateTokens: input.localEstimateTokens,
       failureBehavior,
     };
+
+    if (input.messages.some(message => this.estimateImageInputs(message).length > 0)) {
+      return {
+        tokens: input.localEstimateTokens,
+        trace: {
+          ...baseTrace,
+          skipReason: 'image_input_local_only',
+        },
+      };
+    }
 
     if (
       this.remoteCountPolicy?.enabled !== true ||

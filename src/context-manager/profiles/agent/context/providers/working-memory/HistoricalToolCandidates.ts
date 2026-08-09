@@ -14,9 +14,10 @@ export function buildHistoricalToolCandidates(params: {
   allStates: MessageProcessingState[];
   toolGroups: ToolInteractionGroup<MessageProcessingState>[];
   lastUserOriginalIndex: number;
+  minRawToolRunOrdinal: number | null;
   matcher: ToolPairMatcher;
 }): HistoricalToolCandidate[] {
-  const { allStates, toolGroups, lastUserOriginalIndex, matcher } = params;
+  const { allStates, toolGroups, lastUserOriginalIndex, minRawToolRunOrdinal, matcher } = params;
   const compressedCandidates = allStates
     .filter((state) => {
       if (!matcher.isCompressedToolHistoryMessage(state.message)) {
@@ -31,7 +32,11 @@ export function buildHistoricalToolCandidates(params: {
     }));
 
   const groupCandidates = toolGroups
-    .filter((group) => group.startIndex <= lastUserOriginalIndex)
+    .filter((group) => (
+      group.startIndex <= lastUserOriginalIndex &&
+      minRawToolRunOrdinal !== null &&
+      group.runOrdinal >= minRawToolRunOrdinal
+    ))
     .map((group) => ({
       kind: 'group' as const,
       sortIndex: group.startIndex,

@@ -4,9 +4,11 @@
  */
 
 import { RequestEnricher, EnrichmentContext, RegistryEnrichmentResult } from './types';
+import { Logger } from '../../shared/logger';
 
 class RequestEnricherRegistry {
   private enrichers: RequestEnricher[] = [];
+  private readonly logger = new Logger('RequestEnricherRegistry');
 
   /**
    * 注册增强器
@@ -15,8 +17,16 @@ class RequestEnricherRegistry {
     // 避免重复注册
     if (!this.enrichers.find(e => e.name === enricher.name)) {
       this.enrichers.push(enricher);
-      console.log(`[RequestEnricherRegistry] Registered enricher: ${enricher.name}`);
+      this.logger.debug('Registered enricher', { name: enricher.name });
     }
+  }
+
+  snapshot(): readonly string[] {
+    return this.enrichers.map((enricher) => enricher.name);
+  }
+
+  reset(): void {
+    this.enrichers = [];
   }
 
   /**
@@ -58,7 +68,10 @@ class RequestEnricherRegistry {
             };
           }
         } catch (error) {
-          console.error(`[RequestEnricherRegistry] Enricher '${enricher.name}' failed:`, error);
+          this.logger.error('Enricher failed', {
+            name: enricher.name,
+            error: error instanceof Error ? error.message : String(error),
+          });
           // 策略：单个增强器失败通常意味着业务不可行，应该抛出异常阻断流程
           throw error;
         }
@@ -75,4 +88,3 @@ class RequestEnricherRegistry {
 
 // 单例导出
 export const requestEnricherRegistry = new RequestEnricherRegistry();
-

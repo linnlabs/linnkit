@@ -11,11 +11,9 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import {
-  convertAiMessageToEvent,
-  convertEventToAiMessage,
-} from '../eventConverter';
+import { convertAiMessageToEvent, convertEventToAiMessage } from '../eventConverter';
 import type { RuntimeEvent, AiMessage } from '../../../../../contracts';
+import { ToolCallIdSchema } from '../../../../../contracts';
 
 describe('Gemini thought_signature 透传', () => {
   it('RuntimeEvent(tool_call_decision) → AiMessage(tool_calls) 应保留 extra_content.google.thought_signature', () => {
@@ -27,7 +25,7 @@ describe('Gemini thought_signature 透传', () => {
       timestamp: Date.now(),
       version: 1,
       tool_name: 'check_weather',
-      tool_call_id: 'call_g1',
+      tool_call_id: ToolCallIdSchema.parse('call_g1'),
       phase: 'start',
       status: 'loading',
       args: { city: 'Paris' },
@@ -37,10 +35,10 @@ describe('Gemini thought_signature 透传', () => {
             id: 'call_g1',
             type: 'function',
             function: { name: 'check_weather', arguments: '{"city":"Paris"}' },
-            extra_content: { google: { thought_signature: '<Signature_A>' } }
-          }
-        ]
-      }
+            extra_content: { google: { thought_signature: '<Signature_A>' } },
+          },
+        ],
+      },
     };
 
     const msg = convertEventToAiMessage(runtime);
@@ -48,7 +46,9 @@ describe('Gemini thought_signature 透传', () => {
     expect(msg.type).toBe('tool_calls');
     expect(Array.isArray(msg.metadata?.tool_calls)).toBe(true);
     expect(msg.metadata?.tool_calls?.[0]?.id).toBe('call_g1');
-    expect(msg.metadata?.tool_calls?.[0]?.extra_content?.google?.thought_signature).toBe('<Signature_A>');
+    expect(msg.metadata?.tool_calls?.[0]?.extra_content?.google?.thought_signature).toBe(
+      '<Signature_A>'
+    );
   });
 
   it('AiMessage(tool_calls) 反向转换不会重建 tool_call_decision，而是退化为 final_answer', () => {
@@ -61,23 +61,20 @@ describe('Gemini thought_signature 透传', () => {
       metadata: {
         tool_calls: [
           {
-            id: 'call_g2',
+            id: ToolCallIdSchema.parse('call_g2'),
             type: 'function',
             function: { name: 'book_taxi', arguments: '{"time":"10:00"}' },
-            extra_content: { google: { thought_signature: '<Signature_B>' } }
-          }
-        ]
-      }
+            extra_content: { google: { thought_signature: '<Signature_B>' } },
+          },
+        ],
+      },
     };
 
-    const runtime = convertAiMessageToEvent(ai, {
-      conversation_id: 'c2',
-      turn_id: 't2',
-    });
-    expect(runtime.type).toBe('final_answer');
-    if (runtime.type !== 'final_answer') {
-      throw new Error('expected final_answer event');
-    }
-    expect(runtime.content).toBe('');
+    expect(() =>
+      convertAiMessageToEvent(ai, {
+        conversation_id: 'c2',
+        turn_id: 't2',
+      })
+    ).toThrow('AiMessage type tool_calls cannot be converted to a RuntimeEvent.');
   });
 });

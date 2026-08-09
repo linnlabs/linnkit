@@ -6,6 +6,7 @@ import { HistoryPurificationPreprocessor } from '../../../../../shared/preproces
 import { formatAgentLlmMessages } from '../../../../../shared';
 import { createContextPipelineHarness } from '../../../../../../testkit/context-harness/contextPipelineHarness';
 import type { AiMessage } from '../../../../../../contracts';
+import { ToolCallIdSchema } from '../../../../../../contracts';
 
 function makeMultiToolMessages(): AiMessage[] {
   return [
@@ -25,7 +26,7 @@ function makeMultiToolMessages(): AiMessage[] {
       metadata: {
         tool_calls: [
           {
-            id: 'call_list',
+            id: ToolCallIdSchema.parse('call_list'),
             type: 'function',
             function: {
               name: 'resource_list',
@@ -33,7 +34,7 @@ function makeMultiToolMessages(): AiMessage[] {
             },
           },
           {
-            id: 'call_read',
+            id: ToolCallIdSchema.parse('call_read'),
             type: 'function',
             function: {
               name: 'resource_read',
@@ -50,8 +51,9 @@ function makeMultiToolMessages(): AiMessage[] {
       content: '{"observation":"列出 3 个资源"}',
       timestamp: 1200,
       metadata: {
-        tool_call_id: 'call_list',
+        tool_call_id: ToolCallIdSchema.parse('call_list'),
         tool_name: 'resource_list',
+        data: { count: 3 },
       },
     },
     {
@@ -61,8 +63,9 @@ function makeMultiToolMessages(): AiMessage[] {
       content: '{"observation":"读取文档成功"}',
       timestamp: 1300,
       metadata: {
-        tool_call_id: 'call_read',
+        tool_call_id: ToolCallIdSchema.parse('call_read'),
         tool_name: 'resource_read',
+        data: { content: '读取文档成功' },
       },
     },
     {
@@ -92,7 +95,7 @@ describe('multi tool follow-up integration', () => {
       }),
     ]);
     const compressedSummary = compressedResult.messages.find(
-      (message) => message.metadata?.isCompressedToolHistory === true,
+      message => message.metadata?.isCompressedToolHistory === true
     );
 
     expect(compressedSummary).toBeDefined();
@@ -103,14 +106,15 @@ describe('multi tool follow-up integration', () => {
       {
         messages: compressedResult.messages,
         coreMessageIds: ['user_new'],
-      },
+      }
     );
     const keptCompressedSummary = workingMemoryResult.states.find(
-      (state) => state.message.id === compressedSummary?.id,
+      state => state.message.id === compressedSummary?.id
     );
 
     expect(keptCompressedSummary?.action).toBe('keep_working_memory');
 
+    const replacementSourceIds = compressedSummary?.metadata?.replacementSourceIds;
     const historySummary: AiMessage = {
       id: 'history_summary_1',
       role: 'system',
@@ -119,7 +123,9 @@ describe('multi tool follow-up integration', () => {
       timestamp: 3000,
       metadata: {
         summarySeq: 1,
-        replacedMessageIds: compressedSummary?.metadata?.replacementSourceIds ?? [],
+        replacedMessageIds: Array.isArray(replacementSourceIds)
+          ? replacementSourceIds.filter((id): id is string => typeof id === 'string')
+          : [],
       },
     };
     const purifiedResult = await createContextPipelineHarness({
@@ -139,9 +145,9 @@ describe('multi tool follow-up integration', () => {
       new HistoryPurificationPreprocessor({ logPrefix: 'MultiToolFollowupTest' }),
     ]);
 
-    expect(
-      purifiedResult.messages.some((message) => message.id === compressedSummary?.id),
-    ).toBe(false);
+    expect(purifiedResult.messages.some(message => message.id === compressedSummary?.id)).toBe(
+      false
+    );
   });
 
   it('应让带真实 reasoning_details 的历史工具组经过三阶段后仍随 assistant(tool_calls) 出关', async () => {
@@ -166,7 +172,7 @@ describe('multi tool follow-up integration', () => {
           reasoning_details: reasoningDetails,
           tool_calls: [
             {
-              id: 'call_sidecar',
+              id: ToolCallIdSchema.parse('call_sidecar'),
               type: 'function',
               function: {
                 name: 'workspace_read',
@@ -183,9 +189,9 @@ describe('multi tool follow-up integration', () => {
         content: '{"observation":"README 内容"}',
         timestamp: 1200,
         metadata: {
-          tool_call_id: 'call_sidecar',
+          tool_call_id: ToolCallIdSchema.parse('call_sidecar'),
           tool_name: 'workspace_read',
-          raw_output: '{"observation":"README 内容"}',
+          data: { content: 'README 内容' },
         },
       },
       {
@@ -218,13 +224,13 @@ describe('multi tool follow-up integration', () => {
       {
         messages: compressedResult.messages,
         coreMessageIds: ['user_followup_sidecar'],
-      },
+      }
     );
     const selectedMessages = workingMemoryResult.states
-      .filter((state) => state.action === 'keep_core' || state.action === 'keep_working_memory')
-      .map((state) => state.message);
+      .filter(state => state.action === 'keep_core' || state.action === 'keep_working_memory')
+      .map(state => state.message);
     const llmMessages = formatAgentLlmMessages(selectedMessages);
-    const assistantToolCalls = llmMessages.find((message) => {
+    const assistantToolCalls = llmMessages.find(message => {
       return message.role === 'assistant' && 'tool_calls' in message;
     });
 
@@ -257,7 +263,7 @@ describe('multi tool follow-up integration', () => {
         metadata: {
           tool_calls: [
             {
-              id: 'call_missing_sidecar',
+              id: ToolCallIdSchema.parse('call_missing_sidecar'),
               type: 'function',
               function: {
                 name: 'workspace_read',
@@ -274,9 +280,9 @@ describe('multi tool follow-up integration', () => {
         content: '{"observation":"README 内容"}',
         timestamp: 1200,
         metadata: {
-          tool_call_id: 'call_missing_sidecar',
+          tool_call_id: ToolCallIdSchema.parse('call_missing_sidecar'),
           tool_name: 'workspace_read',
-          raw_output: '{"observation":"README 内容"}',
+          data: { content: 'README 内容' },
         },
       },
       {
@@ -306,10 +312,12 @@ describe('multi tool follow-up integration', () => {
     ]);
     const llmMessages = formatAgentLlmMessages(preprocessed.messages);
 
-    expect(llmMessages.some((message) => message.role === 'assistant' && 'tool_calls' in message)).toBe(false);
-    expect(llmMessages.some((message) => message.role === 'tool')).toBe(false);
     expect(
-      preprocessed.messages.some((message) => message.metadata?.isDegradedToolReplay === true),
+      llmMessages.some(message => message.role === 'assistant' && 'tool_calls' in message)
+    ).toBe(false);
+    expect(llmMessages.some(message => message.role === 'tool')).toBe(false);
+    expect(
+      preprocessed.messages.some(message => message.metadata?.isDegradedToolReplay === true)
     ).toBe(true);
   });
 });

@@ -2,14 +2,16 @@
  * @file src/agent/context-manager/profiles/agent/tasks/BaseAgentTask.ts
  * @description Agent任务的抽象基类 - 处理Agent通用逻辑
  *
- * 🔥 重构：借鉴 BaseConversationalTask 的轻量级设计
  * 专注于核心消息构建，将复杂的上下文管理交给 AgentContextManager
  */
 
 import type { AgentProfileRequest } from '../contracts';
 import { IAgentTask } from './base';
-import { generateMessageId } from '../../../../shared/ids';
-import type { AiMessage, PersistentMetadata } from '../../../../contracts';
+import {
+  generateAiMessageId,
+  type AiMessage,
+  type PersistentMetadata,
+} from '../../../../contracts';
 import type {
   FenceDescriptor,
   FenceInjection,
@@ -54,7 +56,7 @@ export abstract class BaseAgentTask implements IAgentTask {
     const systemPrompt = this.getSystemPrompt(request);
     if (systemPrompt && systemPrompt.trim()) {
       messages.push({
-        id: generateMessageId(),
+        id: generateAiMessageId(),
         role: 'system',
         type: 'system_prompt',
         content: systemPrompt,
@@ -64,10 +66,10 @@ export abstract class BaseAgentTask implements IAgentTask {
 
     messages.push(...fenceMessages['after-system']);
 
-    const currentUserIndex = findCurrentUserInputIndex(history, request.query);
+    const currentUserIndex = findCurrentUserInputIndex(history, request.currentUserEventId);
     const historyBeforeCurrentUser = currentUserIndex === -1 ? history : history.slice(0, currentUserIndex);
     const currentUserMessage = currentUserIndex === -1
-      ? this.createCurrentUserMessage(request.query)
+      ? this.createCurrentUserMessage(request)
       : history[currentUserIndex];
     const historyAfterCurrentUser = currentUserIndex === -1 ? [] : history.slice(currentUserIndex + 1);
 
@@ -85,18 +87,25 @@ export abstract class BaseAgentTask implements IAgentTask {
     return messages;
   }
 
-  private createCurrentUserMessage(query: string): AiMessage | null {
-    const content = query.trim();
-    if (!content) {
+  private createCurrentUserMessage(request: AgentProfileRequest): AiMessage | null {
+    if (request.currentUserAttachments?.length && request.currentUserEventId === undefined) {
+      throw new Error('Current user attachments require currentUserEventId.');
+    }
+
+    const content = request.query.trim();
+    if (request.currentUserEventId === undefined && !content) {
       return null;
     }
 
     return {
-      id: generateMessageId(),
+      id: request.currentUserEventId ?? generateAiMessageId(),
       role: 'user',
       type: 'user_input',
       content,
       timestamp: Date.now(),
+      ...(request.currentUserAttachments?.length
+        ? { attachments: request.currentUserAttachments }
+        : {}),
     };
   }
 
@@ -136,7 +145,7 @@ export abstract class BaseAgentTask implements IAgentTask {
     };
 
     return {
-      id: generateMessageId(),
+      id: generateAiMessageId(),
       role: descriptor.llmRole,
       type: 'context_injection',
       content: fence.content,
@@ -175,22 +184,21 @@ function findLastIndex<T>(items: T[], predicate: (item: T) => boolean): number {
   return -1;
 }
 
-function findCurrentUserInputIndex(history: AiMessage[], query: string): number {
-  const normalizedQuery = query.trim();
-  if (!normalizedQuery) {
+function findCurrentUserInputIndex(history: AiMessage[], currentUserEventId: string | undefined): number {
+  if (currentUserEventId === undefined) {
     return -1;
   }
 
-  for (let index = history.length - 1; index >= 0; index -= 1) {
-    const message = history[index];
-    if (
-      message.role === 'user' &&
-      message.type === 'user_input' &&
-      message.content.trim() === normalizedQuery
-    ) {
-      return index;
-    }
+  if (!currentUserEventId || currentUserEventId.trim() !== currentUserEventId) {
+    throw new Error('currentUserEventId must be non-blank and trimmed.');
   }
 
-  return -1;
+  const index = history.findIndex(message => message.id === currentUserEventId);
+  if (index === -1) return -1;
+
+  const message = history[index];
+  if (message.role !== 'user' || message.type !== 'user_input') {
+    throw new Error(`Message "${currentUserEventId}" is not a user_input event.`);
+  }
+  return index;
 }

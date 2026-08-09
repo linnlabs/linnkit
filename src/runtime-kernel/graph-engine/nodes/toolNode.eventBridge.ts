@@ -1,41 +1,45 @@
 import type {
-  ToolProcessEvent as AgentToolProcessEvent,
   ObservationEvent as AgentObservationEvent,
+  ToolProcessEvent as AgentToolProcessEvent,
 } from '../../events/agentEvents';
 import { eventMapper, type EventMappingContext } from '../../events/eventMappers';
-import { generateMessageId } from '../../../shared/ids';
+import { generateAnswerSegmentId, generateRuntimeEventId } from '../../../contracts';
 import { Logger } from '../../../shared/logger';
-import type { RuntimeEvent } from '../../../contracts';
+import type {
+  RoutedRuntimeEvent,
+  RuntimeEvent,
+  RuntimeResourceRef,
+  SerializableJsonRecord,
+  ToolCallId,
+  ToolOutputEventResult,
+} from '../../../contracts';
+import type { RuntimeEventSink } from '../types';
+import { createStandaloneFinalAnswerChunk } from '../../events/finalAnswerAssembler';
 
 const logger = new Logger('ToolNode');
 
-type SseSink = ((evt: unknown) => void) | undefined;
-
 export interface ToolNodeEventBridgeDeps {
-  sseSink: SseSink;
+  runtimeEventSink: RuntimeEventSink;
   conversationId: string;
   turnId: string;
   toolName: string;
-  toolCallId: string | undefined;
+  toolCallId: ToolCallId;
   toolArgs: Record<string, unknown>;
-  displayOptions: Record<string, unknown>;
   idempotencyKey?: string;
 }
 
+/** ToolNode 事实创建边界：每个事件只映射一次，同一对象同时发布并进入 journal。 */
 export class ToolNodeEventBridge {
-  private readonly runtimeEvents: RuntimeEvent[] = [];
-  private readonly deps: ToolNodeEventBridgeDeps;
+  private readonly runtimeEvents: RoutedRuntimeEvent[] = [];
 
-  constructor(deps: ToolNodeEventBridgeDeps) {
-    this.deps = deps;
-  }
+  constructor(private readonly deps: ToolNodeEventBridgeDeps) {}
 
   emitToolProcess(
     phase: 'start' | 'update' | 'complete' | 'error',
     status: 'loading' | 'success' | 'error',
     payload: Record<string, unknown>
-  ): RuntimeEvent | null {
-    const id = generateMessageId();
+  ): RuntimeEvent {
+    const id = generateRuntimeEventId();
     const timestamp = Date.now();
     const agentEvent: AgentToolProcessEvent = {
       type: 'tool_process',
@@ -48,7 +52,6 @@ export class ToolNodeEventBridge {
       phase,
       status,
       payload: { ...payload },
-      meta: { displayOptions: this.deps.displayOptions },
     };
 
     logger.info('[ToolNode] 发出 tool_process 事件', {
@@ -60,51 +63,47 @@ export class ToolNodeEventBridge {
       conversationId: this.deps.conversationId,
       turnId: this.deps.turnId,
     });
-
-    this.dispatchAgentEvent(agentEvent);
-    return this.bufferRuntimeEvent(agentEvent, timestamp);
+    return this.mapPublishAndBuffer(agentEvent, `ToolNode.tool_process.${phase}`);
   }
 
-  emitToolOutput(status: 'success' | 'error', payload: Record<string, unknown>): RuntimeEvent | null {
-    const id = generateMessageId();
+  emitToolOutput(
+    result: ToolOutputEventResult,
+    options: {
+      attachments?: readonly RuntimeResourceRef[];
+      metadata?: SerializableJsonRecord;
+      ephemeral?: boolean;
+      durationMs?: number;
+    } = {}
+  ): RuntimeEvent {
+    const id = generateRuntimeEventId();
     const timestamp = Date.now();
-    const output = payload.output;
     const agentEvent: AgentObservationEvent = {
       type: 'observation',
       id,
       timestamp,
       tool_name: this.deps.toolName,
       tool_call_id: this.deps.toolCallId,
-      output: typeof output === 'string' ? output : this.serializeOutput(output),
-      success: status === 'success',
-      payload,
-      duration_ms: payload.duration_ms as number | undefined,
+      observation: result.observation,
+      success: result.status === 'success',
+      ...(result.status === 'success' ? { data: result.data } : { error: result.error }),
+      duration_ms: options.durationMs,
+      ...(options.attachments ? { attachments: [...options.attachments] } : {}),
     };
 
-    logger.info('[ToolNode] 发出 tool_output 事件', {
-      status,
-      toolName: this.deps.toolName,
-      toolCallId: this.deps.toolCallId,
-      eventId: id,
-      conversationId: this.deps.conversationId,
-      turnId: this.deps.turnId,
-    });
-
-    this.dispatchAgentEvent(agentEvent);
-    return this.bufferRuntimeEvent(agentEvent, timestamp);
+    const runtimeEvent = this.mapRuntimeEvent(agentEvent);
+    const metadata: SerializableJsonRecord = {
+      ...(runtimeEvent.metadata ?? {}),
+      ...(options.metadata ?? {}),
+    };
+    if (Object.keys(metadata).length > 0) runtimeEvent.metadata = metadata;
+    if (options.ephemeral) runtimeEvent.ephemeral = true;
+    return this.publishAndBuffer(runtimeEvent, 'ToolNode.tool_output');
   }
 
-  emitFinalAnswer(params: { answer: string; sourceToolName: string }): RuntimeEvent | null {
-    const id = generateMessageId();
+  emitFinalAnswer(params: { answer: string; sourceToolName: string }): RuntimeEvent {
+    const answerId = generateAnswerSegmentId();
+    const id = answerId;
     const timestamp = Date.now();
-    const agentEvent = {
-      type: 'final_answer' as const,
-      id,
-      timestamp,
-      answer: params.answer,
-      answer_id: `answer_${this.deps.toolCallId}`,
-    };
-
     logger.info('[ToolNode] 工具输出映射为 final_answer', {
       sourceToolName: params.sourceToolName,
       toolCallId: this.deps.toolCallId,
@@ -112,67 +111,88 @@ export class ToolNodeEventBridge {
       turnId: this.deps.turnId,
       answerChars: params.answer.length,
     });
-
-    this.dispatchAgentEvent(agentEvent);
-    return this.bufferRuntimeEvent(agentEvent, timestamp);
+    const finalAnswer = this.mapRuntimeEvent({
+      type: 'final_answer',
+      id,
+      timestamp,
+      answer: params.answer,
+      answer_id: answerId,
+      completion_reason: 'terminal',
+    });
+    if (finalAnswer.type !== 'final_answer') {
+      throw new Error('ToolNode final answer did not map to final_answer.');
+    }
+    this.publishAndBuffer(
+      createStandaloneFinalAnswerChunk(finalAnswer),
+      'ToolNode.final_answer_chunk.standalone'
+    );
+    return this.publishAndBuffer(finalAnswer, 'ToolNode.final_answer');
   }
 
-  getRuntimeEvents(): RuntimeEvent[] {
-    return this.runtimeEvents;
+  getRuntimeEvents(): RoutedRuntimeEvent[] {
+    return [...this.runtimeEvents];
+  }
+
+  private mapPublishAndBuffer(
+    event:
+      | AgentToolProcessEvent
+      | AgentObservationEvent
+      | {
+          type: 'final_answer';
+          id: string;
+          timestamp: number;
+          answer: string;
+          answer_id: string;
+          completion_reason: 'terminal';
+        },
+    source: string
+  ): RuntimeEvent {
+    return this.publishAndBuffer(this.mapRuntimeEvent(event), source);
+  }
+
+  private mapRuntimeEvent(
+    event:
+      | AgentToolProcessEvent
+      | AgentObservationEvent
+      | {
+          type: 'final_answer';
+          id: string;
+          timestamp: number;
+          answer: string;
+          answer_id: string;
+          completion_reason: 'terminal';
+        }
+  ): RuntimeEvent {
+    const runtime = eventMapper.agentToRuntime(event, this.getMappingContext(), {
+      skipIncomplete: false,
+    });
+    if (!runtime) {
+      throw new Error(`ToolNode event did not map to RuntimeEvent: ${event.type}`);
+    }
+    return runtime;
+  }
+
+  private publishAndBuffer(event: RuntimeEvent, source: string): RoutedRuntimeEvent {
+    const published = this.deps.runtimeEventSink(event, source);
+    this.runtimeEvents.push(published);
+    return published;
+  }
+
+  private getMappingContext(): EventMappingContext {
+    return {
+      conversationId: this.deps.conversationId,
+      turnId: this.deps.turnId,
+      metadata: this.deps.idempotencyKey
+        ? { idempotency: { key: this.deps.idempotencyKey } }
+        : undefined,
+    };
   }
 
   private readToolArgs(payload: Record<string, unknown>): Record<string, unknown> {
     const maybeArgs = payload.args;
-    if (maybeArgs && typeof maybeArgs === 'object' && !Array.isArray(maybeArgs)) {
-      return maybeArgs as Record<string, unknown>;
-    }
-    return this.deps.toolArgs;
+    return maybeArgs && typeof maybeArgs === 'object' && !Array.isArray(maybeArgs)
+      ? (maybeArgs as Record<string, unknown>)
+      : this.deps.toolArgs;
   }
 
-  private serializeOutput(output: unknown): string {
-    try {
-      return JSON.stringify(output ?? '');
-    } catch {
-      return String(output ?? '');
-    }
-  }
-
-  private dispatchAgentEvent(evt: unknown): void {
-    if (!this.deps.sseSink) {
-      return;
-    }
-
-    try {
-      if (evt && typeof evt === 'object') {
-        Object.defineProperty(evt, '__dispatched_via_sse__', {
-          value: true,
-          enumerable: false,
-          configurable: true,
-        });
-      }
-      this.deps.sseSink(evt);
-    } catch (error) {
-      console.warn('[ToolNode] Agent event dispatch failed:', error);
-    }
-  }
-
-  private bufferRuntimeEvent(evt: unknown, timestamp: number): RuntimeEvent | null {
-    const runtime = eventMapper.agentToRuntime(evt as never, this.getMappingContext(timestamp), {
-      skipIncomplete: false,
-    });
-    if (runtime) {
-      this.runtimeEvents.push(runtime);
-      return runtime;
-    }
-    return null;
-  }
-
-  private getMappingContext(timestamp: number): EventMappingContext {
-    return {
-      conversationId: this.deps.conversationId,
-      turnId: this.deps.turnId,
-      timestamp,
-      metadata: this.deps.idempotencyKey ? { idempotency: { key: this.deps.idempotencyKey } } : undefined,
-    };
-  }
 }

@@ -6,8 +6,15 @@ import {
   createScriptedAiEngineHarness,
   createToolContextFixture,
 } from '../index';
-import type { GraphNode } from '../../runtime-kernel';
+import {
+  execution,
+  GraphAgentExecutor,
+  LlmNode,
+  type GraphExecutorContextBuildOutput,
+  type GraphNode,
+} from '../../runtime-kernel';
 import type { ToolExecutionResult, ToolRuntimePort } from '../../runtime-kernel';
+import { RunIdSchema, ToolCallIdSchema } from '../../contracts';
 
 /**
  * linnkit 包内端到端 smoke：完整 graph loop 行为契约。
@@ -57,13 +64,16 @@ function createScriptedLlmNode(options: ScriptedLlmNodeOptions): {
       };
 
       if (decision.toolCalls && decision.toolCalls.length > 0) {
-        state.local.pendingToolCalls = decision.toolCalls;
+        state.local.pendingToolCalls = decision.toolCalls.map(toolCall => ({
+          ...toolCall,
+          id: ToolCallIdSchema.parse(toolCall.id),
+        }));
         return { kind: 'route', nextNodeId: 'tool', events: [] };
       }
 
       if (typeof decision.finalAnswer === 'string') {
         state.local.finalAnswer = decision.finalAnswer;
-        return { kind: 'route', nextNodeId: 'answer', events: [] };
+        return { kind: 'yield', events: [] };
       }
 
       return { kind: 'yield', events: [] };
@@ -99,9 +109,6 @@ function createMockToolRuntime(options: MockToolRuntimeOptions): MockToolRuntime
         parameters: { type: 'object', properties: {}, required: [] },
       } as unknown as ReturnType<ToolRuntimePort['getToolDefinition']>;
     },
-    getDisplayOptions() {
-      return undefined;
-    },
     async executeTool(toolName, args) {
       executions.push({ toolName, args });
       return options.getResult(toolName, args);
@@ -120,6 +127,20 @@ function createObservationPreviewStub(): GraphLoopOptions['observationPreview'] 
       };
     },
   };
+}
+
+function createRuntimeEventAdmissionSink(
+  conversationId: string,
+  runId: string
+): GraphLoopOptions['runtimeEventSink'] {
+  const sequencer = new execution.EventSequencer(conversationId);
+  const eventBus = new execution.EventBus(sequencer.getExecutionId());
+  const publisher = new execution.RuntimeEventPublisher(eventBus, sequencer, {
+    run_id: RunIdSchema.parse(runId),
+    lane: 'foreground',
+    visibility: 'conversation',
+  });
+  return (event, source) => publisher.publish(event, source);
 }
 
 function buildHarnessOptions(params: {
@@ -146,7 +167,6 @@ function buildHarnessOptions(params: {
     request: {
       query: '请执行端到端工具调用',
       promptKey: 'linnkit-e2e-contract',
-      mode: 'agent',
       enableTools: true,
       availableTools: ['mock_tool'],
     },
@@ -157,11 +177,105 @@ function buildHarnessOptions(params: {
     createLlmNode: () => params.llmNode,
     maxSteps: 8,
     signal: params.signal,
+    runtimeEventSink: createRuntimeEventAdmissionSink(conversationId, turnId),
   };
 }
 
 describe('linnkit testkit graph loop end-to-end smoke', () => {
-  it('应跑通完整 LLM → Tool → LLM → Answer 链路（成功路径）', async () => {
+  it('应跑通默认 LlmNode 的流式 tick 管线并保留 outputProcessor 方法上下文', async () => {
+    const conversationId = 'conv_linnkit_stream_output_processor';
+    const turnId = 'turn_linnkit_stream_output_processor';
+    const streamedEvents: unknown[] = [];
+    const aiHarness = createScriptedAiEngineHarness([
+      {
+        contentChunks: ['hello'],
+      },
+    ]);
+    const outputProcessor = {
+      prefix: 'processed',
+      processStreamChunk(chunk: string): string {
+        return `${this.prefix}:${chunk}`;
+      },
+    };
+    const toolRuntime: ToolRuntimePort = {
+      getToolSchemas() {
+        return [];
+      },
+      getToolDefinition() {
+        return undefined;
+      },
+      async executeTool() {
+        throw new Error('stream output processor e2e 不应执行工具');
+      },
+    };
+    const reasoner = new GraphAgentExecutor({
+      llmCaller: aiHarness.getLlmCaller(),
+      toolRuntime,
+      contextBuilder: {
+        async build(): Promise<GraphExecutorContextBuildOutput> {
+          return {
+            llmMessages: [{ role: 'user', content: 'hello' }],
+            summaryEvents: [],
+            outputProcessor,
+          };
+        },
+      },
+    });
+    const toolContext = createToolContextFixture({
+      conversationId,
+      turnId,
+      historyEvents: [],
+    });
+    const sequencer = new execution.EventSequencer(conversationId);
+    const eventBus = new execution.EventBus(sequencer.getExecutionId());
+    const publisher = new execution.RuntimeEventPublisher(eventBus, sequencer, {
+      run_id: RunIdSchema.parse('run-stream-output'),
+      lane: 'foreground',
+      visibility: 'conversation',
+    });
+    eventBus.on('event', envelope => streamedEvents.push(envelope.payload));
+    const harness = createGraphLoopHarness({
+      conversationId,
+      turnId,
+      query: 'hello graph loop',
+      request: {
+        query: 'hello graph loop',
+        promptKey: 'stream-output-processor-contract',
+        model_id: 'scripted-model',
+        enableTools: false,
+        availableTools: [],
+      },
+      toolContext,
+      llmCaller: aiHarness.getLlmCaller(),
+      toolRuntime,
+      observationPreview: createObservationPreviewStub(),
+      createLlmNode: () => new LlmNode({ reasoner }),
+      maxSteps: 4,
+      runtimeEventSink: (event, source) => publisher.publish(event, source),
+    });
+
+    const result = await harness.run();
+    eventBus.close();
+
+    expect(result.checkpointNodeId).toBe('llm');
+    expect(streamedEvents).toEqual([
+      expect.objectContaining({
+        type: 'final_answer_chunk',
+        answer_id: expect.any(String),
+        seq: 0,
+        content: 'processed:hello',
+      }),
+      expect.objectContaining({
+        type: 'final_answer',
+        answer_id: expect.any(String),
+        content: 'processed:hello',
+        is_complete: true,
+      }),
+    ]);
+    aiHarness.assertAllTurnsConsumed();
+  });
+
+  it('应跑通完整 LLM → Tool → LLM 终答链路（成功路径）', async () => {
     const { node: llmNode, getInvocationCount } = createScriptedLlmNode({
       decisions: [
         {
@@ -185,18 +299,19 @@ describe('linnkit testkit graph loop end-to-end smoke', () => {
       getResult(toolName) {
         return {
           success: true,
-          result: JSON.stringify({ observation: `mock observation from ${toolName}` }),
+          result: JSON.stringify({
+            data: { toolName },
+            observation: `mock observation from ${toolName}`,
+          }),
           durationMs: 1,
         };
       },
     });
 
-    const harness = createGraphLoopHarness(
-      buildHarnessOptions({ llmNode, toolRuntime }),
-    );
+    const harness = createGraphLoopHarness(buildHarnessOptions({ llmNode, toolRuntime }));
     const result = await harness.run();
 
-    expect(result.checkpointNodeId).toBe('answer');
+    expect(result.checkpointNodeId).toBe('llm');
     expect(executions).toHaveLength(1);
     expect(executions[0]).toMatchObject({
       toolName: 'mock_tool',
@@ -237,12 +352,10 @@ describe('linnkit testkit graph loop end-to-end smoke', () => {
       },
     });
 
-    const harness = createGraphLoopHarness(
-      buildHarnessOptions({ llmNode, toolRuntime }),
-    );
+    const harness = createGraphLoopHarness(buildHarnessOptions({ llmNode, toolRuntime }));
     const result = await harness.run();
 
-    expect(result.checkpointNodeId).toBe('answer');
+    expect(result.checkpointNodeId).toBe('llm');
     expect(executions).toHaveLength(1);
     expect(getInvocationCount()).toBe(2);
   });
@@ -267,12 +380,12 @@ describe('linnkit testkit graph loop end-to-end smoke', () => {
     const executeTool = vi.fn();
     const toolRuntime: ToolRuntimePort = {
       getToolSchemas: () => [],
-      getToolDefinition: (toolName) => ({
-        name: toolName,
-        description: 'mock',
-        parameters: { type: 'object', properties: {}, required: [] },
-      } as unknown as ReturnType<ToolRuntimePort['getToolDefinition']>),
-      getDisplayOptions: () => undefined,
+      getToolDefinition: toolName =>
+        ({
+          name: toolName,
+          description: 'mock',
+          parameters: { type: 'object', properties: {}, required: [] },
+        }) as unknown as ReturnType<ToolRuntimePort['getToolDefinition']>,
       executeTool,
     };
 
@@ -280,7 +393,7 @@ describe('linnkit testkit graph loop end-to-end smoke', () => {
     controller.abort();
 
     const harness = createGraphLoopHarness(
-      buildHarnessOptions({ llmNode, toolRuntime, signal: controller.signal }),
+      buildHarnessOptions({ llmNode, toolRuntime, signal: controller.signal })
     );
 
     await expect(harness.run()).rejects.toMatchObject({
@@ -299,7 +412,11 @@ describe('linnkit testkit graph loop end-to-end smoke', () => {
     });
     const { toolRuntime } = createMockToolRuntime({
       getResult() {
-        return { success: true, result: '{}', durationMs: 0 };
+        return {
+          success: true,
+          result: JSON.stringify({ data: {}, observation: 'mock tool completed' }),
+          durationMs: 0,
+        };
       },
     });
 
@@ -311,10 +428,8 @@ describe('linnkit testkit graph loop end-to-end smoke', () => {
     });
     expect(executor).toBeDefined();
 
-    const harness = createGraphLoopHarness(
-      buildHarnessOptions({ llmNode, toolRuntime }),
-    );
+    const harness = createGraphLoopHarness(buildHarnessOptions({ llmNode, toolRuntime }));
     const result = await harness.run();
-    expect(result.checkpointNodeId).toBe('answer');
+    expect(result.checkpointNodeId).toBe('llm');
   });
 });

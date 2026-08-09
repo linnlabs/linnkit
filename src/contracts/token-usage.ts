@@ -30,7 +30,6 @@ export type TokenCountConfidence = z.infer<typeof TokenCountConfidence>;
 export const TokenRouteCapabilities = z.object({
   supportsRemoteTokenCount: z.boolean().optional(),
   supportsResponseUsage: z.boolean().optional(),
-  supportsImageInput: z.boolean().optional(),
   supportsCachedInputBilling: z.boolean().optional(),
   supportsReasoningTokens: z.boolean().optional(),
 });
@@ -54,13 +53,15 @@ const tokenCount = z.number().int().nonnegative();
  * 归一化后的 LLM 用量。
  *
  * 关键约束：
- * - inputTokens 是非缓存普通输入 token，不含 cacheRead/cacheWrite，避免重复计费。
+ * - inputTokens 是非缓存普通输入 token，不含 cacheRead/cacheWrite；图片 token 若被 provider
+ *   单列，仍已包含在 inputTokens 内，imageInputTokens 只作组成说明，禁止再次相加或计费。
  * - reasoning/cache 字段用 optional 表达“未上报”和“明确为 0”的差异。
  * - totalTokens 可缺失，也不保证等于各分项之和。
  * - rawUsage 仅供审计；业务逻辑应依赖 canonical 字段。
  */
 export const CanonicalLlmUsage = z.object({
   inputTokens: tokenCount.describe('非缓存普通输入 token'),
+  imageInputTokens: tokenCount.optional().describe('inputTokens 中的图片输入分项；undefined=provider 未单列'),
   outputTokens: tokenCount.describe('输出 token'),
   reasoningTokens: tokenCount.optional().describe('推理 token；undefined=未单列，0=报告为 0'),
   cacheReadTokens: tokenCount.optional().describe('缓存命中读取 token'),
@@ -71,3 +72,16 @@ export const CanonicalLlmUsage = z.object({
   rawUsage: z.unknown().optional().describe('原始 provider usage，仅供审计'),
 });
 export type CanonicalLlmUsage = z.infer<typeof CanonicalLlmUsage>;
+
+/**
+ * context pipeline 内部 LLM 调用的用量旁路。
+ *
+ * 中文备注：该 DTO 是 context-manager 与 runtime-kernel 的共享合同；
+ * 它只用于审计、telemetry 和账本，不应进入 AiMessage / RuntimeEvent。
+ */
+export const InternalLlmCallUsage = z.object({
+  purpose: z.string().min(1),
+  modelId: z.string().min(1),
+  canonicalUsage: CanonicalLlmUsage,
+});
+export type InternalLlmCallUsage = z.infer<typeof InternalLlmCallUsage>;

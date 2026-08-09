@@ -23,43 +23,17 @@ export type {
   ProviderContext,
   ProviderResult,
 } from './profiles/agent/context/providers/base';
+export type {
+  IContextProvider as SharedContextProvider,
+  ProviderContext as SharedProviderContext,
+} from './shared/providers';
 
 export type {
   ChatMessage,
-  ChatProjectMetadata,
-  ChatDocumentMetadata,
-  ChatUserQuote,
-  GenerateRequest,
-  GenerateResponse,
   MessageRole,
   MessageType,
-  RecentRejection,
-} from './profiles/chat/contracts';
-export { getDefaultTokenConfig } from './profiles/chat/context/config';
-export {
-  ContextProviderRegistry as ChatContextProviderRegistry,
-  CoreContextProvider as ChatCoreContextProvider,
-  WorkingMemoryProvider as ChatWorkingMemoryProvider,
-} from './profiles/chat/context/providers';
-export {
-  MessageOrchestrator as ChatMessageOrchestrator,
-} from './profiles/chat/orchestration';
+} from './shared/contracts/chatLineMessage';
 export type {
-  OrchestratorOptions as ChatOrchestratorOptions,
-} from './profiles/chat/orchestration';
-export {
-  BaseConversationalTask,
-} from './profiles/chat/tasks';
-export type {
-  ChatTaskResolver,
-  IChatTask,
-} from './profiles/chat/tasks';
-export {
-  aiMessageToChatMessage,
-  chatMessageToAiMessage,
-  convertEventToChatMessage,
-  convertEventsToChatMessages,
-} from './profiles/chat/utils';
-export {
-  buildGenerateRequestFromAgentRequest,
-} from './profiles/chat/request-adapters';
+  SummaryGenerationRequest,
+  SummaryGenerationResponse,
+} from './shared/contracts/summaryGeneration';

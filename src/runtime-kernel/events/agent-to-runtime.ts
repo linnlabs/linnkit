@@ -1,79 +1,99 @@
 import {
-  AnyAgentEvent,
-  ErrorEvent as AgentErrorEvent,
-  FinalAnswerEvent as AgentFinalAnswerEvent,
-  ObservationEvent as AgentObservationEvent,
-  StreamChunkEvent as AgentStreamChunkEvent,
-  ThoughtEvent as AgentThoughtEvent,
-  ToolCallDecisionEvent as AgentToolCallDecisionEvent,
-  ToolProcessEvent as AgentToolProcessEvent,
-  readAgentEventAnswerId,
-  readAgentEventSeq,
+  AgentEventSchema,
+  type ObservationEvent as AgentObservationEvent,
+  type StreamChunkEvent as AgentStreamChunkEvent,
+  type ThoughtEvent as AgentThoughtEvent,
+  type ToolCallDecisionEvent as AgentToolCallDecisionEvent,
+  type ToolProcessEvent as AgentToolProcessEvent,
 } from './agentEvents';
 import {
   RuntimeEvent,
   createErrorEvent,
   createFinalAnswerChunkEvent,
   createFinalAnswerEvent,
+  createFinalAnswerResetEvent,
   createThoughtEvent,
   createToolCallDecisionEvent,
   createToolOutputEvent,
   createToolProcessEvent,
+  RuntimeEventIdSchema,
+  toSerializableJsonRecord,
+  toSerializableJsonValue,
 } from '../../contracts';
-import { generateMessageId } from '../../shared/ids';
 import {
   type EventMappingContext,
   type RuntimeMappingOptions,
   isRecord,
-  readAnswerIdFromEvent,
   readMetaFromEvent,
-  resolveToolDisplayOptions,
 } from './provider-sidecar';
 
 export function agentEventToRuntime(
-  agentEvent: AnyAgentEvent | RuntimeEvent,
+  agentEvent: unknown,
   context: EventMappingContext,
   options: RuntimeMappingOptions = {},
 ): RuntimeEvent | null {
-  if (!agentEvent || typeof agentEvent !== 'object') return null;
+  return mapAgentEventToRuntime(agentEvent, context, options);
+}
 
+function mapAgentEventToRuntime(
+  agentEvent: unknown,
+  context: EventMappingContext,
+  options: RuntimeMappingOptions,
+): RuntimeEvent | null {
   if (isRecord(agentEvent) && agentEvent['type'] === 'history_summary') {
-    const evt = agentEvent as RuntimeEvent;
-    if (context.metadata) {
-      evt.metadata = { ...(evt.metadata ?? {}), ...context.metadata };
-    }
-    return evt;
+    const event = RuntimeEvent.parse(agentEvent);
+    return context.metadata
+      ? {
+          ...event,
+          metadata: toSerializableJsonRecord({ ...(event.metadata ?? {}), ...context.metadata }),
+        }
+      : event;
   }
 
-  const typed = agentEvent as AnyAgentEvent;
+  const parsed = AgentEventSchema.safeParse(agentEvent);
+  if (!parsed.success) {
+    throw new Error(`Invalid AgentEvent: ${parsed.error.issues.map(issue => `${issue.path.join('.')}: ${issue.message}`).join('; ')}`);
+  }
+  const typed = parsed.data;
   const { conversationId, turnId } = context;
-  const timestamp = typed.timestamp ?? context.timestamp ?? Date.now();
-  const id = typed.id ?? generateMessageId();
-  const contextMeta = context.metadata;
+  const timestamp = requireEventTimestamp(typed.timestamp);
+  const id = RuntimeEventIdSchema.parse(typed.id);
+  const contextMeta = toSerializableJsonRecord(context.metadata);
 
   switch (typed.type) {
     case 'thought':
-      return mapThoughtToRuntime(typed as AgentThoughtEvent, context, options, id, timestamp);
+      return mapThoughtToRuntime(typed, context, options, id, timestamp);
 
     case 'tool_call_decision':
     case 'tool_process':
       return mapToolProgressToRuntime(typed, context, options, id, timestamp);
 
     case 'observation': {
-      const observationEvent = typed as AgentObservationEvent;
-      const toolName = observationEvent.tool_name || 'unknown_tool';
-      const toolCallId = observationEvent.tool_call_id || `call_${id}`;
-      const success = observationEvent.success ?? !/^错误[:：]/i.test(String(observationEvent.output ?? ''));
-      const payload = observationEvent.payload || {};
+      const observationEvent = typed;
+      const toolName = observationEvent.tool_name;
+      const toolCallId = observationEvent.tool_call_id;
       const event = createToolOutputEvent(
         id,
         conversationId,
         turnId,
         toolName,
         toolCallId,
-        observationEvent.output,
-        success ? 'success' : 'error',
-        { timestamp, payload, duration_ms: payload.duration_ms as number | undefined },
+        observationEvent.success
+          ? {
+              status: 'success',
+              observation: observationEvent.observation,
+              data: observationEvent.data,
+            }
+          : {
+              status: 'error',
+              observation: observationEvent.observation,
+              error: observationEvent.error ?? observationEvent.observation,
+            },
+        {
+          timestamp,
+          duration_ms: observationEvent.duration_ms,
+          ...(observationEvent.attachments ? { attachments: [...observationEvent.attachments] } : {}),
+        },
       );
       event.ephemeral = false;
       if (contextMeta) event.metadata = { ...(event.metadata ?? {}), ...contextMeta };
@@ -81,37 +101,52 @@ export function agentEventToRuntime(
     }
 
     case 'final_answer': {
-      const finalAnswerEvent = typed as AgentFinalAnswerEvent;
-      const answerIdFromSnake =
-        typeof finalAnswerEvent.answer_id === 'string' && finalAnswerEvent.answer_id.trim().length > 0
-          ? finalAnswerEvent.answer_id.trim()
-          : undefined;
-      return createFinalAnswerEvent(
-        id,
+      const finalAnswerEvent = typed;
+      const event = createFinalAnswerEvent(
+        finalAnswerEvent.answer_id,
         conversationId,
         turnId,
-        answerIdFromSnake ?? readAnswerIdFromEvent(finalAnswerEvent) ?? `answer_${turnId}`,
-        finalAnswerEvent.answer ?? '',
+        finalAnswerEvent.answer,
         {
           timestamp,
+          completion_reason: finalAnswerEvent.completion_reason,
           reasoning_details: Array.isArray(finalAnswerEvent.reasoning_details)
             ? finalAnswerEvent.reasoning_details
+                .map((item) => toSerializableJsonValue(item))
+                .filter((item): item is NonNullable<typeof item> => item !== undefined)
             : undefined,
-          meta: readMetaFromEvent(finalAnswerEvent),
+          meta: toSerializableJsonRecord(readMetaFromEvent(finalAnswerEvent)),
         },
       );
+      if (contextMeta) event.metadata = { ...(event.metadata ?? {}), ...contextMeta };
+      return event;
     }
 
     case 'error': {
-      const errorEvent = typed as AgentErrorEvent;
-      return createErrorEvent(id, conversationId, turnId, errorEvent.error ?? 'Unknown error', {
+      const errorEvent = typed;
+      const event = createErrorEvent(id, conversationId, turnId, errorEvent.error, {
         timestamp,
-        details: errorEvent.details,
+        details: toSerializableJsonValue(errorEvent.details),
+        error_code: errorEvent.error_code,
+        retryable: errorEvent.retryable,
       });
+      if (contextMeta) event.metadata = { ...(event.metadata ?? {}), ...contextMeta };
+      return event;
     }
 
     case 'stream_chunk':
-      return mapStreamChunkToRuntime(typed as AgentStreamChunkEvent, context, id, timestamp);
+      return mapStreamChunkToRuntime(typed, context, id, timestamp);
+
+    case 'stream_reset': {
+      const resetEvent = typed;
+      const event = createFinalAnswerResetEvent(id, conversationId, turnId, {
+        timestamp,
+        answer_id: resetEvent.answer_id,
+        thought_message_ids: resetEvent.thought_message_ids,
+      });
+      if (contextMeta) event.metadata = { ...(event.metadata ?? {}), ...contextMeta };
+      return event;
+    }
 
     default:
       return null;
@@ -125,23 +160,23 @@ function mapThoughtToRuntime(
   id: string,
   timestamp: number,
 ): RuntimeEvent | null {
-  const isComplete = 'is_complete' in thoughtEvent ? Boolean(thoughtEvent.is_complete) : false;
+  const isComplete = thoughtEvent.is_complete;
   if (options.skipIncomplete && !isComplete) return null;
 
-  const thoughtMessageId =
-    typeof thoughtEvent.thought_message_id === 'string' && thoughtEvent.thought_message_id.length > 0
-      ? thoughtEvent.thought_message_id
-      : undefined;
-  const runtimeEvent = createThoughtEvent(id, context.conversationId, context.turnId, thoughtEvent.content ?? '', {
+  const runtimeEvent = createThoughtEvent(id, context.conversationId, context.turnId, thoughtEvent.content, {
     timestamp,
-    thought_message_id: thoughtMessageId,
+    thought_message_id: thoughtEvent.thought_message_id,
     delta: thoughtEvent.delta,
     is_complete: isComplete,
   });
   if (!isComplete) runtimeEvent.ephemeral = true;
-  const thoughtMeta = isRecord(thoughtEvent.meta) ? thoughtEvent.meta : undefined;
+  const thoughtMeta = toSerializableJsonRecord(thoughtEvent.meta);
   if (context.metadata || thoughtMeta) {
-    runtimeEvent.metadata = { ...(runtimeEvent.metadata ?? {}), ...(context.metadata ?? {}), ...(thoughtMeta ?? {}) };
+    runtimeEvent.metadata = toSerializableJsonRecord({
+      ...(runtimeEvent.metadata ?? {}),
+      ...(context.metadata ?? {}),
+      ...(thoughtMeta ?? {}),
+    });
   }
   return runtimeEvent;
 }
@@ -153,31 +188,28 @@ function mapToolProgressToRuntime(
   id: string,
   timestamp: number,
 ): RuntimeEvent {
-  const toolName = toolEvent.tool_name || 'unknown_tool';
-  const toolCallId = toolEvent.tool_call_id || `call_${id}`;
-  const meta = toolEvent.meta && typeof toolEvent.meta === 'object' ? { ...toolEvent.meta } : {};
-  const displayOptions = resolveToolDisplayOptions(toolName, options.toolPresentationPort);
-  if (displayOptions && !meta.displayOptions) meta.displayOptions = displayOptions;
-
+  const toolName = toolEvent.tool_name;
+  const toolCallId = toolEvent.tool_call_id;
+  const meta = toSerializableJsonRecord(toolEvent.meta) ?? {};
   const event = toolEvent.type === 'tool_call_decision'
     ? createToolCallDecisionEvent(id, context.conversationId, context.turnId, toolName, toolCallId, {
         timestamp,
-        phase: toolEvent.phase ?? 'start',
-        status: toolEvent.status ?? 'loading',
-        args: toolEvent.tool_args || {},
-        payload: toolEvent.payload || {},
+        phase: toolEvent.phase,
+        status: toolEvent.status,
+        args: toSerializableJsonRecord(toolEvent.tool_args) ?? {},
+        payload: toSerializableJsonRecord(toolEvent.payload) ?? {},
         meta,
       })
     : createToolProcessEvent(id, context.conversationId, context.turnId, toolName, toolCallId, {
         timestamp,
-        phase: toolEvent.phase ?? 'start',
-        status: toolEvent.status ?? 'loading',
-        args: toolEvent.tool_args || {},
-        payload: toolEvent.payload || {},
+        phase: toolEvent.phase,
+        status: toolEvent.status,
+        args: toSerializableJsonRecord(toolEvent.tool_args) ?? {},
+        payload: toSerializableJsonRecord(toolEvent.payload) ?? {},
         meta,
       });
   event.ephemeral = meta.ephemeral === true;
-  if (context.metadata) event.metadata = { ...(event.metadata ?? {}), ...context.metadata };
+  if (context.metadata) event.metadata = toSerializableJsonRecord({ ...(event.metadata ?? {}), ...context.metadata });
   return event;
 }
 
@@ -189,17 +221,20 @@ function mapStreamChunkToRuntime(
 ): RuntimeEvent | null {
   const text = streamEvent.content ?? '';
   if (!text) return null;
-  const answerId = readAgentEventAnswerId(streamEvent) ?? `answer_${context.turnId}`;
-  const seq = readAgentEventSeq(streamEvent) ?? 0;
-  const isLast = Boolean(
-    ('isLast' in streamEvent && streamEvent.isLast) ||
-    ('is_last' in streamEvent && streamEvent.is_last),
-  );
-  const chunkEvent = createFinalAnswerChunkEvent(id, context.conversationId, context.turnId, answerId, seq, text, {
+  const chunkEvent = createFinalAnswerChunkEvent(id, context.conversationId, context.turnId, streamEvent.answer_id, streamEvent.seq, text, {
     timestamp,
-    is_last: isLast,
+    is_last: streamEvent.is_last === true,
   });
   chunkEvent.ephemeral = true;
-  if (context.metadata) chunkEvent.metadata = { ...(chunkEvent.metadata ?? {}), ...context.metadata };
+  if (context.metadata) {
+    chunkEvent.metadata = toSerializableJsonRecord({ ...(chunkEvent.metadata ?? {}), ...context.metadata });
+  }
   return chunkEvent;
+}
+
+function requireEventTimestamp(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    throw new Error('Agent event requires a finite timestamp from its fact creator.');
+  }
+  return value;
 }

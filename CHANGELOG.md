@@ -14,6 +14,123 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.28.0] - 2026-08-09
+
+> Published release. This is the first npm / GitHub Release after `0.21.0`; it includes the unpublished `0.22.0`-`0.27.0` internal milestones below.
+
+### Changed
+
+- Execution-time observation governance now publishes the host-owned durable blob reference as `tool_output.metadata.observationTruncation.blobId` instead of injecting a runtime field into each tool owner's structured `data`.
+- Historical truncation metadata without `blobId` remains readable; every newly truncated live output carries the reference returned by `ObservationPreviewPort`.
+
+### Included milestones
+
+- `0.22.0`-`0.23.0`: unified context-internal LLM usage contracts and telemetry.
+- `0.24.0`: centralized runtime identity ownership, host-originated tool-call bootstrap, and turn-scoped raw tool retention.
+- `0.25.0`: canonicalized durable `tool_output` results and removed duplicate output representations.
+- `0.26.0`: made `subrun_trace` an explicitly ephemeral realtime projection.
+- `0.27.0`: removed host-specific product semantics from public runtime and context-manager contracts.
+
+### Compatibility
+
+- Minor bump because `ObservationTruncationMeta` adds the optional durable `blobId` contract and new live truncation results publish that reference in runtime metadata rather than tool-owner `data`.
+- Consumers upgrading from the last published version (`0.21.0`) must also apply the compatibility notes in the included `0.22.0`-`0.27.0` milestone sections below.
+
+## [0.27.0] - 2026-08-08 (unpublished milestone; included in 0.28.0)
+
+### Changed
+
+- Removed the host-specific `citationOffset` field from `ToolExecutionContext` and execution metadata.
+- ToolNode no longer interprets `tool_output.data.citations` or computes citation numbering; hosts now own citation sequencing as product semantics.
+- Replaced the product-shaped context-manager `GenerateRequest` / `GenerateResponse` hook with the summary-specific `generateSummary` port and `SummaryGenerationRequest` / `SummaryGenerationResponse` contracts.
+- Removed project, document, editor-block, quote, rejection, autocomplete-intent, and behavior fields from Linnkit's public context-manager surface; hosts retain those fields in their own invocation contracts.
+- Observation preview metadata now passes any validated non-empty host document type to `ObservationPreviewPort` instead of recognizing a built-in product document-type list.
+- Production comments and active integration examples now use host-neutral terminology; a package-wide no-host-leakage contract test prevents product names and rich host request fields from returning to production source.
+
+### Fixed
+
+- Runtime Agent observation admission now preserves valid tool output boundary whitespace (for example, a trailing newline in file content) while continuing to reject blank observations, keeping the contract aligned with `StructuredToolResult` and durable `tool_output`.
+
+### Compatibility
+
+- Minor bump because `@linnlabs/linnkit/runtime-kernel` removes the public `citationOffset` field and its runtime behavior, while `@linnlabs/linnkit/context-manager` replaces the generic generate hook with a summary-specific port. Hosts must own citation sequencing and adapt registered summary execution to `{ agentId, content, modelId }`; no alias or fallback is provided.
+
+## [0.26.0] - 2026-08-05 (unpublished milestone; included in 0.28.0)
+
+### Changed
+
+- `subrun_trace` now requires `ephemeral: true`; it remains a realtime parent-display protocol while Host-owned compact trace history is the only reload source.
+- Runtime event lifecycle governance rejects every `subrun_trace` from EventStore persistence and durable UI replay, even if an unparsed caller attempts to override the flag.
+
+### Compatibility
+
+- Minor bump because the public RuntimeEvent schema no longer accepts durable `subrun_trace` values. Hosts must persist child RuntimeEvents and project parent trace history separately; there is no legacy dual-read or fallback.
+
+## [0.25.0] - 2026-08-05 (unpublished milestone; included in 0.28.0)
+
+### Changed
+
+- `tool_output` now has one canonical durable result contract: governed `observation`, structured `data`, explicit `error`, attachments, duration, and runtime metadata. The duplicate top-level `output`, open `payload`, `payload.output`, and `payload.result` representations were removed.
+- Tool messages keep the model-facing observation in `content` and programmatic data in `metadata.data`; checkpoint detection no longer depends on a serialized `raw_output` shadow copy.
+- Tool idempotency reconstructs structured results from canonical history fields and reuses already admitted attachment references without persisting execution-only `control`, `modelInput`, or observation preview declarations.
+- Child-run trace projection uses canonical tool `data` for tool-card output while preserving the existing trace DTO and UI behavior.
+
+### Compatibility
+
+- Minor bump because Runtime/SSE tool-output schemas and creator signatures changed. Callers must provide either `{ status: 'success', observation, data }` or `{ status: 'error', observation, error }`; legacy tool-output fields are rejected without dual-read or fallback.
+
+## [0.24.0] - 2026-07-26 (unpublished milestone; included in 0.28.0)
+
+### Added
+
+- Added `createHostToolCallBootstrap` to `@linnlabs/linnkit/runtime-kernel`. It constructs one host-originated standard tool call, its matching `tool_call_decision`, and the typed `tool` node prime patch from a single identity source while leaving event publication, persistence, runtime context, and execution ownership with the host.
+- Added the public Runtime identity contract with centralized schemas, identity ownership, cross-field invariants, and explicit legacy history reference semantics.
+
+### Changed
+
+- Tool idempotency keys now use a 32-hex (128-bit) SHA-256 prefix instead of the legacy 16-hex prefix. Missing `conversation` or `turn` scope identity now fails explicitly rather than falling back to another scope.
+- Tool pair retention now uses a turn-scoped raw tool window: current tool turn plus the latest historical tool turn are kept as original `tool_calls -> tool_output` groups, while older raw tool groups remain dropped.
+- Context build no longer rewrites `tool_calls.function.arguments` or summarizes `tool_output`; tool output size governance is centralized in execution-time `toolOutput.observationGovernance`.
+- Added `workingMemory.maxRecentToolRuns` as the canonical turn-window field; `maxRecentToolInteractions` remains as a deprecated compatibility alias.
+- New `final_answer` facts now use one canonical identity across `RuntimeEvent.id`, `answer_id`, realtime seal, durable projection, and UI message identity.
+- `createFinalAnswerEvent` and `createSSEFinalAnswerEvent` now accept `answerId` as their sole event/answer identity and no longer accept a separate event ID.
+- `createSSEHistorySummaryEvent` now derives the wire `summary_id` from the Runtime event ID instead of accepting a second independently assignable identity.
+- Runtime and SSE event creators now expose narrow options that cannot override identities or payload fields already owned by explicit creator arguments, including for direct JavaScript callers.
+
+### Compatibility
+
+- Minor bump because `@linnlabs/linnkit/runtime-kernel` adds a new public helper and contracts add identity exports while final-answer creator signatures change.
+- Legacy 16-hex tool idempotency keys are not prefix-matched or dual-read. A retry of a pre-0.24 tool call is treated as a cache miss and uses the 32-hex contract for the new result.
+- Breaking for explicit `AgentSpec.contextPolicy.toolHistory` configs: `maxPairTokens` and `maxOutputSummaryTokens` were removed. Remove those fields and configure output preview limits via `toolOutput.observationGovernance` instead.
+- Breaking for direct final-answer creator callers: remove the separate event ID argument and pass the stable answer segment ID once. Immutable legacy events remain readable at host durable rebuild boundaries.
+- Breaking for direct SSE history-summary creator callers: remove the separate `summaryId` argument; `summary_id` is now always the event ID.
+
+## [0.23.0] - 2026-06-23 (unpublished milestone; included in 0.28.0)
+
+### Added
+
+- Added `InternalLlmCallUsage` to `@linnlabs/linnkit/contracts` as the single public DTO for context-internal LLM usage sidecar data.
+
+### Changed
+
+- `ProviderResult`, context build results, and `GraphExecutorContextBuildOutput` now share the contracts-level `InternalLlmCallUsage` type instead of repeating the same shape across layers.
+
+### Compatibility
+
+- Minor bump because `@linnlabs/linnkit/contracts` exposes a new public schema/type and internal context usage contracts now have a single source of truth.
+
+## [0.22.0] - 2026-06-23 (unpublished milestone; included in 0.28.0)
+
+### Added
+
+- `GenerateResponse` can now carry optional `canonicalUsage` so host-provided context-internal generation hooks do not drop provider usage.
+- Context provider results and `GraphExecutorContextBuildOutput` can now expose context-internal LLM usage sidecar data without writing audit usage into model context.
+- `llm_call` telemetry events now accept optional `phase` and `purpose` fields; `buildContextStage` emits `phase: 'context-internal'` events for internal context LLM usage such as summarization.
+
+### Compatibility
+
+- Minor bump because `@linnlabs/linnkit/context-manager` and `@linnlabs/linnkit/runtime-kernel` expose new optional public contract fields.
+
 ## [0.21.0] - 2026-06-20
 
 > Published release. This is the first npm / GitHub Release after `0.10.0`; it includes the unpublished `0.11.0`-`0.20.0` internal milestones below.
@@ -260,6 +377,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `AgentSpec` — first-class serializable agent blueprint (id / version / capabilities / tools / contextPolicy / modelHints / audit / metadata)
+  - Note: `modelHints` was removed from the current contract on 2026-06-22 because it was never consumed by runtime model routing.
 - `RunSupervisor` + `RunHandle` v2: `cancel` / `observe` / `cost` / `spawnDetached` / `waitForTerminal` / `drain` / `recoverOnBoot`
 - `invokeChildRun` — synchronous child run with cost roll-up to parent
 - `AuditEnvelope` + `AuditPort` — structured logging for non-deterministic decisions

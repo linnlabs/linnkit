@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import type { AiMessage } from '../../../contracts';
+import type { AiMessage, RuntimeResourceRef } from '../../../contracts';
 import { createFenceRegistry } from '../fences';
 import { createMessageFormatter, formatAgentLlmMessages } from '../MessageFormatter';
+import { ToolCallIdSchema } from '../../../contracts';
 
 const contextInjection: AiMessage = {
   id: 'ctx-1',
@@ -24,12 +25,13 @@ describe('MessageFormatter fences', () => {
         llmRole: 'user',
         placement: 'before-current-user',
         lifetime: 'turn-only',
-        formatter: (content, attrs) => `<memory-context source="${String(attrs.source)}">\n${content}\n</memory-context>`,
+        formatter: (content, attrs) =>
+          `<memory-context source="${String(attrs.source)}">\n${content}\n</memory-context>`,
       },
     ]);
     const formatter = createMessageFormatter({ fenceRegistry: registry });
 
-    expect(formatter.format([contextInjection], { nativeTools: true, mode: 'agent' })).toEqual([
+    expect(formatter.format([contextInjection], { nativeTools: true })).toEqual([
       {
         role: 'user',
         content: '<memory-context source="memory">\nMemory payload\n</memory-context>',
@@ -59,16 +61,18 @@ describe('MessageFormatter fences', () => {
   it('passes task request content through without host-specific task type text', () => {
     const formatter = createMessageFormatter();
 
-    expect(formatter.format([
-      {
-        id: 'task-1',
-        role: 'user',
-        type: 'task_request',
-        content: 'write this',
-        timestamp: 1,
-        metadata: { taskType: 'editor' },
-      },
-    ])).toEqual([{ role: 'user', content: 'write this' }]);
+    expect(
+      formatter.format([
+        {
+          id: 'task-1',
+          role: 'user',
+          type: 'task_request',
+          content: 'write this',
+          timestamp: 1,
+          metadata: { taskType: 'editor' },
+        },
+      ])
+    ).toEqual([{ role: 'user', content: 'write this' }]);
   });
 
   it('does not merge adjacent text messages in the formatter', () => {
@@ -108,6 +112,56 @@ describe('MessageFormatter fences', () => {
       { role: 'system', content: 'Summary' },
       { role: 'user', content: 'First user turn' },
       { role: 'user', content: 'Second user turn' },
+    ]);
+  });
+
+  it('keeps ordered user/tool resource refs in native LLM messages', () => {
+    const attachments: RuntimeResourceRef[] = [
+      {
+        id: 'attachment-1',
+        kind: 'image',
+        resourceId: 'resource-1',
+        mediaType: 'image/png',
+        byteLength: 1024,
+        width: 640,
+        height: 480,
+        sha256: 'a'.repeat(64),
+      },
+      {
+        id: 'attachment-2',
+        kind: 'image',
+        resourceId: 'resource-2',
+        mediaType: 'image/jpeg',
+        byteLength: 2048,
+        width: 800,
+        height: 600,
+        sha256: 'b'.repeat(64),
+      },
+    ];
+
+    expect(
+      formatAgentLlmMessages([
+        {
+          id: 'user-1',
+          role: 'user',
+          type: 'user_input',
+          content: '',
+          timestamp: 1,
+          attachments,
+        },
+        {
+          id: 'tool-1',
+          role: 'tool',
+          type: 'tool_output',
+          content: 'rendered',
+          timestamp: 2,
+          metadata: { tool_call_id: ToolCallIdSchema.parse('call-1') },
+          attachments,
+        },
+      ])
+    ).toEqual([
+      { role: 'user', content: '', attachments },
+      { role: 'tool', tool_call_id: 'call-1', content: 'rendered', attachments },
     ]);
   });
 });

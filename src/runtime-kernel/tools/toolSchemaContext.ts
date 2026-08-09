@@ -8,5 +8,4 @@
  */
 export interface ToolSchemaContext {
   imageGenerationModelId?: string;
-  [key: string]: unknown;
 }

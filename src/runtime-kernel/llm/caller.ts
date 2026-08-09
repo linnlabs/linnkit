@@ -11,21 +11,31 @@
  */
 
 import type { AnyAgentEvent } from '../events/agentEvents';
-import type { LlmCallOptions, LlmRequestMessage, LlmRetryConfig, ToolCall } from './caller.types';
-import { createEmptyModelCatalog, type ModelCatalogLike } from './modelCatalog';
+import type { LlmCallOptions, LlmRequestMessage, ToolCall } from './caller.types';
+import type { ModelCatalogLike } from './modelCatalog';
 import type { ModelResolverLike } from './modelResolver';
 import {
   buildLlmCallerDeps,
-  normalizeConstructorOptions,
   type LlmCallerOptions,
   type NormalizedLlmCallerDeps,
 } from './request-builder';
 import { callLlmStream } from './streaming-adapter';
 import { callWithRetryFallback } from './retry-fallback';
 import { callPlainCompletion, type LlmCallResult } from './usage-telemetry';
+import { deriveModelInputRequirement, mergeModelInputRequirements } from './input-capabilities';
+import type { LlmFallbackObserver } from './definitions/llmFallbackObserver';
+import type { LlmCallInvocationContext } from './definitions/llmCallInvocationContext';
+import { runLlmInputPreflight } from './input-materialization';
 
-export type { LlmCallOptions, LlmRequestMessage, LlmResponseContent, LlmRetryConfig, ToolCall } from './caller.types';
+export type {
+  LlmCallOptions,
+  LlmRequestMessage,
+  LlmResponseContent,
+  LlmRetryConfig,
+  ToolCall,
+} from './caller.types';
 export type { LlmCallerOptions } from './request-builder';
+export type { LlmCallInvocationContext } from './definitions/llmCallInvocationContext';
 
 /**
  * LLM 调用器。
@@ -40,10 +50,9 @@ export class LlmCaller {
   };
   private readonly modelResolver: ModelResolverLike;
 
-  constructor(options?: Partial<LlmRetryConfig> | LlmCallerOptions) {
-    const normalizedOptions = normalizeConstructorOptions(options);
-    const modelCatalog = normalizedOptions.modelCatalog ?? createEmptyModelCatalog();
-    const deps = buildLlmCallerDeps(normalizedOptions, modelCatalog);
+  constructor(options: LlmCallerOptions) {
+    const modelCatalog = options.modelCatalog;
+    const deps = buildLlmCallerDeps(options);
     this.deps = {
       ...deps,
       modelCatalog,
@@ -59,8 +68,16 @@ export class LlmCaller {
     messages: LlmRequestMessage[],
     options: LlmCallOptions = {},
     signal?: AbortSignal,
+    invocationContext?: LlmCallInvocationContext
   ): Promise<LlmCallResult> {
-    return callPlainCompletion(this.deps.aiEngine, modelId, messages, options, signal);
+    const resolvedMessages = await runLlmInputPreflight({
+      activeModelId: modelId,
+      messages,
+      modelCatalog: this.deps.modelCatalog,
+      materializer: this.deps.llmInputMaterializer,
+      invocationContext,
+    });
+    return callPlainCompletion(this.deps.aiEngine, modelId, resolvedMessages, options, signal);
   }
 
   /**
@@ -72,14 +89,24 @@ export class LlmCaller {
     options: LlmCallOptions = {},
     eventHandler: (event: AnyAgentEvent) => void,
     signal?: AbortSignal,
+    invocationContext?: LlmCallInvocationContext
   ): Promise<LlmCallResult> {
+    const resolvedMessages = await runLlmInputPreflight({
+      activeModelId: modelId,
+      messages,
+      modelCatalog: this.deps.modelCatalog,
+      materializer: this.deps.llmInputMaterializer,
+      invocationContext,
+      eventHandler,
+    });
     return callLlmStream({
       aiEngine: this.deps.aiEngine,
       modelId,
-      messages,
+      messages: resolvedMessages,
       options,
       eventHandler,
       signal,
+      toolCallStreamingPolicies: invocationContext?.toolCallStreamingPolicies,
     });
   }
 
@@ -92,23 +119,23 @@ export class LlmCaller {
     options: LlmCallOptions = {},
     eventHandler?: (event: AnyAgentEvent) => void,
     signal?: AbortSignal,
-    onCloudQuotaFallbackApplied?: (fallbackModelId: string) => void,
-    onModelFallbackApplied?: (info: {
-      fromModelId: string;
-      toModelId: string;
-      reason: string;
-      policy: 'policy-switch' | 'cloud-quota';
-    }) => void,
+    fallbackObserver?: LlmFallbackObserver,
+    invocationContext?: LlmCallInvocationContext
   ): Promise<LlmCallResult> {
+    const requirement = mergeModelInputRequirements(
+      deriveModelInputRequirement(messages),
+      invocationContext?.additionalModelInputRequirement
+    );
     return callWithRetryFallback({
       deps: this.deps,
       modelId,
       messages,
+      requirement,
       options,
       eventHandler,
       signal,
-      onCloudQuotaFallbackApplied,
-      onModelFallbackApplied,
+      fallbackObserver,
+      invocationContext,
     });
   }
 

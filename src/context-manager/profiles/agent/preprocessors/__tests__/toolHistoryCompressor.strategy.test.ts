@@ -5,11 +5,10 @@ import {
   ContextProviderError,
   TOOL_HISTORY_OVERFLOW_ERROR_CODE,
 } from '../../../../shared/providers/base';
-import {
-  createDefaultAgentPreprocessorRegistry,
-  PreprocessorPipeline,
-} from '../index';
+import { PREPROCESSOR_PRIORITY } from '../../../../shared/preprocessors/priority';
+import { createDefaultAgentPreprocessorRegistry, PreprocessorPipeline } from '../index';
 import { ToolHistoryCompressorPreprocessor } from '../toolHistoryCompressor';
+import { ToolCallIdSchema } from '../../../../../contracts';
 
 function createUserInput(id: string, timestamp: number): AiMessage {
   return {
@@ -34,7 +33,7 @@ function createToolGroup(runId: string, ordinal: number): AiMessage[] {
       metadata: {
         tool_calls: [
           {
-            id: toolCallId,
+            id: ToolCallIdSchema.parse(toolCallId),
             type: 'function',
             function: {
               name: 'workspace_read',
@@ -51,19 +50,20 @@ function createToolGroup(runId: string, ordinal: number): AiMessage[] {
       content: `工具结果 ${runId}-${ordinal}`,
       timestamp: timestamp + 1,
       metadata: {
-        tool_call_id: toolCallId,
+        tool_call_id: ToolCallIdSchema.parse(toolCallId),
         tool_name: 'workspace_read',
+        data: { value: `工具结果 ${runId}-${ordinal}` },
       },
     },
   ];
 }
 
 function ids(messages: AiMessage[]): string[] {
-  return messages.map((message) => message.id);
+  return messages.map(message => message.id);
 }
 
 function compressedCount(messages: AiMessage[]): number {
-  return messages.filter((message) => message.metadata?.isCompressedToolHistory === true).length;
+  return messages.filter(message => message.metadata?.isCompressedToolHistory === true).length;
 }
 
 describe('ToolHistoryCompressorPreprocessor strategy options', () => {
@@ -180,7 +180,18 @@ describe('ToolHistoryCompressorPreprocessor strategy options', () => {
     const result = await preprocessor.process(messages, { debugMode: false });
     const resultIds = ids(result.messages);
 
-    for (const id of ['a_r1_1', 't_r1_1', 'a_r1_2', 't_r1_2', 'a_r2_1', 't_r2_1', 'a_r2_2', 't_r2_2', 'a_r2_3', 't_r2_3']) {
+    for (const id of [
+      'a_r1_1',
+      't_r1_1',
+      'a_r1_2',
+      't_r1_2',
+      'a_r2_1',
+      't_r2_1',
+      'a_r2_2',
+      't_r2_2',
+      'a_r2_3',
+      't_r2_3',
+    ]) {
       expect(resultIds).toContain(id);
     }
     expect(compressedCount(result.messages)).toBe(0);
@@ -285,5 +296,29 @@ describe('ToolHistoryCompressorPreprocessor strategy options', () => {
     const result = await pipeline.process(messages);
 
     expect(ids(result.messages)).toEqual(ids(messages));
+  });
+
+  it('keeps the default agent preprocessor order explicit', () => {
+    const registry = createDefaultAgentPreprocessorRegistry();
+
+    expect(
+      registry.getAllPreprocessors().map(preprocessor => ({
+        name: preprocessor.name,
+        priority: preprocessor.priority,
+      }))
+    ).toEqual([
+      {
+        name: 'ToolHistoryCompressorPreprocessor',
+        priority: PREPROCESSOR_PRIORITY.toolHistoryCompression,
+      },
+      {
+        name: 'ToolReplayProtocolGuardPreprocessor',
+        priority: PREPROCESSOR_PRIORITY.toolReplayProtocolGuard,
+      },
+      {
+        name: 'HistoryPurificationPreprocessor',
+        priority: PREPROCESSOR_PRIORITY.historyPurification,
+      },
+    ]);
   });
 });

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TickStage } from '../types';
 import { createTestTickPipelineContext } from '../__tests__/createTestTickPipelineContext';
+import { runTickPipeline } from '../runTickPipeline';
 
 const loggerWarnMock = vi.fn();
 
@@ -32,14 +33,19 @@ describe('runModelLockMiddleware', () => {
     const ctx = createContext();
     const stage: TickStage = {
       id: 'execute_llm',
-      async run() {},
+      reads: [],
+      writes: ['cloudQuotaFallbackAppliedModelId'],
+      async run() {
+        return { cloudQuotaFallbackAppliedModelId: 'cloud-deepseek-reasoner' };
+      },
     };
 
-    await runModelLockMiddleware(ctx, stage, async () => {
-      ctx.cloudQuotaFallbackAppliedModelId = 'cloud-deepseek-reasoner';
-    });
+    await runTickPipeline(ctx, [stage], [runModelLockMiddleware]);
 
-    expect(ctx.executorLocal?.runLockedModelId).toBe('cloud-deepseek-reasoner');
+    expect(ctx.executorLocal?.runLockedModelId).toBeUndefined();
+    expect(ctx.executorLocalPatch).toEqual({
+      runLockedModelId: 'cloud-deepseek-reasoner',
+    });
     expect(loggerWarnMock).toHaveBeenCalledTimes(1);
   });
 });

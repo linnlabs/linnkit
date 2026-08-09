@@ -60,8 +60,6 @@ describe('AgentSpec contract', () => {
           keepLatestRuns: 2,
           maxInteractionGroups: 12,
           overflowStrategy: 'fail-fast',
-          maxPairTokens: 6000,
-          maxOutputSummaryTokens: 1000,
         },
         toolOutput: {
           observationGovernance: {
@@ -94,7 +92,7 @@ describe('AgentSpec contract', () => {
           ],
         },
         workingMemory: {
-          maxRecentToolInteractions: 3,
+          maxRecentToolRuns: 3,
           minToolInteractionsToKeep: 2,
           toolPairingSearchRange: 12,
         },
@@ -114,7 +112,7 @@ describe('AgentSpec contract', () => {
           enabledRuleIds: ['last-steps-hint'],
           thresholds: {
             toolCallStreak: 10,
-            taskstateReflectionPeriod: 30,
+            periodicReflectionPeriod: 30,
             budgetWarningRatio: 0.9,
             lastStepsHintThreshold: 2,
           },
@@ -139,11 +137,6 @@ describe('AgentSpec contract', () => {
           includeTokenBreakdown: true,
           maxTraceEvents: 200,
         },
-      },
-      modelHints: {
-        preferredProviders: ['openai'],
-        preferredModels: ['gpt-5.2'],
-        fallbackChain: ['gpt-5.2', 'gpt-5.1'],
       },
       audit: {
         redactionLevel: 'standard',
@@ -297,6 +290,32 @@ describe('AgentSpec contract', () => {
             contentTemplate: 'unsafeTemplate',
             contentArgs: {
               unsafe: () => true,
+            },
+          },
+        ],
+      },
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects non-finite JSON numbers in system reminder rule config and args', () => {
+    const result = AgentSpecContextPolicy.safeParse({
+      profileId: 'agent',
+      systemReminder: {
+        extraRules: [
+          {
+            id: 'unsafe-number-rule',
+            trigger: {
+              kind: 'tool-call-streak',
+              threshold: 3,
+              config: {
+                ratio: Number.POSITIVE_INFINITY,
+              },
+            },
+            contentTemplate: 'unsafeNumberTemplate',
+            contentArgs: {
+              score: Number.NaN,
             },
           },
         ],

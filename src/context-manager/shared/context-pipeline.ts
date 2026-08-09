@@ -2,10 +2,8 @@ import type {
   MessageProcessingState,
   ProviderContext,
 } from './providers/base';
-import {
-  SUMMARIZATION_FAILED_ERROR_CODE,
-  isContextProviderError,
-} from './providers/base';
+import type { InternalLlmCallUsage } from '../../contracts';
+import { isContextProviderError } from './providers/base';
 import type { ContextProviderRegistry } from './providers/registry';
 import type { AiMessage, RuntimeEvent } from '../../contracts';
 import type { TokenUsageCalibrationTrace } from '../../contracts';
@@ -47,6 +45,7 @@ export interface RunContextPipelineResult {
   finalTokens: number;
   strategiesApplied: string[];
   events: RuntimeEvent[];
+  internalLlmCalls: InternalLlmCallUsage[];
   states: MessageProcessingState[];
 }
 
@@ -79,6 +78,7 @@ export async function runContextPipeline<
   let availableBudget = totalBudget;
   const allStrategiesApplied: string[] = [];
   const allEvents: RuntimeEvent[] = [];
+  const allInternalLlmCalls: InternalLlmCallUsage[] = [];
 
   debug?.('🎯 [ContextPipeline] 开始 Provider 链式处理', {
     totalProviders: providers.length,
@@ -119,6 +119,9 @@ export async function runContextPipeline<
           eventTypes: result.events.map(event => event.type),
         });
       }
+      if (result.internalLlmCalls && result.internalLlmCalls.length > 0) {
+        allInternalLlmCalls.push(...result.internalLlmCalls);
+      }
 
       availableBudget -= result.tokensUsed;
       allStrategiesApplied.push(...result.strategiesApplied);
@@ -151,7 +154,7 @@ export async function runContextPipeline<
     } catch (error) {
       debug?.(`❌ Provider失败: ${provider.name}`, { error });
 
-      if (isFatalProviderError(error)) {
+      if (!shouldContinueAfterProviderError(error)) {
         throw error;
       }
     }
@@ -170,6 +173,7 @@ export async function runContextPipeline<
     finalTokens,
     strategiesApplied: [...new Set(allStrategiesApplied)],
     events: allEvents,
+    internalLlmCalls: allInternalLlmCalls,
     states,
   };
 }
@@ -208,22 +212,14 @@ export function generateFinalMessages(states: MessageProcessingState[]): AiMessa
   ];
 
   return finalStates.map(state => {
-    const { id, role, type, timestamp, metadata } = state.message;
     return {
-      id,
-      role,
-      type,
-      content: state.processedContent || state.message.content,
-      timestamp,
-      ...(metadata && { metadata }),
-    } as AiMessage;
+      ...state.message,
+      content: state.overrideContent ?? state.message.content,
+      ...(state.overrideMetadata ? { metadata: state.overrideMetadata } : {}),
+    };
   });
 }
 
-function isFatalProviderError(error: unknown): boolean {
-  return (
-    isContextProviderError(error) &&
-    error.code === SUMMARIZATION_FAILED_ERROR_CODE &&
-    error.fatal === true
-  );
+export function shouldContinueAfterProviderError(error: unknown): boolean {
+  return isContextProviderError(error) && error.fatal === false;
 }

@@ -10,10 +10,6 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import {
-  convertEventsToChatMessages,
-  chatMessageToAiMessage,
-} from '../profiles/chat/utils/eventConverter';
 import { convertEventsToAiMessages } from '../profiles/agent/utils/eventConverter';
 import { HistoryPurificationPreprocessor } from '../shared/preprocessors';
 import type { RuntimeEvent, AiMessage } from '../../contracts';
@@ -111,16 +107,13 @@ describe('摘要历史净化集成测试', () => {
     ] as RuntimeEvent[];
   }
 
-  it('Chat模式：应该正确净化被摘要替代的历史消息', async () => {
+  it('应该正确净化被摘要替代的历史消息', async () => {
     // 1. 模拟从数据库读取
     const runtimeEvents = createMockHistoryWithSummary();
     console.log('📊 原始 RuntimeEvent 数量:', runtimeEvents.length);
     
     // 2. 通过 eventConverter 转换为 AiMessage
-    const chatMessages = convertEventsToChatMessages(runtimeEvents);
-    const aiMessages: AiMessage[] = chatMessages.map(cm => 
-      chatMessageToAiMessage(cm, { id: cm.id, timestamp: cm.timestamp })
-    );
+    const aiMessages: AiMessage[] = convertEventsToAiMessages(runtimeEvents);
     console.log('📊 转换后 AiMessage 数量:', aiMessages.length);
     
     // 验证摘要消息的元数据已正确转换
@@ -134,7 +127,7 @@ describe('摘要历史净化集成测试', () => {
     });
     
     // 3. 通过 HistoryPurificationPreprocessor 净化
-    const preprocessor = new HistoryPurificationPreprocessor({ logPrefix: 'Chat-HistoryPurification' });
+    const preprocessor = new HistoryPurificationPreprocessor({ logPrefix: 'Agent-HistoryPurification' });
     const result = await preprocessor.process(aiMessages, { debugMode: true });
     
     console.log('📊 净化后消息数量:', result.messages.length);
@@ -262,12 +255,9 @@ describe('摘要历史净化集成测试', () => {
       },
     ] as RuntimeEvent[];
 
-    const chatMessages = convertEventsToChatMessages(historyWithRecursiveSummary);
-    const aiMessages = chatMessages.map(cm => 
-      chatMessageToAiMessage(cm, { id: cm.id, timestamp: cm.timestamp })
-    );
+    const aiMessages = convertEventsToAiMessages(historyWithRecursiveSummary);
     
-    const preprocessor = new HistoryPurificationPreprocessor({ logPrefix: 'Chat-HistoryPurification' });
+    const preprocessor = new HistoryPurificationPreprocessor({ logPrefix: 'Agent-HistoryPurification' });
     const result = await preprocessor.process(aiMessages, { debugMode: true });
     
     console.log('📊 递归摘要测试 - 净化后:', result.messages.length);

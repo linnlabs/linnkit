@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { AiMessage } from '../../../../../contracts';
 import { buildToolInteractionGroupsFromMessages } from '../toolInteractionGroup';
+import { ToolCallIdSchema } from '../../../../../contracts';
 
 function userInput(id: string, timestamp: number): AiMessage {
   return {
@@ -25,7 +26,7 @@ function toolGroup(id: string, timestamp: number): AiMessage[] {
       metadata: {
         tool_calls: [
           {
-            id: toolCallId,
+            id: ToolCallIdSchema.parse(toolCallId),
             type: 'function',
             function: {
               name: 'workspace_read',
@@ -42,8 +43,9 @@ function toolGroup(id: string, timestamp: number): AiMessage[] {
       content: id,
       timestamp: timestamp + 1,
       metadata: {
-        tool_call_id: toolCallId,
+        tool_call_id: ToolCallIdSchema.parse(toolCallId),
         tool_name: 'workspace_read',
+        data: { value: id },
       },
     },
   ];
@@ -51,11 +53,9 @@ function toolGroup(id: string, timestamp: number): AiMessage[] {
 
 describe('ToolInteractionGroup runOrdinal', () => {
   it('assigns runOrdinal 0 to tool groups before any user_input', () => {
-    const groups = buildToolInteractionGroupsFromMessages([
-      ...toolGroup('before_user', 1),
-    ]);
+    const groups = buildToolInteractionGroupsFromMessages([...toolGroup('before_user', 1)]);
 
-    expect(groups.map((group) => group.runOrdinal)).toEqual([0]);
+    expect(groups.map(group => group.runOrdinal)).toEqual([0]);
   });
 
   it('increments runOrdinal by user_input boundaries and keeps the current run as max ordinal', () => {
@@ -68,12 +68,14 @@ describe('ToolInteractionGroup runOrdinal', () => {
       ...toolGroup('run_2', 21),
     ]);
 
-    expect(groups.map((group) => [group.anchorId, group.runOrdinal])).toEqual([
+    expect(groups.map(group => [group.anchorId, group.runOrdinal])).toEqual([
       ['a_before_user', 0],
       ['a_run_1_a', 1],
       ['a_run_1_b', 1],
       ['a_run_2', 2],
     ]);
-    expect(Math.max(...groups.map((group) => group.runOrdinal))).toBe(groups.at(-1)?.runOrdinal);
+    expect(Math.max(...groups.map(group => group.runOrdinal))).toBe(
+      groups[groups.length - 1]?.runOrdinal
+    );
   });
 });

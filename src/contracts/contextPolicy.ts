@@ -1,25 +1,5 @@
 import { z } from 'zod';
-
-type SerializableJsonValue =
-  | string
-  | number
-  | boolean
-  | null
-  | SerializableJsonValue[]
-  | { [key: string]: SerializableJsonValue };
-
-const SerializableJsonValueSchema: z.ZodType<SerializableJsonValue> = z.lazy(() =>
-  z.union([
-    z.string(),
-    z.number(),
-    z.boolean(),
-    z.null(),
-    z.array(SerializableJsonValueSchema),
-    z.record(z.string(), SerializableJsonValueSchema),
-  ]),
-);
-
-const SerializableJsonRecord = z.record(z.string(), SerializableJsonValueSchema);
+import { SerializableJsonRecord } from './json';
 
 export const AgentSpecMessageType = z.enum([
   'system_prompt',
@@ -30,7 +10,6 @@ export const AgentSpecMessageType = z.enum([
   'context_after',
   'document_fragment',
   'task_request',
-  'image',
   'thought',
   'final_answer',
   'tool_code',
@@ -54,8 +33,6 @@ export const AgentSpecToolHistoryPolicy = z.object({
   keepLatestRuns: z.number().int().nonnegative().optional(),
   maxInteractionGroups: z.number().int().nonnegative().optional(),
   overflowStrategy: z.enum(['keep-latest', 'fail-fast']).optional(),
-  maxPairTokens: z.number().int().nonnegative().optional(),
-  maxOutputSummaryTokens: z.number().int().nonnegative().optional(),
 });
 export type AgentSpecToolHistoryPolicy = z.infer<typeof AgentSpecToolHistoryPolicy>;
 
@@ -102,6 +79,8 @@ export const AgentSpecMustKeepPolicy = z.object({
 export type AgentSpecMustKeepPolicy = z.infer<typeof AgentSpecMustKeepPolicy>;
 
 export const AgentSpecWorkingMemoryPolicy = z.object({
+  maxRecentToolRuns: z.number().int().nonnegative().optional(),
+  /** @deprecated Use maxRecentToolRuns. Kept as a compatibility alias for older AgentSpec configs. */
   maxRecentToolInteractions: z.number().int().nonnegative().optional(),
   minToolInteractionsToKeep: z.number().int().nonnegative().optional(),
   toolPairingSearchRange: z.number().int().positive().optional(),
@@ -171,7 +150,7 @@ export const AgentSpecSystemReminderPolicy = z.object({
   disabledRuleIds: z.array(z.string().min(1)).optional(),
   thresholds: z.object({
     toolCallStreak: z.number().int().nonnegative().optional(),
-    taskstateReflectionPeriod: z.number().int().positive().optional(),
+    periodicReflectionPeriod: z.number().int().positive().optional(),
     budgetWarningRatio: z.number().min(0).max(1).optional(),
     lastStepsHintThreshold: z.number().int().nonnegative().optional(),
   }).optional(),
@@ -230,8 +209,6 @@ const DEFAULT_CONTEXT_POLICY: Required<AgentSpecContextPolicy> = {
     keepLatestRuns: 1,
     maxInteractionGroups: 12,
     overflowStrategy: 'keep-latest',
-    maxPairTokens: 6000,
-    maxOutputSummaryTokens: 1000,
   },
   toolOutput: {
     observationGovernance: {
@@ -253,6 +230,7 @@ const DEFAULT_CONTEXT_POLICY: Required<AgentSpecContextPolicy> = {
     truncationRules: [],
   },
   workingMemory: {
+    maxRecentToolRuns: 2,
     maxRecentToolInteractions: 2,
     minToolInteractionsToKeep: 2,
     toolPairingSearchRange: 10,
@@ -274,7 +252,7 @@ const DEFAULT_CONTEXT_POLICY: Required<AgentSpecContextPolicy> = {
     disabledRuleIds: [],
     thresholds: {
       toolCallStreak: 10,
-      taskstateReflectionPeriod: 30,
+      periodicReflectionPeriod: 30,
       budgetWarningRatio: 0.9,
       lastStepsHintThreshold: 0,
     },
@@ -311,7 +289,7 @@ export function defineContextPolicy(input: AgentSpecContextPolicyInput = {}): Ag
     providerReplay: { ...DEFAULT_CONTEXT_POLICY.providerReplay, ...input.providerReplay },
     summarization: { ...DEFAULT_CONTEXT_POLICY.summarization, ...input.summarization },
     mustKeep: { ...DEFAULT_CONTEXT_POLICY.mustKeep, ...input.mustKeep },
-    workingMemory: { ...DEFAULT_CONTEXT_POLICY.workingMemory, ...input.workingMemory },
+    workingMemory: mergeWorkingMemoryPolicy(input.workingMemory),
     checkpoint: { ...DEFAULT_CONTEXT_POLICY.checkpoint, ...input.checkpoint },
     reasoningRetention: { ...DEFAULT_CONTEXT_POLICY.reasoningRetention, ...input.reasoningRetention },
     tokenEstimation: { ...DEFAULT_CONTEXT_POLICY.tokenEstimation, ...input.tokenEstimation },
@@ -328,4 +306,19 @@ export function defineContextPolicy(input: AgentSpecContextPolicyInput = {}): Ag
   };
 
   return AgentSpecContextPolicy.parse(merged);
+}
+
+function mergeWorkingMemoryPolicy(
+  input: AgentSpecWorkingMemoryPolicy | undefined,
+): Required<AgentSpecContextPolicy>['workingMemory'] {
+  const merged = { ...DEFAULT_CONTEXT_POLICY.workingMemory, ...input };
+  const resolvedRuns =
+    input?.maxRecentToolRuns ??
+    input?.maxRecentToolInteractions ??
+    DEFAULT_CONTEXT_POLICY.workingMemory.maxRecentToolRuns;
+  return {
+    ...merged,
+    maxRecentToolRuns: resolvedRuns,
+    maxRecentToolInteractions: resolvedRuns,
+  };
 }

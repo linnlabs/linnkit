@@ -4,16 +4,31 @@ import type { TelemetryPort } from '../../telemetry/telemetryPort';
 import { noopAudit } from '../../audit/noopAudit';
 import { emitAuditEnvelope } from '../../audit/emitAudit';
 import type { AuditPort } from '../../../ports';
-import type { AgentSpecToolObservationGovernancePolicy, RuntimeEvent } from '../../../contracts';
+import type {
+  AgentSpecToolObservationGovernancePolicy,
+  RoutedRuntimeEvent,
+  RunId,
+  RuntimeEvent,
+  RuntimeResourceRef,
+  ToolCallId,
+} from '../../../contracts';
+import {
+  parseRuntimeEvents,
+  runIdFromTurnId,
+  toSerializableJsonValue,
+} from '../../../contracts';
 import type { ToolControlInfo } from '../../tools/ui-types';
 import type {
   ObservationPreviewPort,
   ToolExecutionPort,
   ToolCatalogPort,
   ToolExecutionResult,
+  ToolModelInputCapabilityValidatorPort,
 } from '../../tools/ports';
+import type { ToolModelInputResolverPort } from '../../tools/model-input';
+import { resolveToolModelInput } from '../../tools/model-input';
 import type { GraphNode, EngineState, NodeResult, StandardToolCall } from '../types';
-import { resolveFinalAnswerFromToolResult } from './toolNode.finalAnswerProjector';
+import { resolveFinalAnswerFromToolControl } from './toolNode.finalAnswerProjector';
 import { ToolNodeEventBridge } from './toolNode.eventBridge';
 import { applyObservationGovernance } from './toolNode.observationGovernance';
 import {
@@ -21,23 +36,31 @@ import {
   createToolProtocolFuseError,
   checkProtocolFuse,
 } from './toolNode.protocolFuse';
-import { parseJsonSafe } from './toolNode.helpers';
+import { isRecord, parseJsonSafe } from './toolNode.helpers';
 import type { UnknownRecord } from './toolNode.helpers';
 import {
-  applyToolOutputIdempotencyMetadata,
   buildErrorLocalState,
   buildRequireUserLocalState,
   buildSuccessLocalState,
-  buildSuccessOutputPayload,
   extractToolControlInfo,
-  readStructuredObservation,
+  validateStructuredToolResultContract,
 } from './toolNode.stateTransitions';
 import {
   prepareToolExecution,
   prepareToolNodeContext,
   type PreparedToolNodeContext,
 } from './toolNode.executionSetup';
+import {
+  executeToolWithIdempotency,
+  type ToolIdempotencyInFlightRegistry,
+} from './toolNode.idempotency';
 import { DEFAULT_CONTEXT_CHECKPOINT_TOOL_NAME } from '../../system-reminder/helpers';
+import { parsePendingToolCalls } from '../functions/parsePendingToolCalls';
+import {
+  isToolExecutionAbort,
+  settlePendingToolCallsAfterAbort,
+  settleToolCallsAfterExecutionAbort,
+} from './toolNode.cancellation';
 
 const logger = new Logger('ToolNode');
 
@@ -56,7 +79,9 @@ function readContextCheckpointToolName(local: UnknownRecord): string {
   return DEFAULT_CONTEXT_CHECKPOINT_TOOL_NAME;
 }
 
-function readToolObservationPolicy(local: UnknownRecord): AgentSpecToolObservationGovernancePolicy | undefined {
+function readToolObservationPolicy(
+  local: UnknownRecord
+): AgentSpecToolObservationGovernancePolicy | undefined {
   const executorLocal = local.executorLocal;
   if (executorLocal && typeof executorLocal === 'object' && !Array.isArray(executorLocal)) {
     const value = (executorLocal as Record<string, unknown>).toolObservationPolicy;
@@ -78,12 +103,39 @@ function readToolObservationPolicy(local: UnknownRecord): AgentSpecToolObservati
   return undefined;
 }
 
+function readHistoryEvents(local: UnknownRecord): RuntimeEvent[] {
+  return parseRuntimeEvents(local.history ?? []);
+}
+
+function readLastSuccessfulLlmModelId(local: UnknownRecord): string | undefined {
+  const executorLocal = local.executorLocal;
+  if (!isRecord(executorLocal)) {
+    return undefined;
+  }
+  const value = executorLocal.lastSuccessfulLlmModelId;
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function formatCapabilityError(error: unknown): string {
+  if (isRecord(error)) {
+    const codeValue = error.errorCode ?? error.code;
+    const code = typeof codeValue === 'string' ? codeValue.trim() : '';
+    const message = typeof error.message === 'string' ? error.message.trim() : '';
+    if (code) {
+      return `${code}: ${message || 'tool model input is not supported'}`;
+    }
+  }
+  return error instanceof Error ? error.message : String(error);
+}
+
 type ToolNodeSuccessContext = PreparedToolNodeContext & {
   calls: StandardToolCall[];
   toolName: string;
-  toolCallId: string;
+  toolCallId: ToolCallId;
   exec: ToolExecutionResult;
-  parsed: unknown;
+  parsed: UnknownRecord;
+  observation: string;
+  attachments?: readonly RuntimeResourceRef[];
   bridge: ToolNodeEventBridge;
 };
 
@@ -91,7 +143,7 @@ type ToolNodeErrorContext = PreparedToolNodeContext & {
   calls: StandardToolCall[];
   call: StandardToolCall;
   toolName: string;
-  toolCallId: string;
+  toolCallId: ToolCallId;
   toolArgs: Record<string, unknown>;
   exec: ToolExecutionResult;
   bridge: ToolNodeEventBridge;
@@ -106,20 +158,28 @@ export interface ToolNodeDependencies {
    */
   telemetryPort?: TelemetryPort;
   auditPort?: AuditPort;
+  modelInputCapabilityValidator?: ToolModelInputCapabilityValidatorPort;
+  modelInputResolver?: ToolModelInputResolverPort;
 }
 
 export class ToolNode implements GraphNode {
   id = 'tool';
-  private readonly toolRuntime: Pick<ToolCatalogPort, 'getToolDefinition'> & Pick<ToolExecutionPort, 'executeTool'>;
+  private readonly toolRuntime: Pick<ToolCatalogPort, 'getToolDefinition'> &
+    Pick<ToolExecutionPort, 'executeTool'>;
   private readonly observationPreview: ObservationPreviewPort;
   private readonly telemetryPort: TelemetryPort;
   private readonly auditPort: AuditPort;
+  private readonly modelInputCapabilityValidator?: ToolModelInputCapabilityValidatorPort;
+  private readonly modelInputResolver?: ToolModelInputResolverPort;
+  private readonly idempotencyInFlight: ToolIdempotencyInFlightRegistry = new Map();
 
   constructor(dependencies: ToolNodeDependencies) {
     this.toolRuntime = dependencies.toolRuntime;
     this.observationPreview = dependencies.observationPreview;
     this.telemetryPort = dependencies.telemetryPort ?? noopTelemetry;
     this.auditPort = dependencies.auditPort ?? noopAudit;
+    this.modelInputCapabilityValidator = dependencies.modelInputCapabilityValidator;
+    this.modelInputResolver = dependencies.modelInputResolver;
   }
 
   /**
@@ -133,8 +193,8 @@ export class ToolNode implements GraphNode {
     errorCode?: string;
     conversationId: string;
     turnId: string;
-    runId?: string;
-    parentRunId?: string;
+    runId?: RunId;
+    parentRunId?: RunId;
   }): void {
     this.telemetryPort.emit({
       kind: 'tool_call',
@@ -154,12 +214,12 @@ export class ToolNode implements GraphNode {
   private async emitToolDecisionAudit(args: {
     action: 'tool.allow' | 'tool.deny';
     toolName: string;
-    toolCallId: string;
+    toolCallId: ToolCallId;
     reason: string;
     conversationId: string;
     turnId: string;
-    runId?: string;
-    parentRunId?: string;
+    runId?: RunId;
+    parentRunId?: RunId;
     errorKind?: string;
   }): Promise<void> {
     await emitAuditEnvelope(this.auditPort, {
@@ -170,7 +230,6 @@ export class ToolNode implements GraphNode {
         outcome: args.action === 'tool.allow' ? 'allowed' : 'denied',
         reason: args.reason,
         metadata: {
-          toolCallId: args.toolCallId,
           errorKind: args.errorKind,
         },
       },
@@ -184,7 +243,7 @@ export class ToolNode implements GraphNode {
       scope: {
         conversationId: args.conversationId || undefined,
         turnId: args.turnId,
-        runId: args.runId ?? args.turnId,
+        runId: args.runId ?? runIdFromTurnId(args.turnId),
         ...(args.parentRunId === undefined ? {} : { parentRunId: args.parentRunId }),
         toolName: args.toolName,
         toolCallId: args.toolCallId,
@@ -192,8 +251,50 @@ export class ToolNode implements GraphNode {
     });
   }
 
+  private async emitToolProtocolErrorAudit(args: {
+    toolName: string;
+    toolCallId?: ToolCallId;
+    rawArguments?: string;
+    parsedArguments: Record<string, unknown>;
+    error: string;
+    conversationId: string;
+    turnId: string;
+    runId?: RunId;
+    parentRunId?: RunId;
+  }): Promise<void> {
+    const metadata = {
+      ...(args.rawArguments === undefined ? {} : { rawArguments: args.rawArguments }),
+      parsedArguments: args.parsedArguments,
+    };
+    const evidence = {
+      kind: 'tool_protocol_error',
+      ...(args.toolCallId === undefined ? {} : { ref: args.toolCallId }),
+      summary: args.error,
+    };
+
+    await emitAuditEnvelope(this.auditPort, {
+      parentRunId: args.parentRunId,
+      action: 'tool.protocol_error',
+      actor: { kind: 'system' },
+      decision: {
+        outcome: 'recorded',
+        reason: args.error,
+        metadata,
+      },
+      evidence: [evidence],
+      scope: {
+        conversationId: args.conversationId || undefined,
+        turnId: args.turnId,
+        runId: args.runId ?? runIdFromTurnId(args.turnId),
+        ...(args.parentRunId === undefined ? {} : { parentRunId: args.parentRunId }),
+        toolName: args.toolName,
+        ...(args.toolCallId === undefined ? {} : { toolCallId: args.toolCallId }),
+      },
+    });
+  }
+
   async run(state: EngineState): Promise<NodeResult> {
-    const events: RuntimeEvent[] = [];
+    const events: RoutedRuntimeEvent[] = [];
 
     while (true) {
       const result = await this.runNextPendingToolCall(state);
@@ -213,9 +314,14 @@ export class ToolNode implements GraphNode {
   }
 
   private async runNextPendingToolCall(state: EngineState): Promise<NodeResult> {
-    const calls = (state.local?.pendingToolCalls as StandardToolCall[] | undefined) ?? [];
+    const calls = parsePendingToolCalls(state.local?.pendingToolCalls ?? []);
     const signalRaw = state.local?.signal;
     if (isAbortSignal(signalRaw) && signalRaw.aborted) {
+      settlePendingToolCallsAfterAbort({
+        state,
+        calls,
+        toolCatalog: this.toolRuntime,
+      });
       const abortError = new Error('The user aborted a request.');
       abortError.name = 'AbortError';
       throw abortError;
@@ -226,7 +332,6 @@ export class ToolNode implements GraphNode {
       conversationId: prepared.conversationId,
       turnId: prepared.turnId,
       pendingCallCount: calls.length,
-      citationOffset: prepared.toolContext.citationOffset,
     });
 
     if (calls.length === 0) {
@@ -240,14 +345,9 @@ export class ToolNode implements GraphNode {
       toolCatalog: this.toolRuntime,
     });
     if (!execution) {
-      console.warn('[ToolNode] No tool name found in call');
+      logger.warn('no tool name found in call');
       return { kind: 'yield', events: [] };
     }
-
-    execution.bridge.emitToolProcess('start', 'loading', {
-      args: execution.toolArgs,
-      tool_calls: [call],
-    });
 
     if (typeof execution.protocolError === 'string') {
       return this.handleError({
@@ -267,47 +367,188 @@ export class ToolNode implements GraphNode {
       });
     }
 
-    const exec = await this.toolRuntime.executeTool(
-      execution.toolName,
-      execution.toolArgs,
-      prepared.toolContext,
-    );
-    if (exec.success) {
-      const parsed = typeof exec.result === 'string' ? parseJsonSafe(exec.result) : exec.result;
-      return this.handleSuccess({
+    if (typeof execution.modelInputRequirementError === 'string') {
+      return this.handleError({
         ...prepared,
         calls,
+        call,
         toolName: execution.toolName,
         toolCallId: execution.toolCallId,
-        exec,
-        parsed,
+        toolArgs: execution.toolArgs,
+        exec: {
+          success: false,
+          error: execution.modelInputRequirementError,
+          errorKind: 'capability',
+          durationMs: 0,
+        },
         bridge: execution.bridge,
       });
     }
 
-    return this.handleError({
-      ...prepared,
-      calls,
-      call,
+    if (execution.modelInputRequirement?.requires_image_input === true) {
+      const activeModelId = readLastSuccessfulLlmModelId(prepared.local);
+      let capabilityError: string | undefined;
+      if (!activeModelId) {
+        capabilityError =
+          'llm.unsupported_capability: missing successful LLM model for tool input validation';
+      } else if (!this.modelInputCapabilityValidator) {
+        capabilityError =
+          'llm.unsupported_capability: tool model input validator is not configured';
+      } else {
+        try {
+          this.modelInputCapabilityValidator.assertCompatible({
+            activeModelId,
+            requirement: execution.modelInputRequirement,
+          });
+        } catch (error) {
+          capabilityError = formatCapabilityError(error);
+        }
+      }
+
+      if (capabilityError) {
+        return this.handleError({
+          ...prepared,
+          calls,
+          call,
+          toolName: execution.toolName,
+          toolCallId: execution.toolCallId,
+          toolArgs: execution.toolArgs,
+          exec: {
+            success: false,
+            error: capabilityError,
+            errorKind: 'capability',
+            durationMs: 0,
+          },
+          bridge: execution.bridge,
+        });
+      }
+    }
+
+    await this.emitToolDecisionAudit({
+      action: 'tool.allow',
       toolName: execution.toolName,
       toolCallId: execution.toolCallId,
-      toolArgs: execution.toolArgs,
-      exec,
-      bridge: execution.bridge,
+      reason: 'tool call passed protocol validation',
+      conversationId: prepared.conversationId,
+      turnId: prepared.turnId,
+      runId: prepared.toolContext.runId,
+      parentRunId: prepared.toolContext.parentRunId,
     });
+
+    // tool_process(start) 是“实际开始执行”的事实，不是参数或能力准入的占位。
+    // 所有拒绝分支都在上面结算为配对 tool_output(error)，因此这里是唯一启动边界。
+    execution.bridge.emitToolProcess('start', 'loading', {
+      args: execution.toolArgs,
+      tool_calls: [call],
+    });
+
+    try {
+      const exec = await executeToolWithIdempotency({
+        idempotencyKey: execution.idempotencyKey,
+        inFlight: this.idempotencyInFlight,
+        history: readHistoryEvents(prepared.local),
+        toolName: execution.toolName,
+        execute: () =>
+          this.toolRuntime.executeTool(
+            execution.toolName,
+            execution.toolArgs,
+            prepared.toolContext
+          ),
+      });
+      if (exec.success) {
+        const parsed = typeof exec.result === 'string' ? parseJsonSafe(exec.result) : exec.result;
+        const contract = validateStructuredToolResultContract(parsed);
+        if (!contract.ok) {
+          return this.handleError({
+            ...prepared,
+            calls,
+            call,
+            toolName: execution.toolName,
+            toolCallId: execution.toolCallId,
+            toolArgs: execution.toolArgs,
+            exec: {
+              success: false,
+              error: `TOOL_RESULT_CONTRACT_VIOLATION: ${contract.reason}`,
+              errorKind: 'execution',
+              durationMs: exec.durationMs,
+            },
+            bridge: execution.bridge,
+          });
+        }
+        let attachments: readonly RuntimeResourceRef[] | undefined = exec.cachedAttachments;
+        try {
+          if (!attachments) {
+            attachments = await resolveToolModelInput({
+              activeModelId: readLastSuccessfulLlmModelId(prepared.local),
+              toolName: execution.toolName,
+              toolCallId: execution.toolCallId,
+              selections: contract.modelInputAttachments,
+              context: prepared.toolContext,
+              resolver: this.modelInputResolver,
+              capabilityValidator: this.modelInputCapabilityValidator,
+            });
+          }
+        } catch (error) {
+          return this.handleError({
+            ...prepared,
+            calls,
+            call,
+            toolName: execution.toolName,
+            toolCallId: execution.toolCallId,
+            toolArgs: execution.toolArgs,
+            exec: {
+              success: false,
+              error: formatCapabilityError(error),
+              errorKind: 'capability',
+              durationMs: exec.durationMs,
+              idempotency: exec.idempotency,
+            },
+            bridge: execution.bridge,
+          });
+        }
+        return this.handleSuccess({
+          ...prepared,
+          calls,
+          toolName: execution.toolName,
+          toolCallId: execution.toolCallId,
+          exec,
+          parsed: contract.result,
+          observation: contract.observation,
+          attachments,
+          bridge: execution.bridge,
+        });
+      }
+
+      return this.handleError({
+        ...prepared,
+        calls,
+        call,
+        toolName: execution.toolName,
+        toolCallId: execution.toolCallId,
+        toolArgs: execution.toolArgs,
+        exec,
+        bridge: execution.bridge,
+      });
+    } catch (error) {
+      if (isToolExecutionAbort(error)) {
+        settleToolCallsAfterExecutionAbort({
+          state,
+          remainingCalls: calls.slice(1),
+          currentBridge: execution.bridge,
+          toolCatalog: this.toolRuntime,
+        });
+      }
+      throw error;
+    } finally {
+      await this.modelInputResolver?.completeToolModelInput({
+        toolName: execution.toolName,
+        toolCallId: execution.toolCallId,
+        context: prepared.toolContext,
+      });
+    }
   }
 
   private async handleSuccess(context: ToolNodeSuccessContext): Promise<NodeResult> {
-    await this.emitToolDecisionAudit({
-      action: 'tool.allow',
-      toolName: context.toolName,
-      toolCallId: context.toolCallId,
-      reason: 'tool execution succeeded',
-      conversationId: context.conversationId,
-      turnId: context.turnId,
-      runId: context.toolContext.runId,
-      parentRunId: context.toolContext.parentRunId,
-    });
     this.emitToolCallTelemetry({
       toolName: context.toolName,
       durationMs: context.exec.durationMs,
@@ -324,7 +565,7 @@ export class ToolNode implements GraphNode {
       parsed: context.parsed,
       toolName: context.toolName,
       toolContext: context.toolContext,
-      structuredObservation: readStructuredObservation(context.parsed),
+      structuredObservation: context.observation,
       observationPreview: this.observationPreview,
       policy: readToolObservationPolicy(context.local),
     });
@@ -334,27 +575,44 @@ export class ToolNode implements GraphNode {
       return this.handleRequireUserSuccess({ ...context, control });
     }
 
-    const runtimeToolOutput = context.bridge.emitToolOutput(
-      'success',
-      buildSuccessOutputPayload(context.exec.result, context.parsed),
+    const presentationMedia = context.parsed.media === undefined
+      ? undefined
+      : toSerializableJsonValue(context.parsed.media);
+    const toolOutputMetadata = {
+      ...(context.exec.idempotency
+        ? {
+            idempotency: {
+              key: context.exec.idempotency.key,
+              cache_hit: context.exec.idempotency.cacheHit,
+            },
+          }
+        : {}),
+      ...(observationGovernance.observationTruncation
+        ? { observationTruncation: observationGovernance.observationTruncation }
+        : {}),
+      ...(presentationMedia !== undefined
+        ? { presentation: { media: presentationMedia } }
+        : {}),
+    };
+    context.bridge.emitToolOutput(
+      {
+        status: 'success',
+        observation: observationGovernance.observation,
+        data: context.parsed.data,
+      },
+      {
+        attachments: context.attachments,
+        metadata: Object.keys(toolOutputMetadata).length > 0 ? toolOutputMetadata : undefined,
+        ephemeral: context.exec.idempotency?.cacheHit === true,
+        durationMs: context.exec.durationMs,
+      }
     );
-    const finalAnswerProjection = resolveFinalAnswerFromToolResult(context.toolName, context.parsed);
+    const finalAnswerProjection = resolveFinalAnswerFromToolControl(control?.finalAnswer);
     if (typeof finalAnswerProjection === 'string') {
       context.bridge.emitFinalAnswer({
         answer: finalAnswerProjection,
         sourceToolName: context.toolName,
       });
-    }
-
-    applyToolOutputIdempotencyMetadata({
-      runtimeToolOutput,
-      execIdempotency: context.exec.idempotency,
-    });
-    if (runtimeToolOutput && observationGovernance.observationTruncation) {
-      runtimeToolOutput.metadata = {
-        ...(runtimeToolOutput.metadata ?? {}),
-        observationTruncation: observationGovernance.observationTruncation,
-      };
     }
 
     const remainingCalls = context.calls.slice(1);
@@ -408,17 +666,19 @@ export class ToolNode implements GraphNode {
   }
 
   private async handleError(context: ToolNodeErrorContext): Promise<NodeResult> {
-    await this.emitToolDecisionAudit({
-      action: context.exec.errorKind === 'protocol' ? 'tool.deny' : 'tool.allow',
-      toolName: context.toolName,
-      toolCallId: context.toolCallId,
-      reason: context.exec.error ?? 'tool_error',
-      conversationId: context.conversationId,
-      turnId: context.turnId,
-      runId: context.toolContext.runId,
-      parentRunId: context.toolContext.parentRunId,
-      errorKind: context.exec.errorKind,
-    });
+    if (context.exec.errorKind === 'protocol' || context.exec.errorKind === 'capability') {
+      await this.emitToolDecisionAudit({
+        action: 'tool.deny',
+        toolName: context.toolName,
+        toolCallId: context.toolCallId,
+        reason: context.exec.error ?? 'tool protocol validation failed',
+        conversationId: context.conversationId,
+        turnId: context.turnId,
+        runId: context.toolContext.runId,
+        parentRunId: context.toolContext.parentRunId,
+        errorKind: context.exec.errorKind,
+      });
+    }
     this.emitToolCallTelemetry({
       toolName: context.toolName,
       durationMs: context.exec.durationMs,
@@ -430,18 +690,12 @@ export class ToolNode implements GraphNode {
       parentRunId: context.toolContext.parentRunId,
     });
 
-    const errorString = (() => {
-      try {
-        return JSON.stringify({ error: context.exec.error || 'tool_error' });
-      } catch {
-        return String(context.exec.error || 'tool_error');
-      }
-    })();
-
-    context.bridge.emitToolOutput('error', {
-      output: errorString,
-      error: context.exec.error ?? errorString,
-    });
+    const error = context.exec.error || 'tool_error';
+    context.bridge.emitToolOutput({
+      status: 'error',
+      observation: error,
+      error,
+    }, { durationMs: context.exec.durationMs });
 
     const fuse = checkProtocolFuse({
       local: context.local,
@@ -451,6 +705,15 @@ export class ToolNode implements GraphNode {
       rawArguments: context.call.function?.arguments,
       parsedArguments: context.toolArgs,
     });
+    if (fuse.protocolErrorAudit) {
+      await this.emitToolProtocolErrorAudit({
+        ...fuse.protocolErrorAudit,
+        conversationId: context.conversationId,
+        turnId: context.turnId,
+        runId: context.toolContext.runId,
+        parentRunId: context.toolContext.parentRunId,
+      });
+    }
     const remainingCalls = context.calls.slice(1);
 
     context.state.local = buildErrorLocalState({

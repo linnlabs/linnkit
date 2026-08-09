@@ -1,13 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { normalizeToolCalls } from './helpers';
 import type { StandardToolCall } from '../types';
+import { ToolCallIdSchema } from '../../../contracts';
 
 function createToolCall(argumentsText: string): StandardToolCall {
   return {
-    id: 'call_1',
+    id: ToolCallIdSchema.parse('call_1'),
     type: 'function',
     function: {
-      name: 'ppt_codegen',
+      name: 'code_generation_tool',
       arguments: argumentsText,
     },
   };
@@ -24,9 +25,7 @@ describe('tick-pipeline/helpers.normalizeToolCalls', () => {
   });
 
   it('仍然拆分合法的拼接 JSON 对象', () => {
-    const normalized = normalizeToolCalls([
-      createToolCall('{"code":"a"}{"code":"b"}'),
-    ]);
+    const normalized = normalizeToolCalls([createToolCall('{"code":"a"}{"code":"b"}')]);
 
     expect(normalized).toHaveLength(2);
     expect(normalized[0]?.function.arguments).toBe('{"code":"a"}');

@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { AiMessage } from '../../../contracts';
 import type { MessageProcessingState } from '../providers/base';
 import { buildContextTokenComponents } from '../context-token-components';
+import { ToolCallIdSchema } from '../../../contracts';
 
 function message(input: {
   id: string;
@@ -72,8 +73,18 @@ describe('buildContextTokenComponents', () => {
     expect(components).toEqual([
       expect.objectContaining({ componentId: '0:sys', kind: 'system', tokens: 10, kept: true }),
       expect.objectContaining({ componentId: '1:fence', kind: 'fence', tokens: 12, kept: true }),
-      expect.objectContaining({ componentId: '2:summary', kind: 'history-summary', tokens: 8, kept: true }),
-      expect.objectContaining({ componentId: '3:old-answer', kind: 'assistant', tokens: 9, kept: false }),
+      expect.objectContaining({
+        componentId: '2:summary',
+        kind: 'history-summary',
+        tokens: 8,
+        kept: true,
+      }),
+      expect.objectContaining({
+        componentId: '3:old-answer',
+        kind: 'assistant',
+        tokens: 9,
+        kept: false,
+      }),
     ]);
   });
 
@@ -89,7 +100,7 @@ describe('buildContextTokenComponents', () => {
           type: 'tool_output',
           metadata: {
             tool_name: 'search',
-            tool_call_id: 'call-1',
+            tool_call_id: ToolCallIdSchema.parse('call-1'),
             observationTruncation: {
               originalChars: 1000,
               previewChars: 250,

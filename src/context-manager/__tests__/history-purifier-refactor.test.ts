@@ -5,7 +5,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { HistoryPurificationPreprocessor } from '../shared/preprocessors';
-import type { AiMessage } from '../../contracts';
+import { AiMessage } from '../../contracts';
 
 describe('HistoryPurificationPreprocessor - 重构后测试', () => {
   const purifier = new HistoryPurificationPreprocessor({ logPrefix: 'Test-HistoryPurification' });
@@ -20,17 +20,18 @@ describe('HistoryPurificationPreprocessor - 重构后测试', () => {
    */
   function createMessage(
     id: string, 
-    type: AiMessage['type'], 
-    metadata?: any
+    type: 'user_input' | 'final_answer' | 'history_summary',
+    metadata?: unknown
   ): AiMessage {
-    return {
+    const role = type === 'user_input' ? 'user' : type === 'history_summary' ? 'system' : 'assistant';
+    return AiMessage.parse({
       id,
-      role: type === 'user_input' ? 'user' : 'assistant',
+      role,
       type,
       content: `Content of ${id}`,
       timestamp: Date.now(),
       metadata
-    };
+    });
   }
 
   it('应该使用 summarySeq 查找最新摘要（而非 timestamp）', async () => {
@@ -58,7 +59,7 @@ describe('HistoryPurificationPreprocessor - 重构后测试', () => {
     messages[2].timestamp = Date.now() + 1000;
     messages[5].timestamp = Date.now() - 1000;
 
-    const result = await purifier.process(messages, mockContext as any);
+    const result = await purifier.process(messages, mockContext);
 
     // 验证：应该使用 summarySeq=2 的摘要，移除 summary-old、msg-3、msg-4
     expect(result.messages).toHaveLength(4);
@@ -84,7 +85,7 @@ describe('HistoryPurificationPreprocessor - 重构后测试', () => {
       createMessage('msg-5', 'user_input'),
     ];
 
-    const result = await purifier.process(messages, mockContext as any);
+    const result = await purifier.process(messages, mockContext);
 
     // 验证：msg-1 和 msg-2 被移除，其他保留
     expect(result.messages).toHaveLength(4);
@@ -118,7 +119,7 @@ describe('HistoryPurificationPreprocessor - 重构后测试', () => {
       createMessage('msg-5', 'user_input'),
     ];
 
-    const result = await purifier.process(messages, mockContext as any);
+    const result = await purifier.process(messages, mockContext);
 
     // 验证：旧摘要 summary-1 也被移除
     expect(result.messages).toHaveLength(2);
@@ -140,7 +141,7 @@ describe('HistoryPurificationPreprocessor - 重构后测试', () => {
       createMessage('msg-3', 'user_input'),
     ];
 
-    const result = await purifier.process(messages, mockContext as any);
+    const result = await purifier.process(messages, mockContext);
 
     // 验证：没有移除任何消息
     expect(result.messages).toHaveLength(4);
@@ -155,7 +156,7 @@ describe('HistoryPurificationPreprocessor - 重构后测试', () => {
       createMessage('msg-4', 'final_answer'),
     ];
 
-    const result = await purifier.process(messages, mockContext as any);
+    const result = await purifier.process(messages, mockContext);
 
     // 验证：所有消息保留
     expect(result.messages).toHaveLength(4);
@@ -168,12 +169,12 @@ describe('HistoryPurificationPreprocessor - 重构后测试', () => {
       createMessage('summary-empty', 'history_summary', {
         summarySeq: 1,
         replacedMessageIds: [], // 空数组
-        originalMessageCount: 0
+        originalMessageCount: 1
       }),
       createMessage('msg-2', 'user_input'),
     ];
 
-    const result = await purifier.process(messages, mockContext as any);
+    const result = await purifier.process(messages, mockContext);
 
     // 验证：没有移除任何消息（因为列表为空）
     expect(result.messages).toHaveLength(3);
@@ -203,7 +204,7 @@ describe('HistoryPurificationPreprocessor - 重构后测试', () => {
       createMessage('msg-4', 'user_input'),
     ];
 
-    const result = await purifier.process(messages, mockContext as any);
+    const result = await purifier.process(messages, mockContext);
 
     // 验证：只使用 summarySeq=3 的摘要
     expect(result.messages).toHaveLength(2);
@@ -230,7 +231,7 @@ describe('HistoryPurificationPreprocessor - 重构后测试', () => {
       createMessage('msg-3', 'user_input'),
     ];
 
-    const result = await purifier.process(messages, mockContext as any);
+    const result = await purifier.process(messages, mockContext);
 
     // 验证：只移除存在的消息，不会因为不存在的ID而出错
     expect(result.messages).toHaveLength(2);

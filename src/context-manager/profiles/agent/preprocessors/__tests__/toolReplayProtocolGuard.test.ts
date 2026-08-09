@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { AiMessage } from '../../../../../contracts';
 import { formatAgentLlmMessages } from '../../../../shared';
 import { ToolReplayProtocolGuardPreprocessor } from '../toolReplayProtocolGuard';
+import { ToolCallIdSchema } from '../../../../../contracts';
 
 const deepseekPolicy = {
   provider: 'deepseek',
@@ -41,7 +42,7 @@ function toolCallsMessage(opts: {
       ...(opts.reasoningDetails ? { reasoning_details: opts.reasoningDetails } : {}),
       tool_calls: [
         {
-          id: `${opts.id}_call`,
+          id: ToolCallIdSchema.parse(`${opts.id}_call`),
           type: 'function',
           function: {
             name: 'workspace_read',
@@ -61,9 +62,9 @@ function toolOutputMessage(toolCallSourceId: string, timestamp: number): AiMessa
     content: '{"observation":"README 内容"}',
     timestamp,
     metadata: {
-      tool_call_id: `${toolCallSourceId}_call`,
+      tool_call_id: ToolCallIdSchema.parse(`${toolCallSourceId}_call`),
       tool_name: 'workspace_read',
-      raw_output: '{"observation":"README 内容"}',
+      data: { content: 'README 内容' },
     },
   };
 }
@@ -78,12 +79,20 @@ describe('ToolReplayProtocolGuardPreprocessor', () => {
         toolOutputMessage('assistant_missing_sidecar', 1200),
         userMessage('user_followup', 2000),
       ],
-      { debugMode: false },
+      { debugMode: false }
     );
 
-    expect(formatAgentLlmMessages(result.messages).some((message) => message.role === 'assistant' && 'tool_calls' in message)).toBe(false);
-    expect(formatAgentLlmMessages(result.messages).some((message) => message.role === 'tool')).toBe(false);
-    expect(result.messages.some((message) => message.metadata?.isDegradedToolReplay === true)).toBe(true);
+    expect(
+      formatAgentLlmMessages(result.messages).some(
+        message => message.role === 'assistant' && 'tool_calls' in message
+      )
+    ).toBe(false);
+    expect(formatAgentLlmMessages(result.messages).some(message => message.role === 'tool')).toBe(
+      false
+    );
+    expect(result.messages.some(message => message.metadata?.isDegradedToolReplay === true)).toBe(
+      true
+    );
     expect(result.appliedStrategies).toContain('tool_replay_protocol_guard');
   });
 
@@ -99,9 +108,9 @@ describe('ToolReplayProtocolGuardPreprocessor', () => {
         toolOutputMessage('assistant_with_sidecar', 1200),
         userMessage('user_followup', 2000),
       ],
-      { debugMode: false },
+      { debugMode: false }
     );
-    const assistant = formatAgentLlmMessages(result.messages).find((message) => {
+    const assistant = formatAgentLlmMessages(result.messages).find(message => {
       return message.role === 'assistant' && 'tool_calls' in message;
     });
 
@@ -117,15 +126,23 @@ describe('ToolReplayProtocolGuardPreprocessor', () => {
         toolCallsMessage({ id: 'assistant_current_missing_sidecar', timestamp: 1100 }),
         toolOutputMessage('assistant_current_missing_sidecar', 1200),
       ],
-      { debugMode: false },
+      { debugMode: false }
     );
 
-    expect(formatAgentLlmMessages(result.messages).some((message) => message.role === 'assistant' && 'tool_calls' in message)).toBe(true);
-    expect(result.messages.some((message) => message.metadata?.isDegradedToolReplay === true)).toBe(false);
+    expect(
+      formatAgentLlmMessages(result.messages).some(
+        message => message.role === 'assistant' && 'tool_calls' in message
+      )
+    ).toBe(true);
+    expect(result.messages.some(message => message.metadata?.isDegradedToolReplay === true)).toBe(
+      false
+    );
   });
 
   it('可按 host 策略保留结构化工具回放，并标记由 provider 补空 replay 字段', async () => {
-    const preprocessor = new ToolReplayProtocolGuardPreprocessor({ policy: deepseekEmptyFallbackPolicy });
+    const preprocessor = new ToolReplayProtocolGuardPreprocessor({
+      policy: deepseekEmptyFallbackPolicy,
+    });
     const result = await preprocessor.process(
       [
         userMessage('user_old', 1000),
@@ -133,16 +150,20 @@ describe('ToolReplayProtocolGuardPreprocessor', () => {
         toolOutputMessage('assistant_missing_sidecar', 1200),
         userMessage('user_followup', 2000),
       ],
-      { debugMode: false },
+      { debugMode: false }
     );
 
     const llmMessages = formatAgentLlmMessages(result.messages);
-    const assistant = llmMessages.find((message) => message.role === 'assistant' && 'tool_calls' in message);
+    const assistant = llmMessages.find(
+      message => message.role === 'assistant' && 'tool_calls' in message
+    );
 
     expect(assistant).toBeDefined();
     expect(assistant?.provider_empty_replay_field).toBe(true);
-    expect(llmMessages.some((message) => message.role === 'tool')).toBe(true);
-    expect(result.messages.some((message) => message.metadata?.isDegradedToolReplay === true)).toBe(false);
+    expect(llmMessages.some(message => message.role === 'tool')).toBe(true);
+    expect(result.messages.some(message => message.metadata?.isDegradedToolReplay === true)).toBe(
+      false
+    );
     expect(result.appliedStrategies).toContain('tool_replay_protocol_guard');
   });
 });

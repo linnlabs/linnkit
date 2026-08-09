@@ -1,125 +1,160 @@
 import { z } from 'zod';
 import { AuditEnvelope } from './audit';
+import { SerializableJsonRecord, SerializableJsonValue, toSerializableJsonValue } from './json';
+import { RuntimeResourceRefs } from './resource-ref';
+import { Status, ToolCallPhase } from './runtime-status';
+import { FinalAnswerCompletionReason } from './final-answer';
+import {
+  AnswerSegmentIdSchema,
+  ControlTargetReferenceIdSchema,
+  ConversationIdSchema,
+  ExecutionIdSchema,
+  HistoryMessageReferenceIdSchema,
+  InteractionIdSchema,
+  RuntimeEventIdSchema,
+  RunIdSchema,
+  ResumeTokenSchema,
+  ThoughtMessageIdSchema,
+  ToolCallIdSchema,
+  TurnIdSchema,
+} from './identity';
+import { SubRunTracePayload, validateSubRunTracePayloadSemantics } from './sub-run-trace-payload';
+
+export const RuntimeRunLane = z.enum(['foreground', 'auxiliary', 'child']);
+export type RuntimeRunLane = z.infer<typeof RuntimeRunLane>;
+
+export const RuntimeEventVisibility = z.enum(['conversation', 'parent-trace', 'none']);
+export type RuntimeEventVisibility = z.infer<typeof RuntimeEventVisibility>;
+
+export const RuntimeRunStatus = z.enum([
+  'pending',
+  'running',
+  'awaiting_user',
+  'paused',
+  'completed',
+  'failed',
+  'cancelled',
+]);
+export type RuntimeRunStatus = z.infer<typeof RuntimeRunStatus>;
+
+export const RunExecutionOutcome = z.enum(['completed', 'awaiting_user', 'failed', 'cancelled']);
+export type RunExecutionOutcome = z.infer<typeof RunExecutionOutcome>;
+
+/**
+ * 运行时事实的正式路由身份。
+ *
+ * 这些字段决定事件属于哪个 run、由谁控制、可以投影到哪里，不能放进开放 metadata。
+ */
+export const RuntimeEventRoutingIdentity = z
+  .object({
+    run_id: RunIdSchema,
+    parent_run_id: RunIdSchema.optional(),
+    lane: RuntimeRunLane,
+    visibility: RuntimeEventVisibility,
+  })
+  .strict();
+export type RuntimeEventRoutingIdentity = z.infer<typeof RuntimeEventRoutingIdentity>;
 
 export const BaseEvent = z.object({
-  id: z.string(),
-  conversation_id: z.string(),
+  id: RuntimeEventIdSchema,
+  conversation_id: ConversationIdSchema,
   timestamp: z.number(),
-  metadata: z.record(z.unknown()).optional(),
+  metadata: SerializableJsonRecord.optional(),
   version: z.literal(1).default(1),
-  turn_id: z.string(),
+  turn_id: TurnIdSchema,
   ephemeral: z.boolean().optional(),
+  run_id: RunIdSchema.optional(),
+  parent_run_id: RunIdSchema.optional(),
+  lane: RuntimeRunLane.optional(),
+  visibility: RuntimeEventVisibility.optional(),
 });
 
-export const ToolCallPhase = z.enum(['start', 'update', 'complete', 'error']);
-export const Status = z.enum(['loading', 'success', 'error']);
-export const AgentTodoStatus = z.enum(['pending', 'in_progress', 'completed', 'cancelled']);
+export { Status, ToolCallPhase } from './runtime-status';
 
-export const AgentTodoItem = z.object({
-  id: z.string(),
-  content: z.string(),
-  status: AgentTodoStatus,
-});
-
-export const ProviderReasoningDetailsPayload = z.array(z.unknown());
+export const ProviderReasoningDetailsPayload = z.array(SerializableJsonValue);
 export type ProviderReasoningDetailsPayload = z.infer<typeof ProviderReasoningDetailsPayload>;
 
-export const ToolCallDecisionPayload = z.object({
-  args: z.record(z.any()).optional(),
-  tool_calls: z.array(z.unknown()).optional(),
-  /**
-   * 不透明 provider reasoning replay blocks。
-   *
-      * RuntimeEvent 层的标准位置是 assistant 产出事件携带 reasoning_details；
-      * context-manager 会把它回放到 AiMessage.metadata.reasoning_details。
-   */
-  reasoning_details: ProviderReasoningDetailsPayload.optional(),
-}).passthrough();
+export const ToolCallDecisionPayload = z
+  .object({
+    args: SerializableJsonRecord.optional(),
+    tool_calls: z.array(SerializableJsonValue).optional(),
+    /**
+     * 不透明 provider reasoning replay blocks。
+     *
+     * RuntimeEvent 层的标准位置是 assistant 产出事件携带 reasoning_details；
+     * context-manager 会把它回放到 AiMessage.metadata.reasoning_details。
+     */
+    reasoning_details: ProviderReasoningDetailsPayload.optional(),
+  })
+  .strict();
 
 export type ToolCallDecisionPayload = z.infer<typeof ToolCallDecisionPayload>;
 
-export const RuntimeEvent = z.discriminatedUnion('type', [
+const RuntimeEventShape = z.discriminatedUnion('type', [
   BaseEvent.extend({
     type: z.literal('user_input'),
     content: z.string(),
     raw_content: z.string().optional(),
     source: z.enum(['user', 'editor', 'system']).default('user'),
+    attachments: RuntimeResourceRefs.optional(),
   }),
   BaseEvent.extend({
     type: z.literal('thought'),
     content: z.string(),
-    thought_message_id: z.string().optional(),
+    thought_message_id: ThoughtMessageIdSchema.optional(),
     delta: z.string().optional(),
     is_complete: z.boolean().default(false),
   }),
   BaseEvent.extend({
     type: z.literal('tool_call_decision'),
     tool_name: z.string(),
-    tool_call_id: z.string(),
+    tool_call_id: ToolCallIdSchema,
     phase: ToolCallPhase,
     status: Status,
-    args: z.record(z.any()).optional(),
+    args: SerializableJsonRecord.optional(),
     payload: ToolCallDecisionPayload.optional(),
-    parent_tool_call_id: z.string().optional(),
-    meta: z.record(z.any()).optional(),
+    parent_tool_call_id: ToolCallIdSchema.optional(),
+    meta: SerializableJsonRecord.optional(),
   }),
   BaseEvent.extend({
     type: z.literal('tool_process'),
     tool_name: z.string(),
-    tool_call_id: z.string(),
+    tool_call_id: ToolCallIdSchema,
     phase: ToolCallPhase,
     status: Status,
-    args: z.record(z.any()).optional(),
-    payload: z.record(z.any()).optional(),
-    parent_tool_call_id: z.string().optional(),
-    meta: z.record(z.any()).optional(),
+    args: SerializableJsonRecord.optional(),
+    payload: SerializableJsonRecord.optional(),
+    parent_tool_call_id: ToolCallIdSchema.optional(),
+    meta: SerializableJsonRecord.optional(),
   }),
   BaseEvent.extend({
     type: z.literal('tool_output'),
     tool_name: z.string(),
-    tool_call_id: z.string(),
+    tool_call_id: ToolCallIdSchema,
     status: z.enum(['success', 'error']),
-    output: z.any().optional(),
-    payload: z.record(z.any()).optional(),
+    observation: z.string().refine(value => value.trim().length > 0, 'observation must not be blank'),
+    data: SerializableJsonValue.optional(),
     error: z.string().optional(),
     duration_ms: z.number().optional(),
-  }),
-  BaseEvent.extend({
-    type: z.literal('todo_updated'),
-    todo_list_id: z.string(),
-    todo_list_version: z.number().int().nonnegative(),
-    items: z.array(AgentTodoItem),
+    attachments: RuntimeResourceRefs.optional(),
   }),
   BaseEvent.extend({
     type: z.literal('subrun_trace'),
-    parent_tool_call_id: z.string(),
-    subrun_id: z.string(),
-    subrun_parent_id: z.string().optional(),
-    kind: z.enum([
-      'thought_delta',
-      'thought_complete',
-      'tool_call_decision',
-      'tool_process',
-      'tool_output',
-      'final_answer_chunk',
-      'final_answer',
-    ]),
-    delta: z.string().optional(),
-    content: z.string().optional(),
-    tool_name: z.string().optional(),
-    tool_call_id: z.string().optional(),
-    phase: ToolCallPhase.optional(),
-    status: Status.optional(),
-    args: z.unknown().optional(),
-    output: z.unknown().optional(),
-    duration_ms: z.number().optional(),
-    meta: z.record(z.unknown()).optional(),
+    /** parent trace 是实时展示协议，历史由 Host 紧凑 read model 持有。 */
+    ephemeral: z.literal(true),
+    ...SubRunTracePayload.shape,
   }),
   BaseEvent.extend({
     type: z.literal('requires_user_interaction'),
-    form: z.any().optional(),
+    form: SerializableJsonValue.optional(),
     interaction_type: z.string().optional(),
     prompt: z.string().optional(),
+    interaction_id: InteractionIdSchema,
+    run_id: RunIdSchema,
+    tool_call_id: ToolCallIdSchema,
+    checkpoint_revision: z.number().int().nonnegative(),
+    resume_token: ResumeTokenSchema,
+    interaction_status: z.literal('pending'),
   }),
   BaseEvent.extend({
     type: z.literal('audit_envelope'),
@@ -127,90 +162,253 @@ export const RuntimeEvent = z.discriminatedUnion('type', [
   }),
   BaseEvent.extend({
     type: z.literal('final_answer'),
-    answer_id: z.string(),
+    answer_id: AnswerSegmentIdSchema,
     content: z.string(),
     is_complete: z.boolean().default(true),
+    /** 封口原因由事实创建者确定；读取方不得根据相邻事件推断。 */
+    completion_reason: FinalAnswerCompletionReason,
     reasoning_details: ProviderReasoningDetailsPayload.optional(),
-    meta: z.record(z.any()).optional(),
+    meta: SerializableJsonRecord.optional(),
   }),
   BaseEvent.extend({
     type: z.literal('final_answer_chunk'),
-    answer_id: z.string(),
+    answer_id: AnswerSegmentIdSchema,
     seq: z.number().int().nonnegative(),
     content: z.string(),
     is_last: z.boolean().optional(),
   }),
   BaseEvent.extend({
+    type: z.literal('final_answer_reset'),
+    answer_id: AnswerSegmentIdSchema.optional(),
+    thought_message_ids: z.array(ThoughtMessageIdSchema).optional(),
+  }),
+  BaseEvent.extend({
     type: z.literal('history_summary'),
     content: z.string(),
-    replaced_message_ids: z.array(z.string()),
+    replaced_message_ids: z.array(HistoryMessageReferenceIdSchema),
     summary_seq: z.number().int().nonnegative(),
-    original_message_count: z.number().int().nonnegative().optional(),
+    original_message_count: z.number().int().nonnegative(),
     compression_ratio: z.number().min(0).max(1).optional(),
     included_old_summary: z.boolean().optional(),
   }),
   BaseEvent.extend({
     type: z.literal('error'),
     error: z.string(),
-    details: z.any().optional(),
+    details: SerializableJsonValue.optional(),
     error_code: z.string().optional(),
     retryable: z.boolean().optional(),
   }),
   BaseEvent.extend({
     type: z.literal('control'),
     op: z.enum(['truncate_after', 'replace', 'redo', 'branch']),
-    target_id: z.string().optional(),
+    target_id: ControlTargetReferenceIdSchema.optional(),
     reason: z.string().optional(),
-    meta: z.any().optional(),
+    meta: SerializableJsonValue.optional(),
   }),
   BaseEvent.extend({
-    type: z.literal('stream_end'),
-    reason: z.enum(['complete', 'error', 'interrupted', 'timeout']).optional(),
-    reason_message: z.string().optional(),
-    stats: z.object({
-      total_events: z.number().optional(),
-      duration_ms: z.number().optional(),
-      error_count: z.number().optional(),
-    }).optional(),
+    type: z.literal('run_execution_metrics'),
+    execution_id: ExecutionIdSchema,
+    outcome: RunExecutionOutcome,
+    duration_ms: z.number().nonnegative(),
+    user_message_id: RuntimeEventIdSchema.optional(),
+    benchmark: SerializableJsonRecord.optional(),
   }),
 ]);
 
+export const RuntimeEvent = z
+  .unknown()
+  .superRefine((value, ctx) => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return;
+    if (!Object.prototype.hasOwnProperty.call(value, 'attachments')) return;
+    const type = Reflect.get(value, 'type');
+    if (type !== 'user_input' && type !== 'tool_output') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['attachments'],
+        message: 'attachments are only allowed on user_input and tool_output events',
+      });
+    }
+  })
+  .pipe(RuntimeEventShape)
+  .superRefine((event, ctx) => {
+    if (event.type === 'tool_output') {
+      if (event.status === 'success' && event.data === undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['data'],
+          message: 'successful tool_output requires data',
+        });
+      }
+      if (event.status === 'success' && event.error !== undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['error'],
+          message: 'successful tool_output must not contain error',
+        });
+      }
+      if (event.status === 'error' && (!event.error || event.error.trim().length === 0)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['error'],
+          message: 'failed tool_output requires error',
+        });
+      }
+      if (event.status === 'error' && event.data !== undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['data'],
+          message: 'failed tool_output must not contain data',
+        });
+      }
+      return;
+    }
+    if (event.type === 'subrun_trace') {
+      validateSubRunTracePayloadSemantics(event, ctx);
+      return;
+    }
+    if (event.type === 'final_answer_chunk') {
+      if (event.id === event.answer_id) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['id'],
+          message: 'final_answer_chunk id must differ from answer_id',
+        });
+      }
+      return;
+    }
+    if (event.type !== 'final_answer') return;
+    if (event.id !== event.answer_id) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['id'],
+        message: 'final_answer id must equal answer_id',
+      });
+    }
+    const expectedComplete = event.completion_reason !== 'interrupted';
+    if (event.is_complete !== expectedComplete) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['is_complete'],
+        message: `final_answer completion_reason=${event.completion_reason} requires is_complete=${expectedComplete}`,
+      });
+    }
+  });
+
 export type RuntimeEvent = z.infer<typeof RuntimeEvent>;
+/** 未经 admission 的 RuntimeEvent 输入；只允许传给会执行共享 schema parse 的边界。 */
+export type RuntimeEventInput = z.input<typeof RuntimeEventShape>;
+type WithRuntimeEventRoutingIdentity<T> = T extends RuntimeEvent
+  ? T & RuntimeEventRoutingIdentity
+  : never;
+export type RoutedRuntimeEvent = WithRuntimeEventRoutingIdentity<RuntimeEvent>;
 export type UserInputEvent = Extract<RuntimeEvent, { type: 'user_input' }>;
 export type ThoughtEvent = Extract<RuntimeEvent, { type: 'thought' }>;
 export type ToolCallDecisionEvent = Extract<RuntimeEvent, { type: 'tool_call_decision' }>;
 export type ToolProcessEvent = Extract<RuntimeEvent, { type: 'tool_process' }>;
 export type ToolOutputEvent = Extract<RuntimeEvent, { type: 'tool_output' }>;
-export type TodoUpdatedEvent = Extract<RuntimeEvent, { type: 'todo_updated' }>;
+export type ToolOutputEventResult =
+  | { readonly status: 'success'; readonly observation: string; readonly data: unknown }
+  | { readonly status: 'error'; readonly observation: string; readonly error: string };
 export type SubRunTraceEvent = Extract<RuntimeEvent, { type: 'subrun_trace' }>;
-export type RequiresUserInteractionEvent = Extract<RuntimeEvent, { type: 'requires_user_interaction' }>;
+export type RequiresUserInteractionEvent = Extract<
+  RuntimeEvent,
+  { type: 'requires_user_interaction' }
+>;
 export type AuditEnvelopeEvent = Extract<RuntimeEvent, { type: 'audit_envelope' }>;
 export type FinalAnswerEvent = Extract<RuntimeEvent, { type: 'final_answer' }>;
 export type FinalAnswerChunkEvent = Extract<RuntimeEvent, { type: 'final_answer_chunk' }>;
+export type FinalAnswerResetEvent = Extract<RuntimeEvent, { type: 'final_answer_reset' }>;
 export type HistorySummaryEvent = Extract<RuntimeEvent, { type: 'history_summary' }>;
 export type ErrorEvent = Extract<RuntimeEvent, { type: 'error' }>;
 export type ControlEvent = Extract<RuntimeEvent, { type: 'control' }>;
-export type StreamEndEvent = Extract<RuntimeEvent, { type: 'stream_end' }>;
+export type RunExecutionMetricsEvent = Extract<RuntimeEvent, { type: 'run_execution_metrics' }>;
 
 export const validateRuntimeEvent = (event: unknown) => RuntimeEvent.safeParse(event);
 export const validateRuntimeEvents = (events: unknown[]) => z.array(RuntimeEvent).safeParse(events);
+export const parseRuntimeEvents = (events: unknown): RuntimeEvent[] =>
+  z.array(RuntimeEvent).parse(events);
+
+/**
+ * 从完整 RuntimeEvent 读取正式路由身份。
+ *
+ * RuntimeEventRoutingIdentity 是 strict schema，不能直接 parse 带业务字段的完整事件；
+ * 消费方必须通过这里显式选取顶层身份，禁止回退读取开放 metadata。
+ */
+export function parseRuntimeEventRoutingIdentity(
+  event: Pick<RuntimeEventInput, 'run_id' | 'parent_run_id' | 'lane' | 'visibility'>
+): RuntimeEventRoutingIdentity {
+  return RuntimeEventRoutingIdentity.parse({
+    run_id: event.run_id,
+    parent_run_id: event.parent_run_id,
+    lane: event.lane,
+    visibility: event.visibility,
+  });
+}
+
+/**
+ * 把不可信输入解析为已经完成 run admission 的 RuntimeEvent。
+ *
+ * RuntimeEvent 允许事实在进入 execution publisher 前暂时没有路由身份；EventBus、
+ * EventStore 和 replay 等下游边界只能接收这里返回的已路由事实。
+ */
+export function parseRoutedRuntimeEvent(value: unknown): RoutedRuntimeEvent {
+  const event = RuntimeEvent.parse(value);
+  const identity = parseRuntimeEventRoutingIdentity(event);
+  return { ...event, ...identity };
+}
+
+/** 已通过普通 RuntimeEvent parse 的对象，在不复制 payload 的前提下检查 admission 身份。 */
+export function isRoutedRuntimeEvent(event: RuntimeEvent): event is RoutedRuntimeEvent {
+  return RuntimeEventRoutingIdentity.safeParse({
+    run_id: event.run_id,
+    parent_run_id: event.parent_run_id,
+    lane: event.lane,
+    visibility: event.visibility,
+  }).success;
+}
+
+/**
+ * 在 runtime/host 边界为事实附着正式路由身份，并执行共享 schema 校验。
+ *
+ * 返回新对象，避免 publisher 或 transport adapter 修改节点已经持有的 payload。
+ */
+export function routeRuntimeEvent(
+  event: RuntimeEventInput,
+  identity: z.input<typeof RuntimeEventRoutingIdentity>
+): RoutedRuntimeEvent {
+  return parseRoutedRuntimeEvent({
+    ...event,
+    ...RuntimeEventRoutingIdentity.parse(identity),
+  });
+}
+
+type RuntimeEventCreatorBaseOwnedKey = 'type' | 'id' | 'conversation_id' | 'turn_id' | 'version';
+
+/**
+ * creator 参数拥有核心事实字段，options 只允许补充未被参数拥有的字段。
+ * 对象构造仍会把参数字段放在 spread 之后，保证无类型检查的 JS 调用也不能覆盖身份。
+ */
+type RuntimeEventCreatorOptions<
+  TEvent extends RuntimeEvent,
+  TOwnedKey extends keyof TEvent = never,
+> = Omit<Partial<TEvent>, RuntimeEventCreatorBaseOwnedKey | TOwnedKey>;
 
 export const createUserInputEvent = (
   id: string,
   conversationId: string,
   turnId: string,
   content: string,
-  options: Partial<UserInputEvent> = {},
+  options: RuntimeEventCreatorOptions<UserInputEvent, 'content'> = {}
 ): UserInputEvent => ({
+  ...options,
   type: 'user_input',
   id,
   conversation_id: conversationId,
   turn_id: turnId,
-  timestamp: Date.now(),
+  timestamp: options.timestamp ?? Date.now(),
   version: 1,
   content,
-  source: 'user',
-  ...options,
+  source: options.source ?? 'user',
 });
 
 export const createThoughtEvent = (
@@ -218,17 +416,17 @@ export const createThoughtEvent = (
   conversationId: string,
   turnId: string,
   content: string,
-  options: Partial<ThoughtEvent> = {},
+  options: RuntimeEventCreatorOptions<ThoughtEvent, 'content'> = {}
 ): ThoughtEvent => ({
+  ...options,
   type: 'thought',
   id,
   conversation_id: conversationId,
   turn_id: turnId,
-  timestamp: Date.now(),
+  timestamp: options.timestamp ?? Date.now(),
   version: 1,
   content,
-  is_complete: false,
-  ...options,
+  is_complete: options.is_complete ?? false,
 });
 
 export const createToolCallDecisionEvent = (
@@ -237,19 +435,19 @@ export const createToolCallDecisionEvent = (
   turnId: string,
   toolName: string,
   toolCallId: string,
-  options: Partial<ToolCallDecisionEvent> = {},
+  options: RuntimeEventCreatorOptions<ToolCallDecisionEvent, 'tool_name' | 'tool_call_id'> = {}
 ): ToolCallDecisionEvent => ({
+  ...options,
   type: 'tool_call_decision',
   id,
   conversation_id: conversationId,
   turn_id: turnId,
-  timestamp: Date.now(),
+  timestamp: options.timestamp ?? Date.now(),
   version: 1,
   tool_name: toolName,
-  tool_call_id: toolCallId,
-  phase: 'start',
-  status: 'loading',
-  ...options,
+  tool_call_id: ToolCallIdSchema.parse(toolCallId),
+  phase: options.phase ?? 'start',
+  status: options.status ?? 'loading',
 });
 
 export const createToolProcessEvent = (
@@ -258,19 +456,19 @@ export const createToolProcessEvent = (
   turnId: string,
   toolName: string,
   toolCallId: string,
-  options: Partial<ToolProcessEvent> = {},
+  options: RuntimeEventCreatorOptions<ToolProcessEvent, 'tool_name' | 'tool_call_id'> = {}
 ): ToolProcessEvent => ({
+  ...options,
   type: 'tool_process',
   id,
   conversation_id: conversationId,
   turn_id: turnId,
-  timestamp: Date.now(),
+  timestamp: options.timestamp ?? Date.now(),
   version: 1,
   tool_name: toolName,
-  tool_call_id: toolCallId,
-  phase: 'start',
-  status: 'loading',
-  ...options,
+  tool_call_id: ToolCallIdSchema.parse(toolCallId),
+  phase: options.phase ?? 'start',
+  status: options.status ?? 'loading',
 });
 
 export const createSubRunTraceEvent = (
@@ -280,19 +478,47 @@ export const createSubRunTraceEvent = (
   parentToolCallId: string,
   subrunId: string,
   kind: SubRunTraceEvent['kind'],
-  options: Partial<SubRunTraceEvent> = {},
+  options: RuntimeEventCreatorOptions<
+    SubRunTraceEvent,
+    'parent_tool_call_id' | 'subrun_id' | 'kind'
+  > &
+    Pick<SubRunTraceEvent, 'source_event_id'>
 ): SubRunTraceEvent => ({
+  ...options,
   type: 'subrun_trace',
   id,
   conversation_id: conversationId,
   turn_id: turnId,
-  timestamp: Date.now(),
+  timestamp: options.timestamp ?? Date.now(),
   version: 1,
-  ephemeral: true,
-  parent_tool_call_id: parentToolCallId,
+  ephemeral: options.ephemeral ?? true,
+  parent_tool_call_id: ToolCallIdSchema.parse(parentToolCallId),
   subrun_id: subrunId,
   kind,
+});
+
+export const createRequiresUserInteractionEvent = (
+  id: string,
+  conversationId: string,
+  turnId: string,
+  options: RuntimeEventCreatorOptions<RequiresUserInteractionEvent> &
+    Pick<
+      RequiresUserInteractionEvent,
+      | 'interaction_id'
+      | 'run_id'
+      | 'tool_call_id'
+      | 'checkpoint_revision'
+      | 'resume_token'
+      | 'interaction_status'
+    >
+): RequiresUserInteractionEvent => ({
   ...options,
+  type: 'requires_user_interaction',
+  id,
+  conversation_id: conversationId,
+  turn_id: turnId,
+  timestamp: options.timestamp ?? Date.now(),
+  version: 1,
 });
 
 export const createToolOutputEvent = (
@@ -301,62 +527,58 @@ export const createToolOutputEvent = (
   turnId: string,
   toolName: string,
   toolCallId: string,
-  output: unknown,
-  status: 'success' | 'error' = 'success',
-  options: Partial<ToolOutputEvent> = {},
-): ToolOutputEvent => ({
-  type: 'tool_output',
-  id,
-  conversation_id: conversationId,
-  turn_id: turnId,
-  timestamp: Date.now(),
-  version: 1,
-  tool_name: toolName,
-  tool_call_id: toolCallId,
-  status,
-  output,
-  ...options,
-});
-
-export const createTodoUpdatedEvent = (
-  id: string,
-  conversationId: string,
-  turnId: string,
-  todoListId: string,
-  todoListVersion: number,
-  items: TodoUpdatedEvent['items'],
-  options: Partial<TodoUpdatedEvent> = {},
-): TodoUpdatedEvent => ({
-  type: 'todo_updated',
-  id,
-  conversation_id: conversationId,
-  turn_id: turnId,
-  timestamp: Date.now(),
-  version: 1,
-  todo_list_id: todoListId,
-  todo_list_version: todoListVersion,
-  items,
-  ...options,
-});
+  result: ToolOutputEventResult,
+  options: RuntimeEventCreatorOptions<
+    ToolOutputEvent,
+    'tool_name' | 'tool_call_id' | 'status' | 'observation' | 'data' | 'error'
+  > = {}
+): ToolOutputEvent => {
+  const event = {
+    ...options,
+    type: 'tool_output' as const,
+    id,
+    conversation_id: conversationId,
+    turn_id: turnId,
+    timestamp: options.timestamp ?? Date.now(),
+    version: 1 as const,
+    tool_name: toolName,
+    tool_call_id: ToolCallIdSchema.parse(toolCallId),
+    status: result.status,
+    observation: result.observation,
+    ...(result.status === 'success'
+      ? { data: toSerializableJsonValue(result.data) }
+      : { error: result.error }),
+  };
+  const parsed = RuntimeEvent.parse(event);
+  if (parsed.type !== 'tool_output') {
+    throw new Error('createToolOutputEvent produced an invalid event type');
+  }
+  return parsed;
+};
 
 export const createFinalAnswerEvent = (
-  id: string,
+  answerId: string,
   conversationId: string,
   turnId: string,
-  answerId: string,
   content: string,
-  options: Partial<FinalAnswerEvent> = {},
+  options: RuntimeEventCreatorOptions<
+    FinalAnswerEvent,
+    'answer_id' | 'content' | 'completion_reason' | 'is_complete'
+  > &
+    Pick<FinalAnswerEvent, 'completion_reason'>
 ): FinalAnswerEvent => ({
+  // options 只承载路由、时间等附加字段；核心身份放在 spread 之后，防止 JS 调用方绕过 TS 签名覆盖。
+  ...options,
   type: 'final_answer',
-  id,
+  id: answerId,
   conversation_id: conversationId,
   turn_id: turnId,
-  timestamp: Date.now(),
+  timestamp: options.timestamp ?? Date.now(),
   version: 1,
   answer_id: answerId,
   content,
-  is_complete: true,
-  ...options,
+  completion_reason: options.completion_reason,
+  is_complete: options.completion_reason !== 'interrupted',
 });
 
 export const createAuditEnvelopeEvent = (
@@ -364,24 +586,16 @@ export const createAuditEnvelopeEvent = (
   conversationId: string,
   turnId: string,
   envelope: AuditEnvelopeEvent['envelope'],
-  options: Partial<AuditEnvelopeEvent> = {},
+  options: RuntimeEventCreatorOptions<AuditEnvelopeEvent, 'envelope'> = {}
 ): AuditEnvelopeEvent => ({
+  ...options,
   type: 'audit_envelope',
   id,
   conversation_id: conversationId,
   turn_id: turnId,
-  timestamp: envelope.ts,
+  timestamp: options.timestamp ?? envelope.ts,
   version: 1,
   envelope,
-  metadata: {
-    audit_action: envelope.action,
-    run_context: {
-      runId: envelope.runId,
-      parentId: envelope.parentRunId,
-      traceId: envelope.scope?.traceId,
-    },
-  },
-  ...options,
 });
 
 export const createFinalAnswerChunkEvent = (
@@ -391,18 +605,35 @@ export const createFinalAnswerChunkEvent = (
   answerId: string,
   seq: number,
   content: string,
-  options: Partial<FinalAnswerChunkEvent> = {},
+  options: RuntimeEventCreatorOptions<FinalAnswerChunkEvent, 'answer_id' | 'seq' | 'content'> = {}
 ): FinalAnswerChunkEvent => ({
+  // 与 seal creator 一致：附加字段先展开，creator 拥有的身份与正文随后锁定。
+  ...options,
   type: 'final_answer_chunk',
   id,
   conversation_id: conversationId,
   turn_id: turnId,
-  timestamp: Date.now(),
+  timestamp: options.timestamp ?? Date.now(),
   version: 1,
   answer_id: answerId,
   seq,
   content,
+});
+
+export const createFinalAnswerResetEvent = (
+  id: string,
+  conversationId: string,
+  turnId: string,
+  options: RuntimeEventCreatorOptions<FinalAnswerResetEvent> = {}
+): FinalAnswerResetEvent => ({
   ...options,
+  type: 'final_answer_reset',
+  id,
+  conversation_id: conversationId,
+  turn_id: turnId,
+  timestamp: options.timestamp ?? Date.now(),
+  version: 1,
+  ephemeral: options.ephemeral ?? true,
 });
 
 export const createHistorySummaryEvent = (
@@ -411,19 +642,24 @@ export const createHistorySummaryEvent = (
   turnId: string,
   content: string,
   replacedMessageIds: string[],
+  originalMessageCount: number,
   summarySeq: number,
-  options: Partial<HistorySummaryEvent> = {},
+  options: RuntimeEventCreatorOptions<
+    HistorySummaryEvent,
+    'content' | 'replaced_message_ids' | 'original_message_count' | 'summary_seq'
+  > = {}
 ): HistorySummaryEvent => ({
+  ...options,
   type: 'history_summary',
   id,
   conversation_id: conversationId,
   turn_id: turnId,
-  timestamp: Date.now(),
+  timestamp: options.timestamp ?? Date.now(),
   version: 1,
   content,
   replaced_message_ids: replacedMessageIds,
+  original_message_count: originalMessageCount,
   summary_seq: summarySeq,
-  ...options,
 });
 
 export const createErrorEvent = (
@@ -431,29 +667,30 @@ export const createErrorEvent = (
   conversationId: string,
   turnId: string,
   error: string,
-  options: Partial<ErrorEvent> = {},
+  options: RuntimeEventCreatorOptions<ErrorEvent, 'error'> = {}
 ): ErrorEvent => ({
+  ...options,
   type: 'error',
   id,
   conversation_id: conversationId,
   turn_id: turnId,
-  timestamp: Date.now(),
+  timestamp: options.timestamp ?? Date.now(),
   version: 1,
   error,
-  ...options,
 });
 
-export const createStreamEndEvent = (
+export const createRunExecutionMetricsEvent = (
   id: string,
   conversationId: string,
   turnId: string,
-  options: Partial<StreamEndEvent> = {},
-): StreamEndEvent => ({
-  type: 'stream_end',
+  options: RuntimeEventCreatorOptions<RunExecutionMetricsEvent> &
+    Pick<RunExecutionMetricsEvent, 'execution_id' | 'outcome' | 'duration_ms'>
+): RunExecutionMetricsEvent => ({
+  ...options,
+  type: 'run_execution_metrics',
   id,
   conversation_id: conversationId,
   turn_id: turnId,
-  timestamp: Date.now(),
+  timestamp: options.timestamp ?? Date.now(),
   version: 1,
-  ...options,
 });

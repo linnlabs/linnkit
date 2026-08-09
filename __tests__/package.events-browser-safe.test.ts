@@ -29,8 +29,10 @@ const FORBIDDEN_PATTERNS: ReadonlyArray<{ name: string; pattern: RegExp }> = [
   { name: 'better-sqlite3', pattern: /["']better-sqlite3["']/ },
 ];
 
-describe('package.events-browser-safe — runtime-kernel/events 子入口结构守卫', () => {
+describe('package.events-browser-safe — browser-safe 公开入口结构守卫', () => {
   describe.each([
+    'dist/contracts.js',
+    'dist/contracts.cjs',
     'dist/runtime-kernel/events.js',
     'dist/runtime-kernel/events.cjs',
   ] as const)('%s', (relPath) => {

@@ -5,6 +5,7 @@ import type {
   PersistentMetadata,
 } from '../../contracts';
 import type { MessageProcessingState } from './providers/base';
+import type { MessageImageInputEstimate } from './image-input-estimation';
 
 function isKept(action: MessageProcessingState['action']): boolean {
   return action.startsWith('keep_');
@@ -18,12 +19,10 @@ function classifyMessage(message: AiMessage): ContextTokenComponentKind {
   if (message.type === 'history_summary' || metadata?.messageType === 'summary') {
     return 'history-summary';
   }
-  if (
-    message.role === 'tool'
-    || message.type === 'tool_output'
-    || message.type === 'tool_calls'
-    || message.type === 'tool_code'
-  ) {
+  if (message.role === 'tool') {
+    return 'tool';
+  }
+  if (message.role === 'assistant' && (message.type === 'tool_calls' || message.type === 'tool_code')) {
     return 'tool';
   }
   if (
@@ -52,7 +51,7 @@ function buildLabel(message: AiMessage, metadata: PersistentMetadata | undefined
     ?? message.type;
 }
 
-function buildTruncationFields(state: MessageProcessingState): Pick<
+function buildTruncationFields(state: MessageProcessingState, messageTokens: number): Pick<
   ContextTokenComponent,
   'truncatedAtExecution' | 'originalTokensEstimate' | 'droppedTokensEstimate'
 > {
@@ -63,10 +62,10 @@ function buildTruncationFields(state: MessageProcessingState): Pick<
 
   // 执行期只保存字符计量；这里用 build 期已校准的 preview token 按字符比例反推原始 token。
   const originalTokensEstimate = Math.max(
-    state.tokens,
-    Math.ceil((state.tokens * truncation.originalChars) / truncation.previewChars),
+    messageTokens,
+    Math.ceil((messageTokens * truncation.originalChars) / truncation.previewChars),
   );
-  const droppedTokensEstimate = Math.max(0, originalTokensEstimate - state.tokens);
+  const droppedTokensEstimate = Math.max(0, originalTokensEstimate - messageTokens);
 
   return {
     truncatedAtExecution: true,
@@ -77,18 +76,48 @@ function buildTruncationFields(state: MessageProcessingState): Pick<
 
 export function buildContextTokenComponents(
   states: ReadonlyArray<MessageProcessingState>,
+  estimateImageInputs: (message: AiMessage) => readonly MessageImageInputEstimate[] = () => [],
 ): ContextTokenComponent[] {
-  return states.map((state) => ({
-    componentId: `${state.originalIndex}:${state.message.id}`,
-    kind: classifyMessage(state.message),
-    tokens: state.tokens,
-    source: 'local-estimate',
-    confidence: 'estimate',
-    label: buildLabel(state.message, state.message.metadata),
-    messageId: state.message.id,
-    role: state.message.role,
-    action: state.action,
-    kept: isKept(state.action),
-    ...buildTruncationFields(state),
-  }));
+  return states.flatMap((state) => {
+    const imageInputs = estimateImageInputs(state.message);
+    const imageTokens = imageInputs.reduce(
+      (total, attachment) => total + attachment.estimatedTokens,
+      0,
+    );
+    const messageTokens = Math.max(0, state.tokens - imageTokens);
+    const messageComponent: ContextTokenComponent = {
+      componentId: `${state.originalIndex}:${state.message.id}`,
+      kind: classifyMessage(state.message),
+      tokens: messageTokens,
+      source: 'local-estimate',
+      confidence: 'estimate',
+      label: buildLabel(state.message, state.message.metadata),
+      messageId: state.message.id,
+      role: state.message.role,
+      action: state.action,
+      kept: isKept(state.action),
+      ...buildTruncationFields(state, messageTokens),
+    };
+    const attachmentComponents: ContextTokenComponent[] = imageInputs.map(attachment => ({
+      componentId: `${state.originalIndex}:${state.message.id}:image:${attachment.attachmentIndex}`,
+      kind: 'image-attachment',
+      tokens: attachment.estimatedTokens,
+      source: 'local-estimate',
+      confidence: 'estimate',
+      label: 'image-attachment',
+      messageId: state.message.id,
+      role: state.message.role,
+      action: state.action,
+      kept: isKept(state.action),
+      attachmentId: attachment.attachmentId,
+      resourceId: attachment.resourceId,
+      placement: attachment.placement,
+      attachmentIndex: attachment.attachmentIndex,
+      width: attachment.width,
+      height: attachment.height,
+      profileId: attachment.profileId,
+      estimatorVersion: attachment.estimatorVersion,
+    }));
+    return [messageComponent, ...attachmentComponents];
+  });
 }

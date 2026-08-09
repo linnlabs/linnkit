@@ -9,14 +9,11 @@
  */
 
 import type { AgentSpecSystemReminderPolicy } from '../../contracts';
+import type { LlmRequestMessage } from '../../ports';
 import { createSystemReminderRules } from './rules';
 import { defaultSystemReminderRegistry, type SystemReminderRegistry } from './registry';
 import type { SystemReminderContext, SystemReminderRule } from './types';
 import { Logger } from '../../shared/logger';
-
-type LlmMessage = Record<string, unknown> & { content?: unknown };
-
-const isRecord = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
 
 const logger = new Logger('SystemReminder');
 
@@ -40,7 +37,7 @@ const wrapSystemReminderTag = (body: string): string => {
  * 将 system-reminder 追加到最后一条消息末尾（原地返回新数组，但不修改原数组引用）
  */
 export function applySystemReminders(params: {
-  llmMessages: unknown[];
+  llmMessages: LlmRequestMessage[];
   ctx: SystemReminderContext;
   rules?: ReadonlyArray<SystemReminderRule>;
   policy?: AgentSpecSystemReminderPolicy;
@@ -53,7 +50,7 @@ export function applySystemReminders(params: {
    * - 回调只传递最小信息（ruleIds），避免额外依赖和体积膨胀。
    */
   onInjected?: (info: { ruleIds: string[] }) => void;
-}): unknown[] {
+}): LlmRequestMessage[] {
   const { llmMessages, ctx } = params;
   const policy = params.policy ?? ctx.executorLocal?.systemReminderPolicy;
   const rules = params.rules ?? createSystemReminderRules({
@@ -61,7 +58,7 @@ export function applySystemReminders(params: {
     registry: params.registry ?? defaultSystemReminderRegistry,
   });
 
-  if (!Array.isArray(llmMessages) || llmMessages.length === 0) return llmMessages;
+  if (llmMessages.length === 0) return llmMessages;
 
   // 1) 计算本 tick 的提醒文本列表
   const seenRuleIds = new Set<string>();
@@ -102,15 +99,12 @@ export function applySystemReminders(params: {
   // 3) 只追加到最后一条消息的 content 末尾（不新增消息）
   const lastIdx = llmMessages.length - 1;
   const last = llmMessages[lastIdx];
-  if (!isRecord(last)) return llmMessages;
-
-  const lastMsg: LlmMessage = last;
-  const currentContent = readString(lastMsg.content) ?? '';
+  const currentContent = readString(last.content) ?? '';
   const glue = currentContent.length > 0 && !currentContent.endsWith('\n') ? '\n\n' : '\n';
   const nextContent = `${currentContent}${glue}${tag}`;
 
   const nextMessages = [...llmMessages];
-  nextMessages[lastIdx] = { ...lastMsg, content: nextContent };
+  nextMessages[lastIdx] = { ...last, content: nextContent };
 
   /**
    * ✅ 轻量审计日志（方案 B）

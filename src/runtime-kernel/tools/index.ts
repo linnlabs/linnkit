@@ -1,18 +1,10 @@
 export { BaseTool, CommonParameterTypes } from './toolContracts';
-export {
-  ContextCheckpointTool,
-  createContextCheckpointTool,
-} from './contextCheckpointTool';
+export { ContextCheckpointTool, createContextCheckpointTool } from './contextCheckpointTool';
 export { normalizeToolArgs } from './argNormalizer';
 export {
   computeToolIdempotencyKey,
   findCachedToolOutputByIdempotencyKey,
 } from './idempotency/toolIdempotency';
-export {
-  readToolContextModelId,
-  readToolContextRunContext,
-  readToolContextUserQuery,
-} from './toolContextCompatibility';
 export {
   copyToolContextRuntimeCapability,
   ensureToolContextRuntimeCapability,
@@ -28,6 +20,7 @@ export type {
   OpenAIToolSchema,
   ToolArgs,
   ToolCallResult,
+  ToolCallStreamingPolicy,
   ToolParameterProperty,
   ToolParameterSchema,
   ToolRegistryEntry,
@@ -49,19 +42,30 @@ export type {
   ToolCatalogPort,
   ToolExecutionPort,
   ToolExecutionResult,
-  ToolPresentationPort,
+  ToolModelInputCapabilityValidatorPort,
   ToolRuntimeDefinition,
   ToolRuntimePort,
 } from './ports';
-export type { ConversationArtifactContext } from './conversationArtifactContext';
 export type { ToolContextConversationView } from './conversationView';
 export type { ToolExecutionContext } from './toolExecutionContext';
 export type { ToolSchemaContext } from './toolSchemaContext';
 export type { ToolContextPatch } from './toolContextPatch';
-export type { ToolContextCompatibilityFields } from './toolContextCompatibility';
 export type {
   StructuredToolResult,
   ToolControlInfo,
-  ToolDisplayOptions,
-  ToolLayoutOptions,
+  ToolObservationPreviewMeta,
+  ToolResultImageMedia,
 } from './ui-types';
+export {
+  parseToolModelInputDeclaration,
+  resolveToolModelInput,
+  ToolModelInputResolutionError,
+} from './model-input';
+export type {
+  CompleteToolModelInputParams,
+  ResolveToolModelInputParams,
+  ToolModelInputAttachmentSelection,
+  ToolModelInputDeclaration,
+  ToolModelInputDeclarationValidation,
+  ToolModelInputResolverPort,
+} from './model-input';

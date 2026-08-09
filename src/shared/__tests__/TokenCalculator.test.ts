@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { TokenCalculator } from '../TokenCalculator';
 import type { AiMessage } from '../../contracts';
+import { ToolCallIdSchema } from '../../contracts';
 
 function makeToolCallMessage(): AiMessage {
   return {
@@ -12,7 +13,7 @@ function makeToolCallMessage(): AiMessage {
     metadata: {
       tool_calls: [
         {
-          id: 'call_1',
+          id: ToolCallIdSchema.parse('call_1'),
           type: 'function',
           function: {
             name: 'search',

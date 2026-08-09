@@ -1,12 +1,16 @@
 import { GraphExecutor } from '../graph-engine/engine';
 import { MemoryCheckpointer } from '../graph-engine/checkpointer/memoryCheckpointer';
 import type { Checkpointer } from '../graph-engine/checkpointer/base';
-import { AnswerNode } from '../graph-engine/nodes/answerNode';
 import { ToolNode } from '../graph-engine/nodes/toolNode';
 import { UserNode } from '../graph-engine/nodes/userNode';
 import { WaitUserNode } from '../graph-engine/nodes/waitUserNode';
 import type { GraphNode } from '../graph-engine/types';
-import type { ObservationPreviewPort, ToolRuntimePort } from '../tools';
+import type {
+  ObservationPreviewPort,
+  ToolModelInputCapabilityValidatorPort,
+  ToolModelInputResolverPort,
+  ToolRuntimePort,
+} from '../tools';
 import type { AuditPort } from '../../ports';
 import type { TelemetryPort } from '../telemetry/telemetryPort';
 
@@ -18,6 +22,8 @@ export interface DefaultGraphExecutorOptions {
   checkpointer?: Checkpointer;
   auditPort?: AuditPort;
   telemetryPort?: TelemetryPort;
+  modelInputCapabilityValidator?: ToolModelInputCapabilityValidatorPort;
+  modelInputResolver?: ToolModelInputResolverPort;
 }
 
 export function createDefaultGraphExecutor(
@@ -34,8 +40,9 @@ export function createDefaultGraphExecutor(
     observationPreview: options.observationPreview,
     auditPort: options.auditPort,
     telemetryPort: options.telemetryPort,
+    modelInputCapabilityValidator: options.modelInputCapabilityValidator,
+    modelInputResolver: options.modelInputResolver,
   }));
-  executor.registerNode(new AnswerNode());
   executor.registerNode(new WaitUserNode({ auditPort: options.auditPort }));
   return executor;
 }

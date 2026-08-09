@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
 import type { AiMessage } from '../../../../../../../contracts';
-import { AGENT_CONTEXT_BUILDER_CONFIG } from '../../../config';
 import type { MessageProcessingState } from '../../base';
 import { ToolPairMatcher } from '../../working-memory/ToolPairMatcher';
+import { ToolCallIdSchema } from '../../../../../../../contracts';
 
 function makeToolCallMessage(id: string, toolCallIds: string[]): AiMessage {
   return {
@@ -14,7 +14,7 @@ function makeToolCallMessage(id: string, toolCallIds: string[]): AiMessage {
     timestamp: Date.now(),
     metadata: {
       tool_calls: toolCallIds.map((toolCallId, index) => ({
-        id: toolCallId,
+        id: ToolCallIdSchema.parse(toolCallId),
         type: 'function',
         function: {
           name: `test_tool_${index + 1}`,
@@ -33,8 +33,9 @@ function makeToolOutputMessage(id: string, toolCallId: string): AiMessage {
     content: 'output',
     timestamp: Date.now(),
     metadata: {
-      tool_call_id: toolCallId,
+      tool_call_id: ToolCallIdSchema.parse(toolCallId),
       tool_name: 'test_tool',
+      data: { value: 'output' },
     },
   };
 }
@@ -61,9 +62,11 @@ function makeState(message: AiMessage, index: number, tokens = 100): MessageProc
 
 describe('ToolPairMatcher', () => {
   it('identifies compressed tool history messages only', () => {
-    const matcher = new ToolPairMatcher(AGENT_CONTEXT_BUILDER_CONFIG);
+    const matcher = new ToolPairMatcher();
 
-    expect(matcher.isCompressedToolHistoryMessage(makeCompressedToolHistoryMessage('c1'))).toBe(true);
+    expect(matcher.isCompressedToolHistoryMessage(makeCompressedToolHistoryMessage('c1'))).toBe(
+      true
+    );
     expect(
       matcher.isCompressedToolHistoryMessage({
         id: 'n1',
@@ -72,12 +75,12 @@ describe('ToolPairMatcher', () => {
         content: 'normal',
         timestamp: Date.now(),
         metadata: {},
-      }),
+      })
     ).toBe(false);
   });
 
   it('finds full tool groups from either tool_calls or tool_output members', () => {
-    const matcher = new ToolPairMatcher(AGENT_CONTEXT_BUILDER_CONFIG);
+    const matcher = new ToolPairMatcher();
     const states = [
       makeState(makeToolCallMessage('tc1', ['call_1', 'call_2']), 0),
       makeState(makeToolOutputMessage('to1', 'call_1'), 1),
@@ -90,13 +93,13 @@ describe('ToolPairMatcher', () => {
     expect(fromToolCall).not.toBeNull();
     expect(fromToolCall?.messages).toHaveLength(3);
     expect(fromToolResult).not.toBeNull();
-    expect(fromToolResult?.toolOutputs.map((state) => state.message.id)).toEqual(
-      expect.arrayContaining(['to1', 'to2']),
+    expect(fromToolResult?.toolOutputs.map(state => state.message.id)).toEqual(
+      expect.arrayContaining(['to1', 'to2'])
     );
   });
 
   it('returns null when no matching pair exists', () => {
-    const matcher = new ToolPairMatcher(AGENT_CONTEXT_BUILDER_CONFIG);
+    const matcher = new ToolPairMatcher();
     const states = [makeState(makeToolOutputMessage('to1', 'call_nonexistent'), 0)];
 
     expect(matcher.findToolResultPair(states[0], states)).toBeNull();
@@ -104,7 +107,7 @@ describe('ToolPairMatcher', () => {
   });
 
   it('computes budget fit and overflow reasons correctly', () => {
-    const matcher = new ToolPairMatcher(AGENT_CONTEXT_BUILDER_CONFIG);
+    const matcher = new ToolPairMatcher();
 
     const withinBudgetStates = [
       makeState(makeToolCallMessage('tc1', ['call_1', 'call_2']), 0, 100),
@@ -117,7 +120,7 @@ describe('ToolPairMatcher', () => {
       expect.objectContaining({
         canFit: true,
         totalTokens: 300,
-      }),
+      })
     );
 
     const overBudgetStates = [
@@ -129,20 +132,23 @@ describe('ToolPairMatcher', () => {
       expect.objectContaining({
         canFit: false,
         reason: 'budget_exceeded',
-      }),
+      })
     );
 
-    const tooLargeStates = [
+    const largeButWithinBudgetStates = [
       makeState(makeToolCallMessage('tc3', ['call_4', 'call_5']), 0, 3000),
       makeState(makeToolOutputMessage('to4', 'call_4'), 1, 2000),
       makeState(makeToolOutputMessage('to5', 'call_5'), 2, 2000),
     ];
-    const tooLargeGroup = matcher.findToolCallPair(tooLargeStates[0], tooLargeStates);
-    expect(matcher.canFitToolPair(tooLargeGroup!, 0, 100000)).toEqual(
+    const largeButWithinBudgetGroup = matcher.findToolCallPair(
+      largeButWithinBudgetStates[0],
+      largeButWithinBudgetStates
+    );
+    expect(matcher.canFitToolPair(largeButWithinBudgetGroup!, 0, 100000)).toEqual(
       expect.objectContaining({
-        canFit: false,
-        reason: 'pair_too_large',
-      }),
+        canFit: true,
+        totalTokens: 7000,
+      })
     );
   });
 });

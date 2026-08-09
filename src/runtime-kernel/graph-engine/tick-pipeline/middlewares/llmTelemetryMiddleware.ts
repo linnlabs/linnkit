@@ -1,7 +1,6 @@
 import {
   normalizedUsageFromCanonical,
   normalizeLlmUsage,
-  recordLlmCallTelemetry,
 } from '../../../../shared/llmTelemetryContext';
 import { extractResponseText, resolveCanonicalUsage, resolveUsage } from '../helpers';
 import type { TickAroundMiddleware } from '../types';
@@ -39,17 +38,7 @@ export const llmTelemetryMiddleware: TickAroundMiddleware = async (ctx, stage, n
       }
     })();
 
-  recordLlmCallTelemetry({
-    modelId: ctx.modelId,
-    stream: ctx.input.stream === true,
-    startedAt: ctx.llmCallStartedAt,
-    durationMs: ctx.llmCallDurationMs,
-    usage: normalizedUsage,
-    ...(normalizedUsage?.canonicalUsage ? { canonicalUsage: normalizedUsage.canonicalUsage } : {}),
-  });
-
-  // B2-engine Batch 1: 同步上报到宿主侧 TelemetryPort（默认 noopTelemetry，业务无感）
-  // 与 ALS 写入互不影响：ALS 给 benchmark 等"链路内聚合"场景，TelemetryPort 给宿主全局 sink。
+  // Q-M13：kernel 只写显式 TelemetryPort；ALS 聚合若仍需要，应由 host adapter 在 Port 外层完成。
   ctx.telemetry.emit({
     kind: 'llm_call',
     modelId: ctx.modelId,

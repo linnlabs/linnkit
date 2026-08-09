@@ -10,8 +10,8 @@
  */
 
 export interface ContextManagerAuditRecordInput {
-  mode: 'agent' | 'chat';
   payload?: unknown;
+  contextMessages?: unknown[];
   llmMessages?: unknown[];
   toolNames?: string[];
   systemReminder?: {
@@ -21,7 +21,6 @@ export interface ContextManagerAuditRecordInput {
 }
 
 export interface ToolProtocolErrorAuditInput {
-  mode: 'agent' | 'chat';
   toolName: string;
   toolCallId?: string;
   rawArguments?: string;
@@ -30,7 +29,6 @@ export interface ToolProtocolErrorAuditInput {
 }
 
 export interface RunTranscriptAuditInput {
-  mode: 'agent' | 'chat';
   transcriptMessages: unknown[];
   toolset?: {
     availableTools?: string[];

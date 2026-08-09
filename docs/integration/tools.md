@@ -3,17 +3,19 @@
 > **What** · 把工具注册进 linnkit —— `ToolRuntimePort` 接入面 + `ObservationPreviewPort` 治理超长 observation。
 > **When to read** · 要给 agent 加工具；要治理超长 observation；接 MCP / 远程工具；review 既有工具实现。
 > **Prerequisites** · [`02-quickstart.md`](./02-quickstart.md)；写自定义工具前推荐先读 [`tool-development-guide.md`](./tool-development-guide.md) ⭐。
-> **Key exports** · `BaseTool` / `ToolRuntimePort` / `ObservationPreviewPort` / `ToolExecutionContext` from `@linnlabs/linnkit/runtime-kernel`。
+> **Key exports** · `BaseTool` / `ToolRuntimePort` / `ObservationPreviewPort` / `ToolExecutionContext` / `ToolCallStreamingPolicy` / `computeToolIdempotencyKey` from `@linnlabs/linnkit/runtime-kernel`。
 > **Related** · [`tool-development-guide.md`](./tool-development-guide.md) ⭐ · [`tool-history.md`](./tool-history.md) · [`context-engineering.md` §6](./context-engineering.md)
 
 ## 1. linnkit 给你的合同
 
-- `BaseTool` + `CommonParameterTypes`（来自 `@linnlabs/linnkit/runtime-kernel`）：抽象类，要求实现 `name` / `description` / `parameters` / `run(args, context)`。`run` 必须返回 `Promise<string>`（强烈推荐 `JSON.stringify({ data, observation })` 格式）。
+- `BaseTool` + `CommonParameterTypes`（来自 `@linnlabs/linnkit/runtime-kernel`）：抽象类，要求实现 `name` / `description` / `parameters` / `run(args, context)`。`run` 必须返回 `Promise<string>`，且成功结果必须是 `JSON.stringify({ data, observation })` 格式。
 - `ToolExecutionContext` / `ToolSchemaContext`（同上）：执行时 / schema 构建时收到的 context 形状。
-- `ToolRuntimePort` / `ToolCatalogPort` / `ToolExecutionPort` / `ToolPresentationPort`（同上）：把工具集合装成"runtime 可调用"的合同；host 默认 `ToolManager` 实现要满足这些 port。
+- `ToolRuntimePort` / `ToolCatalogPort` / `ToolExecutionPort`（同上）：把工具集合装成“runtime 可调用”的合同。Linnkit 不接收前端展示配置；组件、标题、图标和布局属于具体产品的 Renderer registry。
 - `ObservationPreviewPort`（同上）：工具产出 observation 在 UI 展示前的预览决策点。
 - `TokenizerPort`（来自 `@linnlabs/linnkit/ports`，0.8.0+）：host 可选注入的上下文预算 token 估算合同；它不属于工具执行，但会影响工具 observation / tool_calls 在上下文窗口里能保留多少。
 - `ensureToolContextRuntimeCapability`（同上）：把 runtime 必需的保留字段补进 host 的 patch，避免手抖漏字段。
+- `ToolIdempotencyPolicy` / `computeToolIdempotencyKey`（同上）：声明 `conversation | turn` scope，并按正式 32-hex 合同生成稳定 key。详细语义见 [`tool-development-guide.md §3.2`](./tool-development-guide.md#32-幂等执行合同)。
+- `ToolCallStreamingPolicy`（同上）：工具按需声明早期占位或参数快照；未声明时不发布未接纳的流式生命周期事件。该 policy 只进入 Linnkit invocation context，不进入 provider options。
 
 ## 2. linnkit 自带的 mock primitive
 
@@ -26,16 +28,22 @@
 3. 把工具集合装进 host 的 `ToolManager` / `ToolRuntimePort` 实现，让 runtime 在 LLM 决策返回 tool calls 时能 dispatch。
 4. 实现 `ObservationPreviewPort`，决定超长 observation 的完整副本写到哪里；再在 runtime assembly 里传给 `createDefaultGraphExecutor({ observationPreview })` 或你的自定义 `ToolNode` 装配。
 5. 把 AgentSpec 与工具集合装配在一起；详细规范见 [`agent-registration-guide.md`](./agent-registration-guide.md)。
+6. 只有真正有副作用且同参重试必须复用成功结果的工具才声明 `idempotency`；确认 scope 身份注入、成功缓存复用和跨进程边界，见 [`tool-development-guide.md §3.2`](./tool-development-guide.md#32-幂等执行合同)。
+
+工具需要把图片交给下一轮模型时，工具只返回 `StructuredToolResult.modelInput.attachments` selection；host 实现并注入 `ToolModelInputResolverPort` 与 `ToolModelInputCapabilityValidatorPort`，负责 scope、完整性和真实 active model 校验。linnkit 只拥有 selection 解析时机、工具配对和失败生命周期，不认识 asset 表、文件路径、具体 provider 或产品工具名。完整规则见 [`tool-development-guide.md §7.4`](./tool-development-guide.md)。
 
 ## 4. 你不要做的
 
 - 不要让工具直接吃 host 的全局单例（数据库、配置中心等都按 patch / context 注入）。
 - 不要把 runtime 保留字段（`__runtime` / `__capabilities`）手工拼进 patch；统一过 `ensureToolContextRuntimeCapability`。
 - 不要从 deep path 抓 helper（凡是没出现在 `@linnlabs/linnkit/runtime-kernel` 公开符号里的，下个 minor 可能就消失）。
+- 不要在 ToolNode 或通用工具协议里按工具名、插件名或 asset 表结构分支；产品 selection 和解析规则由 host 工具与窄 port 提供。
+- 不要给工具 definition 或 RuntimeEvent metadata 增加 UI 展示字段；runtime 只传业务事实，Renderer 自己拥有 presentation projector。
+- 不要把进程内 in-flight/history 复用当成跨进程强幂等；后者需要 host 持久化锁或唯一索引。
 
 ## 5. 最小验证
 
-- 单测：用 `createToolContextFixture()` 直接测 `tool.execute(args, fixtureContext)`。
+- 单测：用 `createToolContextFixture()` 直接测 `tool.run(args, fixtureContext)`。
 - 集成测：在 host-bound `ToolRuntimeHarness` 上覆盖"失败恢复 / 并行调用 / observation 预览"路径。
 
 ## 6. ObservationPreviewPort：配置超长 observation 存储路径
@@ -131,11 +139,12 @@ const executor = createDefaultGraphExecutor({
 
 **重要边界**：
 
-- `blob_id` 只是指针。你如果提供读取工具（例如 `resource_read("tool_output://blobs/<blob_id>")`），读取工具必须和 `ObservationPreviewPort` 使用同一个 store / rootDir。
+- `blob_id` 只是指针。host 如果提供续读工具，该工具必须和 `ObservationPreviewPort` 使用同一个 store / rootDir。linnkit 不规定工具名、URI 或产品领域协议。
+- live 截断成功后，Linnkit 把这个引用发布为 `tool_output.metadata.observationTruncation.blobId`；它属于通用运行时元数据，不能注入具体工具 owner 的 `data`。
 - AgentSpec 不应该包含本地路径、S3 bucket、数据库 DSN 这类基础设施字段；这些属于 host 部署配置。
 - 示例 host 可以使用 workspace root 下的 conversation artifact 路径：
   `<workspaceRoot>/Artifacts/v1/conversations/<conversationId>/instances/<instanceId>/tool_output/blobs/<blobId>.json`。
-  其中 `workspaceRoot` 应来自 host 自己的部署配置、环境变量或工作区配置。读取 `tool_output://blobs/<blob_id>` 的工具也必须使用同一个 store，否则模型拿到 `blob_id` 后无法续读。
+  其中 `workspaceRoot` 应来自 host 自己的部署配置、环境变量或工作区配置。host 的续读工具也必须使用同一个 store，否则模型拿到 `blob_id` 后无法续读。
 
 ## 7. 工具最小示例
 
@@ -181,7 +190,7 @@ export class EchoTool extends BaseTool<EchoArgs> {
 |------|-----------|
 | `name` / `description` / `parameters` 必填 | `BaseTool` 抽象类强制 |
 | `run` 返回 `Promise<string>`（不是对象，是字符串）| `BaseTool.run` 签名 |
-| 强烈推荐 `run` 返回 `JSON.stringify({ data, observation })` 格式 | 上下游工具卡片解析依赖 |
+| 成功 `run` 返回 `JSON.stringify({ data, observation })` 格式 | ToolNode 运行时合同与上下游消费者依赖 |
 | 必填参数走 `parameters.required[]`，**不要**在 `run` 里手写 if-check | `BaseTool.validateArguments` 自动校验 |
 | 失败必须 `throw`，**不能**返回伪装成功的 JSON | tool 配对不变量 C10 + AuditEnvelope |
 

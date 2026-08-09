@@ -53,8 +53,12 @@ agent 生态有几个名字相同语义不同的概念，第一次踩坑后才�
 | `conversationId` | host 概念：一段连续对话 id（一个 conversation 含多个 turn / run）| host |
 | `traceId` | 可选：跨服务/跨进程追踪 id（如 OpenTelemetry trace id）| host |
 | `parentRunId` | 当前 run 的父 run id（同步 child-run / detached spawned run 都会用）| linnkit RunSupervisor |
+| `checkpointKey` | Graph EngineState 的物理索引；独立 run 必须使用稳定 runId，不能使用 conversationId | host graph orchestration |
+| `executionId` | 一次 transport/EventBus 的序列作用域；同一 run 在 HITL 恢复前后可以有不同 executionId | host realtime layer |
 
-**推荐做法**：`runId = turnId`。这样 `RuntimeEvent.metadata.run_context.runId` 在 host 的 EventStore 里有现成索引，`RunHandle.observe({ includePersisted: true })` 可以直接 replay。
+**推荐做法**：由 Host admission 显式确定 `runId`，需要与 `turnId` 相同可以直接传入，但不能依赖两者相等。正式归属只写 `RuntimeEvent.run_id`；EventStore 和 `RunHandle.observe({ includePersisted: true })` 都按该顶层字段 replay，禁止读取 `metadata.run_context` 或用 `turn_id` fallback。
+
+`awaiting_user` 是 run 非终态，不是“本次 SSE 已结束”的同义词。一次 HITL 的稳定身份是 `runId + interactionId + toolCallId + checkpointRevision + resumeToken`；恢复继续原 run，transport 可以更换 executionId。
 
 ## 5. "Subrun" / "Child-run" / "Internal Agent"
 

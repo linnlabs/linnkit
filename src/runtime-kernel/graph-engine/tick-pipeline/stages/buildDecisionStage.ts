@@ -1,10 +1,11 @@
-import { generateMessageId } from '../../../../shared/ids';
-import type {
-  FinalAnswerEvent,
-  ToolCallDecisionEvent,
-} from '../../../events/agentEvents';
-import type { ToolPresentationPort } from '../../../tools/ports';
-import type { TickPipelineContext, TickStage } from '../types';
+import {
+  generateAnswerSegmentId,
+  generateRuntimeEventId,
+  ToolCallIdSchema,
+} from '../../../../contracts';
+import type { FinalAnswerEvent, ToolCallDecisionEvent } from '../../../events/agentEvents';
+import { defineTickStage } from '../types';
+import type { TickStage } from '../types';
 import {
   extractResponseText,
   normalizeToolCalls,
@@ -12,28 +13,44 @@ import {
   resolveReasoningDetails,
   resolveToolCalls,
 } from '../helpers';
+import { toSerializableJsonValue } from '../../../../contracts';
 
-export interface BuildDecisionStageDependencies {
-  toolPresentation: Pick<ToolPresentationPort, 'getDisplayOptions'>;
-}
-
-export function createBuildDecisionStage(
-  dependencies: BuildDecisionStageDependencies,
-): TickStage {
-  return {
+export function createBuildDecisionStage(): TickStage {
+  return defineTickStage({
     id: 'build_decision',
-    async run(ctx: TickPipelineContext): Promise<void> {
-      const respText = extractResponseText(ctx.llmResp);
+    reads: ['llmResp', 'outputProcessor', 'forceFinalAnswer', 'eventHandler'],
+    writes: ['decision'],
+    async run(ctx) {
+      const rawRespText = extractResponseText(ctx.llmResp);
+      const respText = ctx.outputProcessor?.processResponse
+        ? ctx.outputProcessor.processResponse(rawRespText)
+        : rawRespText;
       const toolCallsRaw = resolveToolCalls(ctx.llmResp);
       const reasoningDetailsRaw = resolveReasoningDetails(ctx.llmResp);
+      const reasoningDetails = Array.isArray(reasoningDetailsRaw)
+        ? reasoningDetailsRaw
+            .map(item => toSerializableJsonValue(item))
+            .filter((item): item is NonNullable<typeof item> => item !== undefined)
+        : undefined;
       const toolCalls = ctx.forceFinalAnswer ? undefined : toolCallsRaw;
 
       if (toolCalls?.length) {
-        const normalizedToolCalls = normalizeToolCalls(toolCalls);
+        const normalizedToolCalls = normalizeToolCalls(toolCalls).map((toolCall, index) => ({
+          ...toolCall,
+          id: ToolCallIdSchema.parse(toolCall.id, {
+            path: [`tool_calls[${index}].id`],
+          }),
+        }));
         const firstToolCall = normalizedToolCalls[0];
+        if (!firstToolCall) {
+          throw new Error('Tool decision must contain at least one normalized tool call.');
+        }
+        normalizedToolCalls.forEach((toolCall, index) => {
+          requireNonEmptyToolIdentity(toolCall.function.name, `tool_calls[${index}].function.name`);
+        });
         const primaryArgs = parsePrimaryToolArgs(firstToolCall);
-        const primaryToolName = firstToolCall?.function?.name ?? 'unknown';
-        const primaryToolCallId = firstToolCall?.id ?? '';
+        const primaryToolName = firstToolCall.function.name.trim();
+        const primaryToolCallId = firstToolCall.id;
 
         const actionEvent: ToolCallDecisionEvent = {
           type: 'tool_call_decision',
@@ -42,61 +59,62 @@ export function createBuildDecisionStage(
           tool_args: primaryArgs,
           tool_calls: normalizedToolCalls,
           tool_call_id: primaryToolCallId,
+          phase: 'start',
           status: 'loading',
           payload: {
             args: primaryArgs,
             tool_calls: normalizedToolCalls,
-            ...(Array.isArray(reasoningDetailsRaw) && reasoningDetailsRaw.length > 0
-              ? { reasoning_details: reasoningDetailsRaw }
+            ...(reasoningDetails && reasoningDetails.length > 0
+              ? { reasoning_details: reasoningDetails }
               : {}),
           },
           meta: {
-            displayOptions: dependencies.toolPresentation.getDisplayOptions(primaryToolName),
             primary_tool_call_id: primaryToolCallId,
-            tool_call_ids: normalizedToolCalls.map((toolCall) => toolCall.id),
+            tool_call_ids: normalizedToolCalls.map(toolCall => toolCall.id),
             tool_batch_size: normalizedToolCalls.length,
           },
-          id: generateMessageId(),
+          id: generateRuntimeEventId(),
         };
 
         ctx.eventHandler?.(actionEvent);
-        ctx.decision = {
-          kind: 'tool_calls',
-          toolCalls: normalizedToolCalls,
+        return {
+          decision: {
+            kind: 'tool_calls',
+            toolCalls: normalizedToolCalls,
+          },
         };
-        return;
       }
 
-      if (!ctx.input.stream) {
-        const answerId = generateMessageId();
-        const finalAnswerSidecar = Array.isArray(reasoningDetailsRaw) && reasoningDetailsRaw.length > 0
-          ? { reasoning_details: reasoningDetailsRaw }
-          : {};
+      if (respText.trim().length > 0) {
+        const answerId = generateAnswerSegmentId();
+        const finalAnswerSidecar =
+          reasoningDetails && reasoningDetails.length > 0
+            ? { reasoning_details: reasoningDetails }
+            : {};
         const finalEvent: FinalAnswerEvent = {
           type: 'final_answer',
           timestamp: Date.now(),
           answer: respText,
-          id: generateMessageId(),
+          answer_id: answerId,
+          completion_reason: 'terminal',
+          id: answerId,
           ...finalAnswerSidecar,
         };
         ctx.eventHandler?.(finalEvent);
-        ctx.newEvents.push({
-          type: 'final_answer',
-          id: finalEvent.id!,
-          conversation_id: ctx.conversationId,
-          turn_id: ctx.turnId,
-          timestamp: finalEvent.timestamp,
-          version: 1,
-          answer_id: answerId,
-          content: respText,
-          is_complete: true,
-          ...finalAnswerSidecar,
-        });
-        ctx.decision = { kind: 'final_answer', answer: respText };
-        return;
+        return {
+          decision: { kind: 'final_answer', answer: respText },
+        };
       }
 
-      ctx.decision = { kind: 'yield' };
+      return {
+        decision: { kind: 'yield' },
+      };
     },
-  };
+  });
+}
+
+function requireNonEmptyToolIdentity(value: unknown, field: string): void {
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    throw new Error(`${field} must be a non-empty string.`);
+  }
 }

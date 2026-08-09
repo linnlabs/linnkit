@@ -15,12 +15,12 @@ import {
 } from '../config';
 import {
   ToolPairMatcher,
-  ToolPairTruncator,
   ReplacementSourceTagger,
   processHistoricalToolInteractions,
   processTextConversations,
   processToolInteractions,
   promoteMostRecentToolPair,
+  resolveProtectedToolRunWindow,
 } from './working-memory';
 import type { DebugFn } from './working-memory';
 import {
@@ -40,15 +40,13 @@ export class AgentWorkingMemoryProvider extends BaseContextProvider {
   readonly priority = 2; // 仅次于核心上下文
 
   private readonly matcher: ToolPairMatcher;
-  private readonly truncator: ToolPairTruncator;
   private readonly tagger: ReplacementSourceTagger;
   private readonly config: AgentContextBuilderConfig;
 
   constructor(customConfig?: Partial<AgentContextBuilderConfig>) {
     super();
     this.config = createAgentContextBuilderConfig(customConfig ?? {});
-    this.matcher = new ToolPairMatcher(this.config);
-    this.truncator = new ToolPairTruncator(this.config);
+    this.matcher = new ToolPairMatcher();
     this.tagger = new ReplacementSourceTagger();
   }
 
@@ -107,15 +105,6 @@ export class AgentWorkingMemoryProvider extends BaseContextProvider {
     // 中文备注：工作记忆比例以本次“输入总预算”为基准。availableBudget 已经被 pipeline
     // 扣过核心层 token；如果再用它乘比例，会把核心消息重复扣一次，导致上下文过早收缩。
     const workingMemoryBudget = Math.floor(context.totalBudget * config.WORKING_MEMORY_BUDGET_PERCENTAGE);
-    const remainingBudget = workingMemoryBudget - coreTokens;
-
-    if (remainingBudget <= 0 && config.MIN_TOOL_INTERACTIONS_TO_KEEP <= 0) {
-      this.debug('⚠️ 核心上下文已用尽预算，跳过工作记忆填充', {
-        coreTokens,
-        workingMemoryBudget
-      }, context);
-      return this.createResult(states, 0, [], { processedCount: 0, skippedCount: 0, addedCount: 0 });
-    }
 
     // 🔥 阶段感知：POST_TOOL_CALL 优先保留"最近一对"工具交互（tool_calls ↔ tool_output）
     const processedIds = new Set<string>();
@@ -126,9 +115,7 @@ export class AgentWorkingMemoryProvider extends BaseContextProvider {
         processedIds,
         currentTokens: workingMemoryTokens,
         budgetLimit: workingMemoryBudget,
-        estimateTokens: context.estimateTokens,
         matcher: this.matcher,
-        truncator: this.truncator,
         tagger: this.tagger,
         debug: this.createDebugFn(context),
       });
@@ -145,26 +132,30 @@ export class AgentWorkingMemoryProvider extends BaseContextProvider {
 
     // === Agent专用逻辑：工具优先填充策略 ===
     const maxToolGroupsTotal = config.MAX_TOOL_INTERACTION_GROUPS_TO_KEEP;
-    const maxRecentToolPairs = config.MAX_RECENT_TOOL_INTERACTIONS_TO_KEEP;
     let historicalToolGroupsKept = 0;
 
     // 计算"当前轮次起点（最后一条 user_input）"的 originalIndex
     const lastUserOriginalIndex = findLastUserInputOriginalIndex(states);
+    const protectedToolRunWindow = resolveProtectedToolRunWindow({
+      toolGroups,
+      lastUserOriginalIndex,
+      maxRecentToolRunsToKeep: config.MAX_RECENT_TOOL_RUNS_TO_KEEP,
+    });
 
     // P1 优先级：工具交互（tool_calls 和 tool 消息）- 配对保留
-    this.debug('🔧 P1优先级：开始处理工具交互（配对保留）', { remainingBudget: workingMemoryBudget - workingMemoryTokens });
+    this.debug('🔧 P1优先级：开始处理工具交互（turn保护窗口配对保留）', {
+      remainingBudget: workingMemoryBudget - workingMemoryTokens,
+      protectedToolRunWindow,
+    });
     const p1Result = processToolInteractions({
       allStates: states,
       toolGroups,
       processedIds,
       currentTokens: workingMemoryTokens,
       budgetLimit: workingMemoryBudget,
-      estimateTokens: context.estimateTokens,
-      maxToolPairsToKeep: Math.min(maxRecentToolPairs, maxToolGroupsTotal),
-      minToolPairsToKeep: config.MIN_TOOL_INTERACTIONS_TO_KEEP,
+      protectedToolRunWindow,
       lastUserOriginalIndex,
       matcher: this.matcher,
-      truncator: this.truncator,
       tagger: this.tagger,
       debug: this.createDebugFn(context),
     });
@@ -194,7 +185,7 @@ export class AgentWorkingMemoryProvider extends BaseContextProvider {
       strategiesApplied.push(...p2Result.strategiesApplied);
     }
 
-    // P3 优先级：历史工具交互（第3组及以前的工具交互）
+    // P3 优先级：历史工具交互（compressed 摘要 + 保护窗口内未处理的 raw 组）
     if (workingMemoryTokens < workingMemoryBudget && lastUserOriginalIndex !== null) {
       this.debug('📚 P3优先级：开始处理历史工具交互', {
         remainingBudget: workingMemoryBudget - workingMemoryTokens
@@ -206,13 +197,12 @@ export class AgentWorkingMemoryProvider extends BaseContextProvider {
         processedIds,
         currentTokens: workingMemoryTokens,
         budgetLimit: workingMemoryBudget,
-        estimateTokens: context.estimateTokens,
         maxToolGroupsToKeep: remainingToolGroups,
         minToolGroupsToKeep: config.MIN_TOOL_INTERACTIONS_TO_KEEP,
         alreadyKeptToolGroups: historicalToolGroupsKept,
         lastUserOriginalIndex,
+        minRawToolRunOrdinal: protectedToolRunWindow.minRunOrdinal,
         matcher: this.matcher,
-        truncator: this.truncator,
         tagger: this.tagger,
         debug: this.createDebugFn(context),
       });

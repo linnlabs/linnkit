@@ -1,100 +1,104 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-
-const { agentToRuntimeMock, generateMessageIdMock } = vi.hoisted(() => ({
-  agentToRuntimeMock: vi.fn((evt: Record<string, unknown>, context: Record<string, unknown>) => ({
-    type: evt.type,
-    id: evt.id,
-    conversation_id: context.conversationId,
-    turn_id: context.turnId,
-    timestamp: context.timestamp,
-    metadata: context.metadata,
-  })),
-  generateMessageIdMock: vi.fn(),
-}));
-
-vi.mock('../../../events/eventMappers', () => ({
-  eventMapper: {
-    agentToRuntime: agentToRuntimeMock,
-  },
-}));
-
-vi.mock('../../../../shared/ids', () => ({
-  generateMessageId: generateMessageIdMock,
-}));
-
+import { describe, expect, it } from 'vitest';
+import { routeRuntimeEvent, type RuntimeEvent, ToolCallIdSchema } from '../../../../contracts';
 import { ToolNodeEventBridge } from '../toolNode.eventBridge';
 
-describe('ToolNodeEventBridge', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    generateMessageIdMock
-      .mockReturnValueOnce('evt_1')
-      .mockReturnValueOnce('evt_2')
-      .mockReturnValueOnce('evt_3');
+function createSubject(publishError?: Error) {
+  const published: RuntimeEvent[] = [];
+  const identity = {
+    run_id: 'run_tool',
+    lane: 'foreground' as const,
+    visibility: 'conversation' as const,
+  };
+  const bridge = new ToolNodeEventBridge({
+    runtimeEventSink: event => {
+      if (publishError) throw publishError;
+      const routed = routeRuntimeEvent(event, identity);
+      published.push(routed);
+      return routed;
+    },
+    conversationId: 'conv_tool',
+    turnId: 'turn_tool',
+    toolName: 'search',
+    toolCallId: ToolCallIdSchema.parse('call_1'),
+    toolArgs: { query: 'hello' },
+    idempotencyKey: 'idem_1',
+  });
+  return { bridge, published };
+}
+
+describe('ToolNodeEventBridge runtime facts', () => {
+  it('映射、附加幂等身份、发布后只写入一次 journal', () => {
+    const { bridge, published } = createSubject();
+    bridge.emitToolProcess('start', 'loading', { args: { query: 'hello' } });
+    bridge.emitToolOutput(
+      { status: 'success', observation: 'search done', data: { ok: true } },
+      {
+        metadata: { artifact: { id: 'asset_1' } },
+      }
+    );
+
+    expect(published).toHaveLength(2);
+    expect(published[0]).toMatchObject({
+      type: 'tool_process',
+      run_id: 'run_tool',
+      metadata: { idempotency: { key: 'idem_1' } },
+    });
+    expect(published[1]).toMatchObject({
+      type: 'tool_output',
+      run_id: 'run_tool',
+      observation: 'search done',
+      data: { ok: true },
+      metadata: { artifact: { id: 'asset_1' } },
+    });
+    expect(bridge.getRuntimeEvents()).toEqual(published);
   });
 
-  it('应发出 tool_process 并缓冲 RuntimeEvent', () => {
-    const sseSink = vi.fn();
-    const bridge = new ToolNodeEventBridge({
-      sseSink,
-      conversationId: 'conv_test',
-      turnId: 'turn_test',
-      toolName: 'search',
-      toolCallId: 'call_1',
-      toolArgs: { query: 'hello' },
-      displayOptions: { viewType: 'card' },
-      idempotencyKey: 'idem_1',
-    });
+  it('工具正文带首尾换行时仍能发布正式 tool_output', () => {
+    const { bridge, published } = createSubject();
 
     bridge.emitToolProcess('start', 'loading', { args: { query: 'hello' } });
+    bridge.emitToolOutput({
+      status: 'success',
+      observation: '\nsearch result\n',
+      data: { ok: true },
+    });
 
-    expect(sseSink).toHaveBeenCalledTimes(1);
-    expect(agentToRuntimeMock).toHaveBeenCalledTimes(1);
-    expect(bridge.getRuntimeEvents()).toHaveLength(1);
-    expect(bridge.getRuntimeEvents()[0]?.metadata).toEqual({ idempotency: { key: 'idem_1' } });
+    expect(published.at(-1)).toMatchObject({
+      type: 'tool_output',
+      observation: '\nsearch result\n',
+      status: 'success',
+    });
   });
 
-  it('应发出 tool_output 与 final_answer，并给 SSE 事件打标', () => {
-    const captured: unknown[] = [];
-    const sseSink = vi.fn((evt: unknown) => {
-      captured.push(evt);
-    });
-    const bridge = new ToolNodeEventBridge({
-      sseSink,
-      conversationId: 'conv_test',
-      turnId: 'turn_test',
-      toolName: 'write_report',
-      toolCallId: 'call_2',
-      toolArgs: {},
-      displayOptions: {},
-    });
-
-    bridge.emitToolOutput('success', { output: { ok: true } });
-    bridge.emitFinalAnswer({ answer: 'done', sourceToolName: 'write_report' });
-
-    expect(bridge.getRuntimeEvents()).toHaveLength(2);
-    expect(captured).toHaveLength(2);
-    const marker = Object.getOwnPropertyDescriptor(captured[0] as object, '__dispatched_via_sse__');
-    expect(marker?.value).toBe(true);
-    expect(marker?.enumerable).toBe(false);
+  it('publisher 失败必须传播，失败事实不能进入 journal', () => {
+    const publishError = new Error('publisher unavailable');
+    const { bridge } = createSubject(publishError);
+    expect(() => bridge.emitToolProcess('start', 'loading', {})).toThrow(publishError);
+    expect(bridge.getRuntimeEvents()).toEqual([]);
   });
 
-  it('sseSink 抛错时不应影响 runtime 缓冲', () => {
-    const bridge = new ToolNodeEventBridge({
-      sseSink: vi.fn(() => {
-        throw new Error('SSE boom');
-      }),
-      conversationId: 'conv_test',
-      turnId: 'turn_test',
-      toolName: 'search',
-      toolCallId: 'call_3',
-      toolArgs: {},
-      displayOptions: {},
-    });
+  it('工具终止 run 的完整答案共用 chunk live 链与 durable final_answer 链', () => {
+    const { bridge, published } = createSubject();
 
-    expect(() => {
-      bridge.emitToolProcess('start', 'loading', {});
-    }).not.toThrow();
-    expect(bridge.getRuntimeEvents()).toHaveLength(1);
+    bridge.emitFinalAnswer({ answer: '工具最终报告', sourceToolName: 'write_report' });
+
+    expect(published.map(event => event.type)).toEqual(['final_answer_chunk', 'final_answer']);
+    expect(published[0]).toMatchObject({
+      seq: 0,
+      content: '工具最终报告',
+      is_last: true,
+      ephemeral: true,
+    });
+    expect(published[1]).toMatchObject({
+      content: '工具最终报告',
+    });
+    const chunk = published[0];
+    const finalAnswer = published[1];
+    if (chunk?.type !== 'final_answer_chunk' || finalAnswer?.type !== 'final_answer') {
+      throw new Error('工具终答必须按 chunk → final_answer 顺序发布');
+    }
+    expect(chunk.answer_id).toBe(finalAnswer.answer_id);
+    expect(finalAnswer.id).toBe(finalAnswer.answer_id);
+    expect(bridge.getRuntimeEvents()).toEqual(published);
   });
 });

@@ -1,128 +1,149 @@
 /**
  * @file runtime-kernel/events/agentEvents.ts
- * @description graph 主执行链使用的最小 Agent 事件契约
+ * @description graph 主执行链使用的严格 Agent 事件合同
  *
- * 中文备注：
- * - 该文件只承载 runtime-kernel 主链路真正需要识别的事件子集；
- * - 目标是让 `executor` / `llmNode` / `eventMappers` 不再反向依赖宿主或产品层事件定义；
- * - host/product 层若有更丰富的事件，只要结构兼容，仍可在边界透传进来。
+ * AgentEvent 是 provider/graph 到 RuntimeEvent admission 之前的内部事实。
+ * 所有创建者和消费者都必须引用本文件；映射边界先解析 schema，禁止按字段形状猜测事件。
  */
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === 'object' && !Array.isArray(value);
-}
+import { z } from 'zod';
+import {
+  AnswerSegmentIdSchema,
+  FinalAnswerCompletionReason,
+  RuntimeEventIdSchema,
+  RuntimeResourceRefs,
+  Status,
+  ThoughtMessageIdSchema,
+  ToolCallIdSchema,
+  ToolCallPhase,
+} from '../../contracts';
 
-export interface AgentEvent {
-  type: string;
-  timestamp: number;
-  id?: string;
-  /**
-   * 中文备注：
-   * - 该标记只在运行期内存中使用，用于避免同一事件被 SSE 重复分发；
-   * - 不属于持久化协议字段。
-   */
-  __dispatched_via_sse__?: true;
-}
+const UnknownRecord = z.record(z.string(), z.unknown());
+const NonBlankIdentifier = z.string().min(1).refine(
+  value => value === value.trim(),
+  'value must not contain leading or trailing whitespace',
+);
+const NonBlankText = z.string().min(1).refine(
+  value => value.trim().length > 0,
+  'value must not be blank',
+);
 
-interface BaseToolLifecycleAgentEvent extends AgentEvent {
-  tool_name: string;
-  tool_args: Record<string, unknown>;
-  tool_calls?: unknown[];
-  tool_call_id?: string;
-  phase?: 'start' | 'update' | 'complete' | 'error';
-  status?: 'loading' | 'success' | 'error';
-  payload?: Record<string, unknown>;
-  meta?: Record<string, unknown>;
-}
+const BaseAgentEvent = z.object({
+  type: z.string(),
+  timestamp: z.number().finite(),
+  /** 事实创建者分配的身份；映射与发布层只读，禁止补造。 */
+  id: RuntimeEventIdSchema,
+}).strict();
 
-export interface ThoughtEvent extends AgentEvent {
-  type: 'thought';
-  content: string;
-  delta?: string;
-  is_complete?: boolean;
-  meta?: Record<string, unknown>;
-  thought_message_id?: string;
-}
+const BaseToolLifecycleAgentEvent = BaseAgentEvent.extend({
+  tool_name: NonBlankIdentifier,
+  tool_args: UnknownRecord,
+  tool_calls: z.array(z.unknown()).optional(),
+  /** 由工具调用事实创建者提供；Runtime admission 不补造工具身份。 */
+  tool_call_id: ToolCallIdSchema,
+  phase: ToolCallPhase,
+  status: Status,
+  payload: UnknownRecord.optional(),
+  meta: UnknownRecord.optional(),
+});
 
-export interface ToolCallDecisionEvent extends BaseToolLifecycleAgentEvent {
-  type: 'tool_call_decision';
-}
+export const ThoughtEventSchema = BaseAgentEvent.extend({
+  type: z.literal('thought'),
+  content: z.string(),
+  delta: z.string().optional(),
+  is_complete: z.boolean(),
+  meta: UnknownRecord.optional(),
+  thought_message_id: ThoughtMessageIdSchema.optional(),
+}).strict();
+export type ThoughtEvent = z.infer<typeof ThoughtEventSchema>;
 
-export interface ToolProcessEvent extends BaseToolLifecycleAgentEvent {
-  type: 'tool_process';
-}
+export const ToolCallDecisionEventSchema = BaseToolLifecycleAgentEvent.extend({
+  type: z.literal('tool_call_decision'),
+}).strict();
+export type ToolCallDecisionEvent = z.infer<typeof ToolCallDecisionEventSchema>;
 
-export interface ObservationEvent extends AgentEvent {
-  type: 'observation';
-  tool_name: string;
-  tool_call_id?: string;
-  output: string;
-  success?: boolean;
-  payload?: Record<string, unknown>;
-  duration_ms?: number;
-}
+export const ToolProcessEventSchema = BaseToolLifecycleAgentEvent.extend({
+  type: z.literal('tool_process'),
+}).strict();
+export type ToolProcessEvent = z.infer<typeof ToolProcessEventSchema>;
 
-export interface FinalAnswerEvent extends AgentEvent {
-  type: 'final_answer';
-  answer: string;
-  answer_id?: string;
-  answerId?: string;
-  reasoning_details?: unknown[];
-  meta?: Record<string, unknown>;
-}
+export const ObservationEventSchema = BaseAgentEvent.extend({
+  type: z.literal('observation'),
+  tool_name: NonBlankIdentifier,
+  /** 必须与对应的工具调用事实使用同一身份。 */
+  tool_call_id: ToolCallIdSchema,
+  observation: NonBlankText,
+  data: z.unknown().optional(),
+  error: NonBlankText.optional(),
+  success: z.boolean(),
+  duration_ms: z.number().finite().nonnegative().optional(),
+  attachments: RuntimeResourceRefs.optional(),
+}).strict();
+export type ObservationEvent = z.infer<typeof ObservationEventSchema>;
 
-export interface ErrorEvent extends AgentEvent {
-  type: 'error';
-  error: string;
-  details?: string;
-}
+export const FinalAnswerEventSchema = BaseAgentEvent.extend({
+  type: z.literal('final_answer'),
+  answer: z.string(),
+  /** 由答案事实创建者生成；下游映射和发布层只读。 */
+  answer_id: AnswerSegmentIdSchema,
+  completion_reason: FinalAnswerCompletionReason,
+  reasoning_details: z.array(z.unknown()).optional(),
+  meta: UnknownRecord.optional(),
+}).strict();
+export type FinalAnswerEvent = z.infer<typeof FinalAnswerEventSchema>;
 
-export interface StreamChunkEvent extends AgentEvent {
-  type: 'stream_chunk';
-  content: string;
-  answer_id?: string;
-  seq?: number;
-  is_last?: boolean;
-  isLast?: boolean;
-}
+export const ErrorEventSchema = BaseAgentEvent.extend({
+  type: z.literal('error'),
+  error: z.string(),
+  error_code: z.string().optional(),
+  retryable: z.boolean().optional(),
+  details: UnknownRecord.optional(),
+}).strict();
+export type ErrorEvent = z.infer<typeof ErrorEventSchema>;
 
-export interface ProviderSidecarEvent extends AgentEvent {
-  type: 'provider_sidecar';
-  reasoning_details?: unknown[];
-}
+export const StreamChunkEventSchema = BaseAgentEvent.extend({
+  type: z.literal('stream_chunk'),
+  content: z.string(),
+  /** 由 streaming adapter 为当前答案段生成；下游不得替换。 */
+  answer_id: AnswerSegmentIdSchema,
+  /** 当前 answer_id 内从 0 开始连续递增的序号。 */
+  seq: z.number().int().nonnegative(),
+  is_last: z.boolean().optional(),
+}).strict();
+export type StreamChunkEvent = z.infer<typeof StreamChunkEventSchema>;
 
-export type AnyAgentEvent =
-  | ThoughtEvent
-  | ToolCallDecisionEvent
-  | ToolProcessEvent
-  | ObservationEvent
-  | FinalAnswerEvent
-  | ErrorEvent
-  | StreamChunkEvent
-  | ProviderSidecarEvent;
+export const StreamResetEventSchema = BaseAgentEvent.extend({
+  type: z.literal('stream_reset'),
+  answer_id: AnswerSegmentIdSchema.optional(),
+  thought_message_ids: z.array(ThoughtMessageIdSchema).min(1).optional(),
+}).strict();
+export type StreamResetEvent = z.infer<typeof StreamResetEventSchema>;
 
-export function isMarkedAsSseDispatched(event: unknown): boolean {
-  return isRecord(event) && event['__dispatched_via_sse__'] === true;
-}
+export const ProviderSidecarEventSchema = BaseAgentEvent.extend({
+  type: z.literal('provider_sidecar'),
+  reasoning_details: z.array(z.unknown()).optional(),
+}).strict();
+export type ProviderSidecarEvent = z.infer<typeof ProviderSidecarEventSchema>;
 
-export function readAgentEventAnswerId(event: unknown): string | undefined {
-  if (!isRecord(event)) return undefined;
-
-  const snake = event['answer_id'];
-  if (typeof snake === 'string' && snake.trim().length > 0) {
-    return snake.trim();
+export const AgentEventSchema = z.discriminatedUnion('type', [
+  ThoughtEventSchema,
+  ToolCallDecisionEventSchema,
+  ToolProcessEventSchema,
+  ObservationEventSchema,
+  FinalAnswerEventSchema,
+  ErrorEventSchema,
+  StreamChunkEventSchema,
+  StreamResetEventSchema,
+  ProviderSidecarEventSchema,
+]).superRefine((event, ctx) => {
+  if (event.type !== 'observation') return;
+  if (event.success && event.data === undefined) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['data'], message: 'successful observation requires data' });
   }
-
-  const camel = event['answerId'];
-  if (typeof camel === 'string' && camel.trim().length > 0) {
-    return camel.trim();
+  if (!event.success && !event.error) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['error'], message: 'failed observation requires error' });
   }
+});
 
-  return undefined;
-}
-
-export function readAgentEventSeq(event: unknown): number | undefined {
-  if (!isRecord(event)) return undefined;
-  const value = event['seq'];
-  return Number.isInteger(value) ? Number(value) : undefined;
-}
+export type AgentEvent = z.infer<typeof AgentEventSchema>;
+export type AnyAgentEvent = AgentEvent;

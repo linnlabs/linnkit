@@ -52,5 +52,5 @@ export default defineConfig({
   //   - tiktoken: TokenCalculator → llmTelemetryMiddleware / context-manager 用；自带 wasm 必须从 tiktoken 包目录加载，不能 inline
   //   - zod:      contracts/{events,execution,messages,sse}.ts 用；必须 external + 标 peerDependency 让接入方自己锁版本，
   //               否则 inline 后接入方 import 出的 z.ZodSchema 跟自己装的 zod 不是同实例，instanceof / .parse() 行为会出错
-  external: ['vitest', 'tiktoken', 'zod'],
+  external: ['eventsource-parser', 'vitest', 'tiktoken', 'zod'],
 });

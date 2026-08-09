@@ -1,9 +1,17 @@
-import { GraphNode, EngineState, NodeResult } from '../types';
-import { generateMessageId } from '../../../shared/ids';
-import { createSSERequiresUserInteractionEvent } from '../../../contracts';
 import type { AuditPort } from '../../../ports';
+import {
+  createRequiresUserInteractionEvent,
+  generateInteractionId,
+  generateResumeToken,
+  generateRuntimeEventId,
+  RunIdSchema,
+  ToolCallIdSchema,
+  toSerializableJsonValue,
+} from '../../../contracts';
 import { emitAuditEnvelope } from '../../audit/emitAudit';
 import { noopAudit } from '../../audit/noopAudit';
+import type { EngineState, GraphNode, NodeResult } from '../types';
+import { requireRuntimeEventSink } from '../graphLocal';
 
 export interface WaitUserNodeDependencies {
   auditPort?: AuditPort;
@@ -13,40 +21,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
 }
 
-function toNonEmptyString(value: unknown): string | undefined {
-  if (typeof value !== 'string') return undefined;
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : undefined;
-}
-
-function toStringArray(value: unknown): string[] | undefined {
-  if (!Array.isArray(value)) return undefined;
-  const normalized = value
-    .map((item) => (typeof item === 'string' ? item.trim() : ''))
-    .filter((item) => item.length > 0);
-  return normalized.length > 0 ? normalized : undefined;
-}
-
-function buildResumeRequestSnapshot(request: unknown): Record<string, unknown> | undefined {
-  if (!isRecord(request)) return undefined;
-
-  const snapshot: Record<string, unknown> = {};
-  const promptKey = toNonEmptyString(request['promptKey']);
-  const mode = toNonEmptyString(request['mode']);
-  const projectMetadata = request['project_metadata'];
-  const documentMetadata = request['document_metadata'];
-  const knowledgeBaseId = toNonEmptyString(request['knowledgeBaseId']);
-  const availableTools = toStringArray(request['availableTools']);
-
-  if (promptKey) snapshot['promptKey'] = promptKey;
-  if (mode) snapshot['mode'] = mode;
-  if (isRecord(projectMetadata)) snapshot['project_metadata'] = projectMetadata;
-  if (isRecord(documentMetadata)) snapshot['document_metadata'] = documentMetadata;
-  if (knowledgeBaseId) snapshot['knowledgeBaseId'] = knowledgeBaseId;
-  if (typeof request['enableTools'] === 'boolean') snapshot['enableTools'] = request['enableTools'];
-  if (availableTools) snapshot['availableTools'] = availableTools;
-
-  return Object.keys(snapshot).length > 0 ? snapshot : undefined;
+function requireNonEmptyString(value: unknown, field: string): string {
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    throw new Error(`WaitUserNode requires ${field}`);
+  }
+  return value.trim();
 }
 
 export class WaitUserNode implements GraphNode {
@@ -58,77 +37,54 @@ export class WaitUserNode implements GraphNode {
   }
 
   async run(state: EngineState): Promise<NodeResult> {
-    const local: Record<string, unknown> = state.local || {};
-    const spec = local.pendingInteractionSpec || {};
-    const conversationId = typeof local.conversationId === 'string' ? (local.conversationId as string) : '';
-    const turnId =
-      typeof local.turnId === 'string'
-        ? (local.turnId as string)
-        : `turn_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-    local.turnId = turnId;
-    const sseSink = typeof local.sseSink === 'function' ? (local.sseSink as (evt: unknown) => void) : undefined;
-    const resumeRequestSnapshot = buildResumeRequestSnapshot(local.request);
-    const toolContext = isRecord(local.toolContext) ? local.toolContext : undefined;
-    const runId = toNonEmptyString(toolContext?.['runId']) ?? turnId;
-    const parentRunId = toNonEmptyString(toolContext?.['parentRunId']);
-
-    const timestamp = Date.now();
-    const id = generateMessageId();
-    const sse = createSSERequiresUserInteractionEvent(id, conversationId, turnId, {
-      timestamp,
-      form: spec as Record<string, unknown>,
+    const local = state.local ?? {};
+    const spec = isRecord(local.pendingInteractionSpec) ? local.pendingInteractionSpec : {};
+    const conversationId = requireNonEmptyString(local.conversationId, 'conversationId');
+    const turnId = requireNonEmptyString(local.turnId, 'turnId');
+    const toolContext = isRecord(local.toolContext) ? local.toolContext : {};
+    const runId = RunIdSchema.parse(requireNonEmptyString(toolContext.runId, 'toolContext.runId'));
+    const parentRunId =
+      toolContext.parentRunId === undefined
+        ? undefined
+        : RunIdSchema.parse(toolContext.parentRunId);
+    const toolCallId = ToolCallIdSchema.parse(
+      requireNonEmptyString(spec.toolCallId, 'pendingInteractionSpec.toolCallId')
+    );
+    const toolName = requireNonEmptyString(spec.toolName, 'pendingInteractionSpec.toolName');
+    const id = generateRuntimeEventId();
+    const interactionId = generateInteractionId();
+    const runtimeEvent = createRequiresUserInteractionEvent(id, conversationId, turnId, {
+      timestamp: Date.now(),
+      form: toSerializableJsonValue(spec.form) ?? {},
+      interaction_type: toolName,
+      interaction_id: interactionId,
+      run_id: runId,
+      tool_call_id: toolCallId,
+      checkpoint_revision: (state.revision ?? 0) + 1,
+      resume_token: generateResumeToken(),
+      interaction_status: 'pending',
     });
-    sse.timestamp = timestamp;
-    if (sseSink) {
-      try {
-        Object.defineProperty(sse, '__dispatched_via_sse__', {
-          value: true,
-          enumerable: false,
-          configurable: true,
-        });
-        sseSink(sse);
-      } catch (error) {
-        console.warn('[WaitUserNode] SSE dispatch failed:', error);
-      }
-    }
-
-    const runtimeEventMetadata: Record<string, unknown> = {
-      run_context: {
-        runId,
-        ...(parentRunId === undefined ? {} : { parentRunId }),
-      },
-    };
-    if (resumeRequestSnapshot) {
-      runtimeEventMetadata.resume_request_snapshot = resumeRequestSnapshot;
-    }
-
-    const runtimeEvent = {
-      type: 'requires_user_interaction' as const,
-      id,
-      conversation_id: conversationId,
-      turn_id: turnId,
-      timestamp,
-      version: 1 as const,
-      form: spec,
-      metadata: runtimeEventMetadata,
-    };
+    const publishedEvent = requireRuntimeEventSink(state.local)(
+      runtimeEvent,
+      'WaitUserNode.requires_user_interaction'
+    );
 
     await emitAuditEnvelope(this.auditPort, {
       action: 'wait_user.request',
       actor: { kind: 'system' },
-      decision: {
-        outcome: 'requested',
-        reason: 'graph paused for user interaction',
-      },
+      decision: { outcome: 'requested', reason: 'graph paused for user interaction' },
       evidence: [
         {
           kind: 'requires_user_interaction',
-          ref: id,
-          summary: toNonEmptyString((spec as Record<string, unknown>)['prompt']) ?? 'requires user interaction',
+          ref: interactionId,
+          summary:
+            typeof spec.prompt === 'string' && spec.prompt.trim().length > 0
+              ? spec.prompt.trim()
+              : 'requires user interaction',
         },
       ],
       scope: {
-        conversationId: conversationId || undefined,
+        conversationId,
         turnId,
         runId,
         parentRunId,
@@ -142,6 +98,6 @@ export class WaitUserNode implements GraphNode {
       conversationId,
       turnId,
     };
-    return { kind: 'pause', events: [runtimeEvent] };
+    return { kind: 'pause', events: [publishedEvent] };
   }
 }

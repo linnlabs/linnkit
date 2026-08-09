@@ -6,6 +6,9 @@ import {
   createScriptedAiEngineHarness,
   createToolContextFixture,
 } from '../index';
+import { createFinalAnswerEvent, type RoutedRuntimeEvent, RunIdSchema } from '../../contracts';
+import { execution } from '../../runtime-kernel';
+import { createStandaloneFinalAnswerChunk } from '../../runtime-kernel/events';
 
 describe('src/agent/testkit graph loop harness contract', () => {
   it('exposes createGraphLoopHarness as part of the public testkit surface', async () => {
@@ -19,7 +22,7 @@ describe('src/agent/testkit graph loop harness contract', () => {
     const llmNode = {
       id: 'llm',
       async run() {
-        return { kind: 'route' as const, nextNodeId: 'answer', events: [] };
+        return { kind: 'yield' as const, events: [] };
       },
     };
     const toolRuntime: Parameters<typeof createGraphLoopHarness>[0]['toolRuntime'] = {
@@ -27,9 +30,6 @@ describe('src/agent/testkit graph loop harness contract', () => {
         return [];
       },
       getToolDefinition() {
-        return undefined;
-      },
-      getDisplayOptions() {
         return undefined;
       },
       async executeTool() {
@@ -73,9 +73,6 @@ describe('src/agent/testkit graph loop harness contract', () => {
       getToolDefinition() {
         return undefined;
       },
-      getDisplayOptions() {
-        return undefined;
-      },
       async executeTool() {
         throw new Error('graph loop contract test did not expect tool execution');
       },
@@ -88,6 +85,15 @@ describe('src/agent/testkit graph loop harness contract', () => {
         };
       },
     };
+    const publishedEvents: RoutedRuntimeEvent[] = [];
+    const sequencer = new execution.EventSequencer(conversationId);
+    const eventBus = new execution.EventBus(sequencer.getExecutionId());
+    const publisher = new execution.RuntimeEventPublisher(eventBus, sequencer, {
+      run_id: RunIdSchema.parse(turnId),
+      lane: 'foreground',
+      visibility: 'conversation',
+    });
+    eventBus.on('event', envelope => publishedEvents.push(envelope.payload));
 
     const harness = createGraphLoopHarness({
       conversationId,
@@ -96,7 +102,6 @@ describe('src/agent/testkit graph loop harness contract', () => {
       request: {
         query: 'hello graph loop',
         promptKey: 'contract-test',
-        mode: 'agent',
         enableTools: false,
         availableTools: [],
       },
@@ -107,21 +112,51 @@ describe('src/agent/testkit graph loop harness contract', () => {
       createLlmNode: () => ({
         id: 'llm',
         async run(state) {
-          state.local = {
-            ...(state.local ?? {}),
-            finalAnswer: 'public graph loop seam answered',
+          const finalAnswer = createFinalAnswerEvent(
+            'answer_public_graph_loop',
+            conversationId,
+            turnId,
+            'public graph loop seam answered',
+            { completion_reason: 'terminal' }
+          );
+          const runtimeEventSink = state.local?.runtimeEventSink;
+          if (!runtimeEventSink) {
+            throw new Error('graph loop contract requires runtime event admission');
+          }
+          return {
+            kind: 'yield',
+            events: [
+              runtimeEventSink(
+                createStandaloneFinalAnswerChunk(finalAnswer),
+                'graphLoopHarness.contract.final_answer_chunk'
+              ),
+              runtimeEventSink(finalAnswer, 'graphLoopHarness.contract.final_answer'),
+            ],
           };
-          return { kind: 'route', nextNodeId: 'answer', events: [] };
         },
       }),
       maxSteps: 4,
+      runtimeEventSink: (event, source) => publisher.publish(event, source),
     });
 
     const result = await harness.run();
+    eventBus.close();
 
-    expect(result).toEqual({
-      checkpointNodeId: 'answer',
-      stepCount: 3,
+    expect(result).toMatchObject({ checkpointNodeId: 'llm', stepCount: 2 });
+    expect(result.events).toHaveLength(2);
+    expect(publishedEvents).toEqual(result.events);
+    expect(result.events[0]).toMatchObject({
+      type: 'final_answer_chunk',
+      conversation_id: conversationId,
+      turn_id: turnId,
+      content: 'public graph loop seam answered',
+      seq: 0,
+    });
+    expect(result.events[1]).toMatchObject({
+      type: 'final_answer',
+      conversation_id: conversationId,
+      turn_id: turnId,
+      content: 'public graph loop seam answered',
     });
     aiHarness.assertAllTurnsConsumed();
   });

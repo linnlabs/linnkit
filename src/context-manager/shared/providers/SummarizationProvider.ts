@@ -118,7 +118,7 @@ export class SummarizationProvider extends BaseContextProvider<SummarizationConf
 
       const allMessages = states.map((s) => s.message);
       const { state: summaryState, event: summaryEvent } = SummarizationStateUtils.createSummaryMessageState(
-        summaryResult,
+        summaryResult.summary,
         candidatesToReplace,
         context,
         allMessages,
@@ -149,7 +149,14 @@ export class SummarizationProvider extends BaseContextProvider<SummarizationConf
           skippedCount: 0,
           addedCount: 1,
         },
-        [summaryEvent]
+        [summaryEvent],
+        summaryResult.canonicalUsage
+          ? [{
+              purpose: 'summarization',
+              modelId: summaryResult.modelId,
+              canonicalUsage: summaryResult.canonicalUsage,
+            }]
+          : [],
       );
     } catch (error) {
       this.debug('❌ 摘要化处理失败', { error }, context);

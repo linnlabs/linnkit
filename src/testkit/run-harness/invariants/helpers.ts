@@ -26,18 +26,7 @@ export function readString(value: unknown): string | undefined {
 }
 
 export function readEventRunId(event: RuntimeEvent): string | undefined {
-  const metadata = readRecord(event.metadata);
-  if (!metadata) {
-    return undefined;
-  }
-
-  const direct = readString(metadata.runId) ?? readString(metadata.run_id);
-  if (direct) {
-    return direct;
-  }
-
-  const runContext = readRecord(metadata.run_context);
-  return runContext ? readString(runContext.runId) ?? readString(runContext.run_id) : undefined;
+  return event.run_id;
 }
 
 export function runIds(records: readonly RunRecord[]): Set<string> {
