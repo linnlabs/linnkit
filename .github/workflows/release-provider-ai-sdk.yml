@@ -1,0 +1,119 @@
+name: Release Provider AI SDK Adapter
+
+on:
+  push:
+    tags:
+      - 'provider-ai-sdk-v*'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Run npm pack --dry-run without publishing'
+        required: false
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org/'
+          scope: '@linnlabs'
+          package-manager-cache: false
+      - name: Verify trusted publishing toolchain
+        run: |
+          npm install -g npm@11.17.0
+          npm install -g pnpm@10.20.0
+          node --version
+          npm --version
+          pnpm --version
+      - run: pnpm install --frozen-lockfile
+      - name: Verify Linnkit peer and adapter package
+        run: |
+          pnpm run build
+          pnpm --filter @linnlabs/linnkit-provider-ai-sdk typecheck
+          pnpm --filter @linnlabs/linnkit-provider-ai-sdk test
+          pnpm --filter @linnlabs/linnkit-provider-ai-sdk pack-smoke
+      - name: Verify tag matches adapter version
+        if: github.event_name == 'push'
+        working-directory: packages/provider-ai-sdk
+        run: |
+          TAG="${GITHUB_REF##refs/tags/provider-ai-sdk-v}"
+          PACKAGE_VERSION="$(node -p "require('./package.json').version")"
+          if [ "$TAG" != "$PACKAGE_VERSION" ]; then
+            echo "::error::Tag version (${TAG}) does not match adapter package version (${PACKAGE_VERSION})."
+            exit 1
+          fi
+      - name: Publish adapter to npmjs
+        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run != 'true')
+        working-directory: packages/provider-ai-sdk
+        run: |
+          set +e
+          output="$(npm publish --provenance --access public 2>&1)"
+          status="$?"
+          set -e
+          printf '%s\n' "$output"
+          if [ "$status" -eq 0 ]; then
+            exit 0
+          fi
+          if printf '%s\n' "$output" | grep -Eq 'E404|you do not have permission|could not be found'; then
+            {
+              echo "::error::npm rejected the adapter publish. For the first version, bootstrap the package with a maintainer login; then configure its Trusted Publisher for linnlabs/linnkit and release-provider-ai-sdk.yml."
+              echo "::error::Do not add a long-lived npm token to this workflow."
+            } >&2
+          fi
+          if printf '%s\n' "$output" | grep -q 'previously published versions'; then
+            package_version="$(node -p "require('./package.json').version")"
+            published="$(npm view @linnlabs/linnkit-provider-ai-sdk version --registry=https://registry.npmjs.org/)"
+            if [ "$published" = "$package_version" ]; then
+              echo "npm package @linnlabs/linnkit-provider-ai-sdk@$package_version is already published; treating this release as complete."
+              exit 0
+            fi
+          fi
+          exit "$status"
+      - name: Write adapter release notes
+        if: github.event_name == 'push'
+        working-directory: packages/provider-ai-sdk
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+
+          const version = process.env.GITHUB_REF_NAME.replace(/^provider-ai-sdk-v/, '');
+          const changelog = fs.readFileSync('CHANGELOG.md', 'utf8');
+          const heading = `## ${version}`;
+          const start = changelog.indexOf(heading);
+          if (start === -1) throw new Error(`CHANGELOG.md does not contain ${heading}`);
+
+          const next = changelog.indexOf('\n## ', start + heading.length);
+          const section = changelog
+            .slice(start, next === -1 ? undefined : next)
+            .replace(/^## [^\n]+\n?/, '')
+            .trim();
+          if (!section) throw new Error(`CHANGELOG.md section for ${heading} is empty`);
+
+          fs.writeFileSync('github-release-notes.md', section);
+          NODE
+      - name: Create or update adapter GitHub Release
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          TITLE="@linnlabs/linnkit-provider-ai-sdk ${TAG}"
+          NOTES="packages/provider-ai-sdk/github-release-notes.md"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --title "$TITLE" --notes-file "$NOTES"
+          else
+            gh release create "$TAG" --title "$TITLE" --notes-file "$NOTES" --verify-tag
+          fi
