@@ -32,6 +32,7 @@ export const TOOL_CONTEXT_RUNTIME_RESERVED_KEYS = [
   'parentRunId',
   'childRunDepth',
   'parentToolCallId',
+  'modelInputAdmission',
 ] as const;
 
 const runtimeBindings = new WeakMap<ToolExecutionContext, ToolContextRuntimeBinding>();

@@ -33,6 +33,7 @@ import type {
   ContextBuildTokenEstimate,
   ContextTokenComponent,
   InternalLlmCallUsage,
+  PromptUsageMeasurementPolicy,
   RuntimeEvent,
   TokenCountConfidence,
   TokenCountSource,
@@ -45,12 +46,6 @@ import type {
   TokenizerPort,
 } from '../../../../ports';
 import type { RemoteTokenCountTrace } from '../../../shared/providers/base';
-import type { SummarizationProtectedRange } from '../../../shared/summarization/config';
-import {
-  LLM_IMAGE_INPUT_ERROR_CODES,
-  LlmImageInputError,
-} from '../../../../shared/llmImageInputError';
-import { buildImageProtectedMessageRanges } from './functions/imageInputProtection';
 
 interface ContextBuildTokenUsageMeasurement {
   source: TokenCountSource;
@@ -63,7 +58,6 @@ interface ContextBuildTokenUsageMeasurement {
  */
 export interface AgentProviderContext extends ProviderContext {
   agentRequest: AgentProfileRequest;
-  summarizationProtectedRanges?: readonly SummarizationProtectedRange[];
 }
 
 /**
@@ -77,9 +71,15 @@ export interface ContextBuildResult {
   tokenUsage: {
     used: number;
     remaining: number;
+    messageBudget: number;
+    inputBudget: number;
+    toolDefinitionTokens: number;
     source: TokenCountSource;
     confidence: TokenCountConfidence;
   };
+
+  /** Graph 对 reminder 后最终 Prompt 计数时复用的已解析策略。 */
+  promptUsageMeasurementPolicy: PromptUsageMeasurementPolicy;
   
   /** 处理统计信息 */
   processingStats: {
@@ -195,6 +195,10 @@ export class AgentContextManager extends ContextManagerBase<
     traceOptions?: {
       policy?: AgentSpecContextTracePolicy;
       effectiveContextPolicy?: AgentSpecContextPolicy;
+      budgetDetails?: {
+        inputBudgetTokens: number;
+        toolDefinitionTokens: number;
+      };
     },
   ): Promise<ContextBuildResult> {
     // 计算摘要触发相关信息
@@ -229,7 +233,6 @@ export class AgentContextManager extends ContextManagerBase<
         summarizationCallbacks: callbacks,
         generateSummary,
         agentRequest: request,
-        summarizationProtectedRanges: buildImageProtectedMessageRanges(preprocessedMessages),
       };
       const contextTrace = ContextTraceCollector.create({
         policy: traceOptions?.policy,
@@ -249,7 +252,6 @@ export class AgentContextManager extends ContextManagerBase<
           getPhaseByProviderName: getAgentBuildPhaseByProviderName,
           contextTrace,
         });
-      this.assertImageContextWithinBudget(finalMessages, finalTokens, totalBudget);
       const remoteCount = await this.countMessagesWithRemoteCounter({
         messages: finalMessages,
         localEstimateTokens: finalTokens,
@@ -298,6 +300,7 @@ export class AgentContextManager extends ContextManagerBase<
         tokenComponents,
         internalLlmCalls,
         imageInputAdmissionEvidence,
+        traceOptions?.budgetDetails,
       );
 
     } catch (error) {
@@ -355,6 +358,10 @@ export class AgentContextManager extends ContextManagerBase<
     tokenComponents?: ContextTokenComponent[],
     internalLlmCalls?: InternalLlmCallUsage[],
     imageInputAdmissionEvidence?: ImageInputAdmissionEvidence,
+    budgetDetails?: {
+      inputBudgetTokens: number;
+      toolDefinitionTokens: number;
+    },
   ): ContextBuildResult {
     const recommendations = this.generateRecommendations(buildStats, totalBudget);
     return buildContextResult({
@@ -369,6 +376,9 @@ export class AgentContextManager extends ContextManagerBase<
       coreTypes: this.config.CORE_MESSAGE_TYPES,
       recommendations,
       tokenUsageMeasurement,
+      inputBudgetTokens: budgetDetails?.inputBudgetTokens,
+      toolDefinitionTokens: budgetDetails?.toolDefinitionTokens,
+      promptUsageMeasurementPolicy: this.getPromptUsageMeasurementPolicy(),
       events,
       contextTrace,
       tokenEstimate,
@@ -416,30 +426,6 @@ export class AgentContextManager extends ContextManagerBase<
       initialProfileId,
       attachments,
     };
-  }
-
-  private assertImageContextWithinBudget(
-    finalMessages: readonly AiMessage[],
-    finalTokens: number,
-    inputBudget: number,
-  ): void {
-    const imageInputs = finalMessages.flatMap(message => this.estimateImageInputs(message));
-    if (imageInputs.length === 0 || finalTokens <= inputBudget) return;
-    const firstImage = imageInputs[0];
-    throw new LlmImageInputError(
-      LLM_IMAGE_INPUT_ERROR_CODES.CONTEXT_BUDGET_EXCEEDED,
-      'Image-protected context exceeds the active input budget.',
-      {
-        active_model_id: firstImage.activeModelId,
-        placement: firstImage.placement,
-        attachment_id: firstImage.attachmentId,
-        resource_id: firstImage.resourceId,
-        profile_id: firstImage.profileId,
-        limit_kind: 'context_tokens',
-        actual_value: finalTokens,
-        limit_value: inputBudget,
-      },
-    );
   }
 
   private buildContextTokenEstimate(

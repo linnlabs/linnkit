@@ -97,10 +97,10 @@ function createManagerWithRemoteCounter(input: {
 }
 
 const route: TokenRoute = {
-  providerId: 'openrouter',
+  capabilityId: 'openrouter',
   baseURL: 'https://openrouter.ai/api/v1',
   modelId: 'glm-via-openrouter',
-  providerModelId: 'z-ai/glm-4.5',
+  endpointModelId: 'z-ai/glm-4.5',
 };
 
 const remoteCountRoute: TokenRoute = {
@@ -111,10 +111,10 @@ const remoteCountRoute: TokenRoute = {
 };
 
 const otherRoute: TokenRoute = {
-  providerId: 'zai',
+  capabilityId: 'zai',
   baseURL: 'https://api.z.ai',
   modelId: 'glm-direct',
-  providerModelId: 'glm-4.5',
+  endpointModelId: 'glm-4.5',
 };
 
 const fixedTokenizer: TokenizerPort = {

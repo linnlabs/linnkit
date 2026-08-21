@@ -56,4 +56,35 @@ describe('LlmNode stream state', () => {
     });
     expect(patch.history).toEqual([prior, streamed]);
   });
+
+  it('一次性写回最近成功的 context usage，并允许 checkpoint 保留', () => {
+    const contextUsage = {
+      basis: 'last_completed_llm_prompt' as const,
+      budget_model_id: 'main-model',
+      used_tokens: 90,
+      components: {
+        system_prompt_tokens: 20,
+        conversation_tokens: 60,
+        tool_definition_tokens: 10,
+      },
+      component_attribution: 'normalized_local_estimate' as const,
+      input_budget_tokens: 100,
+      remaining_tokens: 10,
+      output_limit_tokens: 20,
+      source: 'local-estimate' as const,
+      confidence: 'estimate' as const,
+      measured_at: 123,
+    };
+    const patch = buildLocalPatch(
+      initLlmNodeState({ answerId: undefined, chunkSeq: 0 }),
+      {
+        conversationId: 'conv_1',
+        turnId: 'turn_1',
+        history: [],
+        contextUsage,
+      },
+    );
+
+    expect(patch.contextUsage).toEqual(contextUsage);
+  });
 });

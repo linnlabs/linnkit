@@ -211,6 +211,15 @@ class CreateArtifactTool extends BaseTool {
 
 ## 4. `parameters.required[]` 是强约束，不是提示
 
+### 4.1 模型合同必须可直接审查
+
+`parameters` 不只是运行时元数据，也是模型实际看到的调用合同。Concrete tool 应在自己的类文件中直接声明
+顶层 `properties`、`required` 和完整合法分支，使代码评审者不用追踪 factory / builder 就能看清全部输入面。
+独立、稳定的嵌套子合同可以提取复用；不要为了消除少量 `oneOf` 字段重复而隐藏整个模型 schema。
+
+正式 parser / DTO 仍应归属于 host 的合同层。JSON Schema 与 parser 必须同构，但 Linnkit 不要求、也不提供
+产品 schema builder：framework 无法替具体产品决定字段身份、错误码或分支语义。
+
 任何业务上"没有它就不能执行"的字段，**必须**放进 `required`。
 
 linnkit 的 `BaseTool.validateArguments()` 会在 `run` 之前自动校验：
@@ -233,6 +242,35 @@ for (const field of required) {
 - ❌ 在 `run` 里写 `if (!args.x) throw` → 协议级错误被误标为执行级错误，audit / telemetry / replay 全都失真
 
 **强约束的好处**：LLM 看到 `required` 列表后，会有更强的"必须传"心智；运行时拦截也能让 token 用尽更早暴露（避免 `run` 里走了 1/3 才发现缺字段）。
+
+### 4.2 判别联合必须与 owner admission 同构
+
+对象的合法字段随 `type` 等判别值变化时，使用 `oneOf` 声明完整分支。每个分支都应列出自己的
+`properties` / `required`，并设置 `additionalProperties: false`。不要把只属于某个分支的字段放进
+共享 `properties`，再依赖 description 告诉模型“其他类型不要传”；description 不是结构约束。
+
+`ToolParameterSchema` 支持嵌套 `oneOf`，Quickstart 与 provider adapter 会保留该结构。工具 owner 的
+`validateArguments` 必须使用同一判别联合规则，并在失败结果中保留 `questions[1].field` 这类具体路径，
+让模型能够修正原调用。
+
+`ToolParameterSchema` 是正式的可移植 JSON Schema 子集，不是任意字典。当前仅允许
+`string / number / integer / boolean / object / array`，以及合同中显式列出的长度、范围、`enum`、
+`properties`、`items`、`required`、`additionalProperties` 和 `oneOf`。工具注册时会语义校验：
+
+- root 必须是 object；
+- array 必须明确声明 items；
+- required 只能引用同一 object 已声明的字段；
+- 约束关键字必须与 type 匹配；
+- 超出子集的 schema 必须在注册/目录生成时失败，禁止在 Provider 请求时删字段或强制断言类型。
+
+`BaseTool.validateArguments()` 只提供 required 与 additional-properties 的通用浅层检查。类型、格式、
+跨字段互斥和判别联合必须由 concrete tool 覆盖 `validateArguments`，复用自己的正式 owner parser。
+ToolNode 的固定顺序是“规范化 → owner admission → `tool_process(start)` → execute”；因此只在 `run()`
+里 parse 会把协议错误错误地变成已经开始执行后的 execution failure。
+
+测试也必须覆盖这条边界：直接调用 `Tool.run()` 可以验证 owner 业务，但无法证明 start 前 admission。
+至少增加一条真实 `ToolNode + ToolRuntimeDefinition.validateArguments` 用例，断言无效参数不产生
+`tool_process(start)`、不调用 `executeTool`，只产生配对的 `tool_output(error)`。
 
 ---
 
@@ -365,6 +403,17 @@ host 必须通过 `ToolModelInputResolverPort` 把 selection 解析为当前 con
 
 静态只会产生图片的工具应在 definition 上声明 `tool_result_image` requirement，让 schema admission 和 fallback 提前排除不兼容模型。既能读文本又能读图片的动态工具不能把图片 requirement 写成静态要求；只有实际返回图片 selection 时，ToolNode 才执行 resolver 与二次能力门禁。
 
+如果工具的主操作不依赖模型读取图片，而图片只是成功后的增强反馈，应同时声明
+`modelInputDelivery='when_supported'`。这类工具对不兼容模型仍然可见并可执行；ToolNode 根据最近一次
+成功 LLM attempt 的真实模型和 route 写入 `ToolExecutionContext.modelInputAdmission`。工具必须在
+`admitted=true` 时才创建 selection 及其临时授权；`admitted=false` 时返回完整的文字与结构化主结果，
+不得先登记资源再靠 resolver capability error 降级。未配置 validator、模型不具备聊天资格、selection
+越权或内容损坏都不属于“模型不支持图片”的正常分支，仍须明确失败。
+
+`when_supported` 的增强附件也不属于工具幂等主结果。历史成功输出若来自视觉模型，当前非视觉模型
+命中缓存时只复用文字与结构化主结果，不能复用旧附件；当前视觉模型命中一条没有附件的历史结果时，
+也不为它补跑有副作用的工具或额外生成附件。
+
 动态工具的 `resolveModelInputRequirement(args)` 必须是只依赖规范化参数的确定性规则，不得执行 I/O。若 resolver 抛错，ToolNode 会把本次 call 作为 capability deny，生成稳定的 error `tool_output` 和 `tool.deny` 审计后继续消费同批 sibling calls；宿主异常原文不会回显给模型。resolver 不能用异常表达“本次不需要图片”，该场景应正常返回 `undefined`。
 
 历史 cache hit 不能直接复用旧 durable ref。它应复用原始结构化输出，再按当前 workspace scope 重新解析 selection；selection 已失效时明确失败，不能重跑有副作用的工具，也不能退化成“文本成功、图片丢失”。root 与 child runtime 应注入同一类窄 resolver/validator，child 仍受自己的模型和附件继承策略约束。
@@ -385,6 +434,8 @@ const toolRuntime = new QuickstartMemoryToolRuntime([
 ```
 
 生产 host 通常自己实现 `ToolRuntimePort`（由 `ToolCatalogPort` + `ToolExecutionPort` 组成），把工具与 host 的服务、权限串起来。UI 渲染 registry 属于产品 Renderer，不经过 Linnkit 工具合同——详见 [`tools.md`](./tools.md)。
+
+`ToolCatalogPort.getToolSchemas()` 接收 `ToolSchemaBuildRequest`。Linnkit 会转交本次通用 invocation，让 Host 能为 concrete tool 构建请求级 Schema；Linnkit 不读取其中的 Host 扩展字段。Host 必须在该边界完成字段验证，并派生只包含真实消费者所需字段的窄上下文；不要把 query/history 直接交给所有 concrete/plugin tools，也不要引入通用 `metadata`、`modelBindings` 或字符串 Map 来掩盖产品语义。
 
 ---
 
@@ -415,9 +466,11 @@ const toolRuntime = new QuickstartMemoryToolRuntime([
 | 工具内部决策 | 由谁负责 | 协议接入点 |
 |------------|---------|----------|
 | 工具名 / 描述 / 参数 schema | host（工具作者）| `BaseTool` |
+| 请求级动态参数 schema | host（工具注册表 + 工具 owner）| `ToolSchemaBuildRequest`；Linnkit 只转交通用 invocation |
 | 返回值结构（`data` / `observation` 分层）| host（工具作者）| `BaseTool.run` 返回字符串 |
 | 错误处理（throw vs 返回）| host（遵守 §3）| runtime 接住 throw → `tool_output.status = 'error'` |
-| 必填参数校验 | linnkit 协议层 | `BaseTool.validateArguments()` |
+| 顶层 required / unknown-field 浅校验 | linnkit 协议层 | `BaseTool.validateArguments()` 默认实现 |
+| 类型、格式、判别联合与跨字段深层 admission | host（工具 owner）| concrete tool 覆盖 `validateArguments()`；ToolNode 在 start 前调用 |
 | 幂等策略、key 与进程内复用 | linnkit 协议层 | `BaseTool.idempotency` + `computeToolIdempotencyKey` + ToolNode |
 | 跨进程强幂等 | host | 持久化锁或唯一索引；Linnkit 不提供虚假保证 |
 | 超长 observation 治理 | linnkit 协议层 + host | `contextPolicy.toolOutput.observationGovernance` + `ObservationPreviewPort` |
@@ -425,7 +478,7 @@ const toolRuntime = new QuickstartMemoryToolRuntime([
 | 工具配对一致性 | linnkit 协议层 | tool 配对不变量 C10 + `ToolReplayProtocolGuard` |
 | 交互工具的 wait_user 路由 | linnkit 协议层 | `WaitUserNode` + `requires_user_interaction` 事件 |
 | 工具图片 selection 与解析 | host 工具 + host resolver | `StructuredToolResult.modelInput` + `ToolModelInputResolverPort` |
-| 工具图片能力校验 | linnkit + host model catalog | definition requirement + `ToolModelInputCapabilityValidatorPort` |
+| 工具图片能力校验与可选交付 | linnkit + host model catalog | definition requirement/delivery + `ToolExecutionContext.modelInputAdmission` + `ToolModelInputCapabilityValidatorPort` |
 | `data` 字段名约定 / 前端 registry 注册 | host（工具作者 + 前端工程师）| linnkit 不规定 |
 | 工具的业务实现（数据库 / 外部服务调用）| host | linnkit 不规定 |
 
@@ -435,8 +488,10 @@ const toolRuntime = new QuickstartMemoryToolRuntime([
 
 - [ ] `name` 用 `snake_case`，在 host 工具集中唯一
 - [ ] `description` 包含 "When to Use"，写给 LLM 看
+- [ ] 顶层 `parameters.properties`、`required` 和完整合法分支可在 concrete tool 文件中直接审查，没有藏进 schema builder
 - [ ] 必填参数全部放进 `parameters.required[]`
 - [ ] `additionalProperties: false`（如果不希望 LLM 传额外字段）
+- [ ] 类型、格式、判别联合或跨字段规则由正式 owner parser 覆盖 `validateArguments`，与模型 JSON Schema 同构
 - [ ] `run` 返回 `JSON.stringify({ data, observation })`
 - [ ] `data` 给前端，`observation` 给 AI；不复制结构化 JSON 或大段正文，`observation` 自包含全部模型所需业务信息
 - [ ] `observation` 是包含非空白字符的纯文本、无 emoji、信息密度高；正文自然首尾空白不应被 `.trim()` 改写
@@ -446,7 +501,9 @@ const toolRuntime = new QuickstartMemoryToolRuntime([
 - [ ] 不在工具内部做超长截断 / 落盘——交给 `ObservationPreviewPort`
 - [ ] 如果是交互工具：第一段返回 `result.control.requireUser = true`，复活路径只从 `tool_call.arguments` 重建
 - [ ] 如果工具让模型读取图片：只返回稳定 asset selection，并验证 scope、cache replay、能力拒绝和附件顺序
+- [ ] 如果图片只是增强反馈：声明 `when_supported`，并在创建受管副本/临时授权前消费 runtime admission
 - [ ] 单测用 `createToolContextFixture()` 直接测 `tool.run(args, fixtureContext)`
+- [ ] 深层 admission 另有真实 `ToolNode + ToolRuntimeDefinition.validateArguments` 用例，证明错误参数不会发布 start 或进入 execute
 - [ ] 在 host 的 `ToolRuntimePort` 实例化里注册
 
 ---

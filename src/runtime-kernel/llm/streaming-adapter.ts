@@ -1,37 +1,82 @@
+import {
+  generateAnswerSegmentId,
+  generateInferenceAttemptId,
+  generateRuntimeEventId,
+  ToolCallIdSchema,
+  type AssistantReplayPart,
+  type CanonicalLlmUsage,
+  type ProviderContinuation,
+  type ToolCallId,
+} from '../../contracts';
+import type {
+  CanonicalInferenceEvent,
+  CanonicalInferenceFailureKind,
+  CanonicalInferencePort,
+  ResolvedLlmInputMessage,
+} from '../../ports';
 import type { AnyAgentEvent } from '../events/agentEvents';
-import { generateAnswerSegmentId, generateRuntimeEventId } from '../../contracts';
-import type { AgentAiEngine } from '../../ports';
-import { CanonicalLlmUsage } from '../../contracts';
-import type { CanonicalLlmUsage as CanonicalLlmUsageType } from '../../contracts';
-import type { ToolCallId } from '../../contracts';
-import type { LlmCallOptions, LlmResponseContent } from './caller.types';
-import type { ResolvedLlmInputMessage } from '../../ports';
-import { ToolCallStreamAccumulator } from './streaming/toolCallStreamAccumulator';
-import { ThoughtStreamSegmenter } from './streaming/thoughtStreamSegmenter';
-import { assertToolCallsHaveValidJsonArguments, isRecord } from './sidecar-replay';
-import type { LlmCallResult } from './usage-telemetry';
-import { appendStreamingProviderReasoningDetails } from './reasoning-details';
-import { Logger } from '../../shared/logger';
-import { ErrorClassifier, type ErrorClassification } from '../../shared/errorClassifier';
-import { createLlmAgentErrorEvent } from './functions/createLlmAgentErrorEvent';
 import type { ToolCallStreamingPolicy } from '../tools/toolContracts';
+import type { LlmCallOptions, ToolCall } from './caller.types';
+import { consumeCanonicalInferenceStream } from './canonical-inference';
+import { buildCanonicalInferenceRequest } from './canonical-inference/functions/buildCanonicalInferenceRequest';
+import { createLlmAgentErrorEvent } from './functions/createLlmAgentErrorEvent';
+import { ThoughtStreamSegmenter } from './streaming/thoughtStreamSegmenter';
+import { ErrorClassifier, type ErrorClassification } from '../../shared/errorClassifier';
+import { Logger } from '../../shared/logger';
+import type { LlmCallResult } from './usage-telemetry';
 
 const logger = new Logger('LlmCaller');
 
+class CanonicalInferenceFailureError extends Error {
+  readonly errorCode: string;
+  readonly recoverable: boolean;
+  readonly metadata: Record<string, unknown>;
+
+  constructor(failure: {
+    readonly kind: CanonicalInferenceFailureKind;
+    readonly code: string;
+    readonly retryable: boolean;
+  }, abortReason?: unknown) {
+    const message = failure.kind === 'aborted' && typeof abortReason === 'string'
+      ? abortReason
+      : failure.kind === 'aborted' && abortReason instanceof Error
+        ? abortReason.message
+        : `Canonical inference failed: ${failure.code}`;
+    super(message);
+    this.name = failure.kind === 'aborted' ? 'AbortError' : 'CanonicalInferenceFailureError';
+    this.errorCode = `llm.${failure.code}`;
+    this.recoverable = failure.retryable;
+    this.metadata = { failure_kind: failure.kind, provider_code: failure.code };
+  }
+}
+
+interface OpenToolCall {
+  readonly partIndex: number;
+  readonly id?: string;
+  readonly name?: string;
+  json: string;
+  lastSnapshot?: string;
+}
+
+function isUnknownRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
 export interface CallLlmStreamParams {
-  aiEngine: AgentAiEngine;
+  inferencePort: CanonicalInferencePort;
   modelId: string;
   messages: ResolvedLlmInputMessage[];
   options?: LlmCallOptions;
-  eventHandler: (event: AnyAgentEvent) => void;
+  eventHandler?: (event: AnyAgentEvent) => void;
   onErrorClassification?: (classification: ErrorClassification) => void;
   signal?: AbortSignal;
   toolCallStreamingPolicies?: Readonly<Record<string, ToolCallStreamingPolicy>>;
+  traceId?: string;
 }
 
 export async function callLlmStream(params: CallLlmStreamParams): Promise<LlmCallResult> {
   const {
-    aiEngine,
+    inferencePort,
     modelId,
     messages,
     options = {},
@@ -39,22 +84,35 @@ export async function callLlmStream(params: CallLlmStreamParams): Promise<LlmCal
     onErrorClassification,
     signal,
     toolCallStreamingPolicies = {},
+    traceId,
   } = params;
-
-  let fullResponse = '';
-  let streamError: Error | null = null;
-  let reasoningDetails: unknown[] = [];
+  const attemptId = generateInferenceAttemptId();
   const streamAnswerId = generateAnswerSegmentId();
-  let streamChunkSeq = 0;
-  let capturedUsage: unknown | undefined = undefined;
-  let capturedCanonicalUsage: CanonicalLlmUsageType | undefined = undefined;
-
-  const toolAccumulator = new ToolCallStreamAccumulator(toolCallStreamingPolicies);
   const thoughtSegmenter = new ThoughtStreamSegmenter();
+  const openToolCalls = new Map<number, OpenToolCall>();
+  const completedToolCalls = new Map<number, ToolCall>();
+  const emittedPlaceholderIds = new Set<string>();
+  let fullResponse = '';
+  let streamChunkSeq = 0;
+  const providerContinuations: ProviderContinuation[] = [];
+  const assistantReplayParts = new Map<number, AssistantReplayPart>();
+  let canonicalUsage: CanonicalLlmUsage | undefined;
 
+  const emit = (event: AnyAgentEvent): void => eventHandler?.(event);
+  const appendContinuations = (continuations: readonly ProviderContinuation[]): void => {
+    if (continuations.length > 0) {
+      providerContinuations.push(...continuations);
+      emit({
+        type: 'provider_continuation',
+        id: generateRuntimeEventId(),
+        timestamp: Date.now(),
+        continuations: [...continuations],
+      });
+    }
+  };
   const emitThoughtComplete = (completed: ReturnType<ThoughtStreamSegmenter['finalize']>): void => {
     if (!completed) return;
-    eventHandler({
+    emit({
       type: 'thought',
       thought_message_id: completed.thoughtMessageId,
       id: generateRuntimeEventId(),
@@ -68,13 +126,16 @@ export async function callLlmStream(params: CallLlmStreamParams): Promise<LlmCal
     });
   };
 
-  const emitToolCallPlaceholder = (toolCallId: ToolCallId, toolName: string): void => {
-    if (!toolCallId || !toolName) return;
-    eventHandler({
+  const emitPlaceholder = (id: string, name: string): void => {
+    if (toolCallStreamingPolicies[name]?.emitPlaceholder !== true) return;
+    if (emittedPlaceholderIds.has(id)) return;
+    emittedPlaceholderIds.add(id);
+    const toolCallId: ToolCallId = ToolCallIdSchema.parse(id);
+    emit({
       type: 'tool_process',
       id: generateRuntimeEventId(),
       timestamp: Date.now(),
-      tool_name: toolName,
+      tool_name: name,
       tool_args: {},
       tool_call_id: toolCallId,
       phase: 'start',
@@ -84,185 +145,173 @@ export async function callLlmStream(params: CallLlmStreamParams): Promise<LlmCal
     });
   };
 
-  const emitStreamChunk = (content: string): void => {
-    eventHandler({
-      type: 'stream_chunk',
+  const emitArgumentSnapshot = (toolCall: OpenToolCall): void => {
+    if (!toolCall.id || !toolCall.name) return;
+    if (toolCallStreamingPolicies[toolCall.name]?.emitArgumentSnapshots !== true) return;
+    if (!toolCall.json || toolCall.lastSnapshot === toolCall.json) return;
+    const parsed: unknown = JSON.parse(toolCall.json);
+    if (!isUnknownRecord(parsed)) return;
+    toolCall.lastSnapshot = toolCall.json;
+    const toolCallId: ToolCallId = ToolCallIdSchema.parse(toolCall.id);
+    emit({
+      type: 'tool_process',
+      id: generateRuntimeEventId(),
       timestamp: Date.now(),
-      content,
-      id: generateRuntimeEventId(),
-      answer_id: streamAnswerId,
-      seq: streamChunkSeq++,
+      tool_name: toolCall.name,
+      tool_args: parsed,
+      tool_call_id: toolCallId,
+      phase: 'update',
+      status: 'loading',
+      payload: { args: parsed },
+      meta: { ephemeral: true },
     });
   };
 
-  const onContent = (chunk: string | LlmResponseContent): void => {
-    if (typeof chunk === 'string') {
-      emitThoughtComplete(thoughtSegmenter.onBoundary());
-      fullResponse += chunk;
-      emitStreamChunk(chunk);
-      return;
-    }
-
-    if (typeof chunk !== 'object' || chunk === null) {
-      return;
-    }
-
-    const parsedCanonicalUsage = CanonicalLlmUsage.safeParse(chunk.canonicalUsage);
-    if (parsedCanonicalUsage.success) {
-      capturedCanonicalUsage = parsedCanonicalUsage.data;
-    }
-
-    if (chunk.content) {
-      emitThoughtComplete(thoughtSegmenter.onBoundary());
-      fullResponse += chunk.content;
-      emitStreamChunk(chunk.content);
-    }
-
-    const reasoning = isRecord(chunk) ? chunk['reasoning_details'] : undefined;
-    if (reasoning !== undefined) {
-      const newReasoningDetails = Array.isArray(reasoning) ? reasoning : [reasoning];
-      const previousReasoningDetails = reasoningDetails;
-      const previousLength = previousReasoningDetails.length;
-      const compactedReasoningDetails = appendStreamingProviderReasoningDetails(
-        reasoningDetails,
-        newReasoningDetails
-      );
-      reasoningDetails = compactedReasoningDetails;
-      const previousLastChanged =
-        previousLength > 0 &&
-        compactedReasoningDetails[previousLength - 1] !==
-          previousReasoningDetails[previousLength - 1];
-      const emitFromIndex = previousLastChanged ? previousLength - 1 : previousLength;
-      const emittedReasoningDetails = compactedReasoningDetails.slice(Math.max(0, emitFromIndex));
-      if (emittedReasoningDetails.length > 0) {
-        eventHandler({
-          type: 'provider_sidecar',
-          id: generateRuntimeEventId(),
+  const handleEvent = (event: CanonicalInferenceEvent): void => {
+    switch (event.type) {
+      case 'start':
+      case 'finish':
+      case 'failure':
+        return;
+      case 'answer_delta':
+        emitThoughtComplete(thoughtSegmenter.onBoundary());
+        fullResponse += event.text;
+        emit({
+          type: 'stream_chunk',
           timestamp: Date.now(),
-          reasoning_details: emittedReasoningDetails,
+          content: event.text,
+          id: generateRuntimeEventId(),
+          answer_id: streamAnswerId,
+          seq: streamChunkSeq++,
         });
+        return;
+      case 'thought_delta': {
+        const delta = thoughtSegmenter.onThoughtDelta(event.text);
+        if (!delta) return;
+        emit({
+          type: 'thought',
+          thought_message_id: delta.thoughtMessageId,
+          id: generateRuntimeEventId(),
+          timestamp: delta.timestamp,
+          content: '',
+          delta: delta.delta,
+          is_complete: false,
+          meta: { thought_started_at: delta.thoughtStartedAt },
+        });
+        return;
       }
-    }
-
-    if (chunk.tool_calls) {
-      emitThoughtComplete(thoughtSegmenter.onBoundary());
-      toolAccumulator.applyChunks(
-        chunk.tool_calls,
-        emitToolCallPlaceholder,
-        (toolCallId, toolName, args) => {
-          eventHandler({
-            type: 'tool_process',
-            id: generateRuntimeEventId(),
-            timestamp: Date.now(),
-            tool_name: toolName,
-            tool_args: args,
-            tool_call_id: toolCallId,
-            phase: 'update',
-            status: 'loading',
-            payload: { args },
-            meta: { ephemeral: true },
-          });
+      case 'tool_call_start': {
+        emitThoughtComplete(thoughtSegmenter.onBoundary());
+        const openToolCall: OpenToolCall = {
+          partIndex: event.part_index,
+          id: event.id,
+          name: event.name,
+          json: '',
+        };
+        openToolCalls.set(event.index, openToolCall);
+        if (event.id && event.name) emitPlaceholder(event.id, event.name);
+        return;
+      }
+      case 'tool_argument_delta': {
+        const openToolCall = openToolCalls.get(event.index);
+        if (!openToolCall) return;
+        openToolCall.json += event.json_delta;
+        try {
+          emitArgumentSnapshot(openToolCall);
+        } catch (error) {
+          if (!(error instanceof SyntaxError)) throw error;
         }
-      );
-    }
-  };
-
-  const onError = (error: Error): void => {
-    streamError = error;
-    if (error.name === 'AbortError') {
-      logger.info('LLM 流收到 AbortError，不发布普通 error event', {
-        modelId,
-        reason: signal?.reason,
-      });
-      return;
-    }
-    const classification = ErrorClassifier.classify(error, { logPrefix: '[LlmCaller:stream]' });
-    onErrorClassification?.(classification);
-    if (process.env.NODE_ENV !== 'production') {
-      logger.error('callStream onError fired', {
-        modelId,
-        messageCount: Array.isArray(messages) ? messages.length : -1,
-        errorMessage: error?.message,
-      });
-    }
-    eventHandler(createLlmAgentErrorEvent(error, classification));
-  };
-
-  const onFinish = (_reason: string): void => {
-    // onFinish 不发送运行或传输终态；两者分别由 Host settlement 与 transport owner 处理。
-  };
-
-  const onThought = (thought: string): void => {
-    const delta = thoughtSegmenter.onThoughtDelta(thought);
-    if (!delta) return;
-
-    eventHandler({
-      type: 'thought',
-      thought_message_id: delta.thoughtMessageId,
-      id: generateRuntimeEventId(),
-      timestamp: delta.timestamp,
-      content: '',
-      delta: delta.delta,
-      is_complete: false,
-      meta: {
-        thought_started_at: delta.thoughtStartedAt,
-      },
-    });
-  };
-
-  const onUsage = (usage: unknown): void => {
-    capturedUsage = usage;
-  };
-
-  const onCanonicalUsage = (usage: CanonicalLlmUsageType): void => {
-    const parsed = CanonicalLlmUsage.safeParse(usage);
-    if (parsed.success) {
-      capturedCanonicalUsage = parsed.data;
+        return;
+      }
+      case 'tool_call_end':
+        emitPlaceholder(event.call.id, event.call.name);
+        completedToolCalls.set(event.index, {
+          id: event.call.id,
+          type: 'function',
+          function: {
+            name: event.call.name,
+            arguments: JSON.stringify(event.call.arguments),
+          },
+        });
+        const completedOpenToolCall = openToolCalls.get(event.index);
+        if (!completedOpenToolCall) {
+          throw new Error(`[CanonicalInference] tool index ${event.index} 缺少 open state。`);
+        }
+        assistantReplayParts.set(completedOpenToolCall.partIndex, {
+          type: 'tool_call',
+          tool_call_id: event.call.id,
+          ...(event.call.continuation?.length
+            ? { provider_continuations: [...event.call.continuation] }
+            : {}),
+        });
+        if (event.call.continuation?.length) appendContinuations(event.call.continuation);
+        openToolCalls.delete(event.index);
+        return;
+      case 'assistant_part_end': {
+        const continuations = event.part.continuation ?? [];
+        assistantReplayParts.set(event.index, {
+          type: event.part.type,
+          text: event.part.text,
+          ...(continuations.length
+            ? { provider_continuations: [...continuations] }
+            : {}),
+        });
+        if (continuations.length) appendContinuations(continuations);
+        return;
+      }
+      case 'usage':
+        canonicalUsage = event.usage;
+        return;
     }
   };
 
   try {
-    await aiEngine.chatCompletionStream(
-      modelId,
-      messages,
-      {
-        ...options,
+    const terminal = await consumeCanonicalInferenceStream(
+      inferencePort.stream(buildCanonicalInferenceRequest({
+        model_id: modelId,
+        messages,
+        options,
         signal,
-        stream_options: { include_usage: true },
-      },
-      onContent,
-      onError,
-      onFinish,
-      onThought,
-      onUsage,
-      onCanonicalUsage
+        trace_id: traceId,
+        attempt_id: attemptId,
+      })),
+      handleEvent
     );
+    if (terminal.type === 'failure') {
+      throw new CanonicalInferenceFailureError(terminal, signal?.reason);
+    }
+  } catch (error) {
+    const normalized = error instanceof Error ? error : new Error(String(error));
+    if (normalized.name === 'AbortError') {
+      logger.info('Canonical inference 收到取消终态，不发布普通 error event', { modelId });
+      throw normalized;
+    }
+    const classification = ErrorClassifier.classify(normalized, {
+      logPrefix: '[LlmCaller:canonical-stream]',
+    });
+    onErrorClassification?.(classification);
+    emit(createLlmAgentErrorEvent(normalized, classification));
+    throw normalized;
   } finally {
-    // Provider 正常完成、回调报错和用户取消都结束了当前 thought 段。
-    // 必须在 provider 边界封口，不能让 Renderer 根据 transport/run 状态猜测。
     emitThoughtComplete(thoughtSegmenter.finalize());
   }
 
-  if (streamError) {
-    throw streamError;
-  }
-
-  const mergedToolCalls = toolAccumulator.getToolCalls();
-  assertToolCallsHaveValidJsonArguments(mergedToolCalls);
-  if (
-    mergedToolCalls.length > 0 ||
-    reasoningDetails.length > 0 ||
-    capturedUsage !== undefined ||
-    capturedCanonicalUsage !== undefined
-  ) {
-    return {
-      content: fullResponse,
-      tool_calls: mergedToolCalls,
-      reasoning_details: reasoningDetails.length > 0 ? reasoningDetails : undefined,
-      ...(capturedUsage !== undefined ? { usage: capturedUsage } : {}),
-      ...(capturedCanonicalUsage !== undefined ? { canonicalUsage: capturedCanonicalUsage } : {}),
-    };
-  }
-
-  return fullResponse;
+  const toolCalls = [...completedToolCalls.entries()]
+    .sort(([left], [right]) => left - right)
+    .map(([, toolCall]) => toolCall);
+  return {
+    content: fullResponse,
+    ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
+    ...(providerContinuations.length > 0
+      ? { provider_continuations: providerContinuations }
+      : {}),
+    ...(assistantReplayParts.size > 0
+      ? {
+          assistant_replay_parts: [...assistantReplayParts.entries()]
+            .sort(([left], [right]) => left - right)
+            .map(([, part]) => part),
+        }
+      : {}),
+    ...(canonicalUsage ? { canonicalUsage } : {}),
+  };
 }

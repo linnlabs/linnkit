@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createTestTickPipelineContext } from '../__tests__/createTestTickPipelineContext';
 import { runTickPipeline } from '../runTickPipeline';
 import type { TickStage } from '../types';
+import type { FunctionToolSchema } from '../../../tools/toolContracts';
 
 const getModelByIdMock = vi.fn();
 
@@ -50,6 +51,10 @@ describe('createPrepareCallStage', () => {
     await runStage(ctx, stage);
 
     expect(modelResolver.resolveModelId).toHaveBeenCalledWith('requested-model');
+    expect(toolCatalog.getToolSchemas).toHaveBeenCalledWith({
+      toolNames: ctx.request.availableTools,
+      invocation: ctx.request,
+    });
     expect(ctx.modelId).toBe('resolved-model');
   });
 
@@ -60,13 +65,13 @@ describe('createPrepareCallStage', () => {
       modelResolver: { resolveModelId: vi.fn(() => 'resolved-model') },
       modelCatalog: { getModelById: getModelByIdMock },
       toolCatalog: {
-        getToolSchemas: vi.fn(() => [
+        getToolSchemas: vi.fn((): FunctionToolSchema[] => [
           {
             type: 'function' as const,
             function: {
               name: 'preview_tool',
               description: 'preview',
-              parameters: { type: 'object' },
+              parameters: { type: 'object', properties: {} },
             },
           },
         ]),
@@ -82,6 +87,52 @@ describe('createPrepareCallStage', () => {
     expect(ctx.toolCallStreamingPolicies).toEqual({
       preview_tool: { emitPlaceholder: true },
     });
+  });
+
+  it('用当前模型的 tokenizer 估算最终 Tool definitions，并写入独立预算项', async () => {
+    const { createPrepareCallStage } = await import('./prepareCallStage');
+    const ctx = createContext();
+    const estimateText = vi.fn(() => 137);
+    ctx.tokenizer = {
+      estimateText,
+      estimateMessage: vi.fn(() => 0),
+    };
+    const stage = createPrepareCallStage({
+      modelResolver: { resolveModelId: vi.fn(() => 'resolved-model') },
+      modelCatalog: { getModelById: getModelByIdMock },
+      toolCatalog: {
+        getToolSchemas: vi.fn((): FunctionToolSchema[] => [
+          {
+            type: 'function',
+            function: {
+              name: 'preview_tool',
+              description: 'preview',
+              parameters: { type: 'object', properties: {} },
+            },
+          },
+        ]),
+        getToolDefinition: vi.fn(() => ({
+          parameters: { type: 'object' as const, properties: {} },
+        })),
+      },
+    });
+
+    await runStage(ctx, stage);
+
+    expect(ctx.toolDefinitionTokens).toBe(137);
+    expect(estimateText).toHaveBeenCalledWith(
+      JSON.stringify({
+        tools: [
+          {
+            name: 'preview_tool',
+            description: 'preview',
+            parameters: { type: 'object', properties: {} },
+          },
+        ],
+        tool_choice: 'auto',
+      }),
+      'resolved-model'
+    );
   });
 
   it('run 内续跑时，cloud 模型应附加 quota fallback 选项', async () => {
@@ -276,16 +327,16 @@ describe('createPrepareCallStage', () => {
   it('只向当前模型暴露兼容的静态图片工具，并聚合实际暴露工具 requirement', async () => {
     const { createPrepareCallStage } = await import('./prepareCallStage');
     const ctx = createContext();
-    const textSchema = {
-      type: 'function' as const,
+    const textSchema: FunctionToolSchema = {
+      type: 'function',
       function: {
         name: 'text_tool',
         description: 'text',
         parameters: { type: 'object', properties: {} },
       },
     };
-    const imageSchema = {
-      type: 'function' as const,
+    const imageSchema: FunctionToolSchema = {
+      type: 'function',
       function: {
         name: 'image_tool',
         description: 'image',
@@ -327,11 +378,53 @@ describe('createPrepareCallStage', () => {
     });
   });
 
+  it('非视觉模型仍可见 when_supported 图片结果工具且初始请求不携带图片 requirement', async () => {
+    const { createPrepareCallStage } = await import('./prepareCallStage');
+    const ctx = createContext();
+    const imageSchema: FunctionToolSchema = {
+      type: 'function',
+      function: {
+        name: 'generate_image',
+        description: 'generate image',
+        parameters: { type: 'object', properties: {} },
+      },
+    };
+    getModelByIdMock.mockReturnValue({
+      id: 'text-model',
+      enabled: true,
+      capabilities: ['chat'],
+      adapter_input_support: { user_image: false, tool_result_image: false },
+    });
+    const stage = createPrepareCallStage({
+      modelResolver: { resolveModelId: vi.fn(() => 'text-model') },
+      modelCatalog: { getModelById: getModelByIdMock },
+      toolCatalog: {
+        getToolSchemas: vi.fn(() => [imageSchema]),
+        getToolDefinition: vi.fn(() => ({
+          parameters: { type: 'object' as const, properties: {} },
+          modelInputRequirement: {
+            requires_image_input: true,
+            placements: ['tool_result_image'] as const,
+          },
+          modelInputDelivery: 'when_supported' as const,
+        })),
+      },
+    });
+
+    await runStage(ctx, stage);
+
+    expect(ctx.toolSchemas.map(schema => schema.function.name)).toEqual(['generate_image']);
+    expect(ctx.toolModelInputRequirement).toEqual({
+      requires_image_input: false,
+      placements: [],
+    });
+  });
+
   it('兼容模型保留静态图片工具，动态工具未声明 requirement 时不被整体隐藏', async () => {
     const { createPrepareCallStage } = await import('./prepareCallStage');
     const ctx = createContext();
-    const schemas = ['resource_read', 'image_tool'].map(name => ({
-      type: 'function' as const,
+    const schemas: FunctionToolSchema[] = ['resource_read', 'image_tool'].map(name => ({
+      type: 'function',
       function: {
         name,
         description: name,

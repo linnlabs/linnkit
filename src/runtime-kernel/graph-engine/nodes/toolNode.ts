@@ -12,11 +12,7 @@ import type {
   RuntimeResourceRef,
   ToolCallId,
 } from '../../../contracts';
-import {
-  parseRuntimeEvents,
-  runIdFromTurnId,
-  toSerializableJsonValue,
-} from '../../../contracts';
+import { parseRuntimeEvents, runIdFromTurnId, toSerializableJsonValue } from '../../../contracts';
 import type { ToolControlInfo } from '../../tools/ui-types';
 import type {
   ObservationPreviewPort,
@@ -26,6 +22,8 @@ import type {
   ToolModelInputCapabilityValidatorPort,
 } from '../../tools/ports';
 import type { ToolModelInputResolverPort } from '../../tools/model-input';
+import type { ToolModelInputDelivery } from '../../tools/model-input';
+import type { ModelInputRequirement } from '../../llm/input-capabilities';
 import { resolveToolModelInput } from '../../tools/model-input';
 import type { GraphNode, EngineState, NodeResult, StandardToolCall } from '../types';
 import { resolveFinalAnswerFromToolControl } from './toolNode.finalAnswerProjector';
@@ -61,6 +59,7 @@ import {
   settlePendingToolCallsAfterAbort,
   settleToolCallsAfterExecutionAbort,
 } from './toolNode.cancellation';
+import { recordToolProtocolError } from '../../../shared/llmAuditRecorder';
 
 const logger = new Logger('ToolNode');
 
@@ -126,6 +125,33 @@ function formatCapabilityError(error: unknown): string {
     }
   }
   return error instanceof Error ? error.message : String(error);
+}
+
+function bindModelInputAdmission(input: {
+  readonly context: PreparedToolNodeContext['toolContext'];
+  readonly requirement: ModelInputRequirement;
+  readonly delivery: ToolModelInputDelivery;
+  readonly admitted: boolean;
+}): void {
+  input.context.modelInputAdmission = Object.freeze({
+    requirement: Object.freeze({
+      ...input.requirement,
+      placements: Object.freeze([...input.requirement.placements]),
+    }),
+    delivery: input.delivery,
+    admitted: input.admitted,
+  });
+}
+
+function isOptionalImageInputIncompatibility(reason: string): boolean {
+  return reason === 'image_input_unsupported' || reason === 'placement_unsupported';
+}
+
+function shouldDeliverToolModelInput(input: {
+  readonly context: PreparedToolNodeContext['toolContext'];
+  readonly delivery: ToolModelInputDelivery;
+}): boolean {
+  return input.delivery === 'required' || input.context.modelInputAdmission?.admitted === true;
 }
 
 type ToolNodeSuccessContext = PreparedToolNodeContext & {
@@ -262,6 +288,14 @@ export class ToolNode implements GraphNode {
     runId?: RunId;
     parentRunId?: RunId;
   }): Promise<void> {
+    recordToolProtocolError({
+      toolName: args.toolName,
+      ...(args.toolCallId === undefined ? {} : { toolCallId: args.toolCallId }),
+      ...(args.rawArguments === undefined ? {} : { rawArguments: args.rawArguments }),
+      parsedArguments: args.parsedArguments,
+      error: args.error,
+    });
+
     const metadata = {
       ...(args.rawArguments === undefined ? {} : { rawArguments: args.rawArguments }),
       parsedArguments: args.parsedArguments,
@@ -349,6 +383,9 @@ export class ToolNode implements GraphNode {
       return { kind: 'yield', events: [] };
     }
 
+    // ToolContext 会在同一 run 内复用；每次调用都必须先清除上一工具的准入事实。
+    delete prepared.toolContext.modelInputAdmission;
+
     if (typeof execution.protocolError === 'string') {
       return this.handleError({
         ...prepared,
@@ -388,6 +425,7 @@ export class ToolNode implements GraphNode {
     if (execution.modelInputRequirement?.requires_image_input === true) {
       const activeModelId = readLastSuccessfulLlmModelId(prepared.local);
       let capabilityError: string | undefined;
+      let admitted = true;
       if (!activeModelId) {
         capabilityError =
           'llm.unsupported_capability: missing successful LLM model for tool input validation';
@@ -395,13 +433,36 @@ export class ToolNode implements GraphNode {
         capabilityError =
           'llm.unsupported_capability: tool model input validator is not configured';
       } else {
-        try {
-          this.modelInputCapabilityValidator.assertCompatible({
-            activeModelId,
-            requirement: execution.modelInputRequirement,
-          });
-        } catch (error) {
-          capabilityError = formatCapabilityError(error);
+        const validationInput = {
+          activeModelId,
+          requirement: execution.modelInputRequirement,
+        };
+        if (execution.modelInputDelivery === 'when_supported') {
+          try {
+            const compatibility = this.modelInputCapabilityValidator.evaluate(validationInput);
+            if (!compatibility.compatible) {
+              if (isOptionalImageInputIncompatibility(compatibility.reason)) {
+                admitted = false;
+                logger.debug('optional tool model input omitted for incompatible active model', {
+                  toolName: execution.toolName,
+                  activeModelId,
+                  reason: compatibility.reason,
+                  placements: execution.modelInputRequirement.placements,
+                });
+              } else {
+                this.modelInputCapabilityValidator.assertCompatible(validationInput);
+                capabilityError = 'llm.unsupported_capability: active model is not eligible';
+              }
+            }
+          } catch (error) {
+            capabilityError = formatCapabilityError(error);
+          }
+        } else {
+          try {
+            this.modelInputCapabilityValidator.assertCompatible(validationInput);
+          } catch (error) {
+            capabilityError = formatCapabilityError(error);
+          }
         }
       }
 
@@ -422,6 +483,13 @@ export class ToolNode implements GraphNode {
           bridge: execution.bridge,
         });
       }
+
+      bindModelInputAdmission({
+        context: prepared.toolContext,
+        requirement: execution.modelInputRequirement,
+        delivery: execution.modelInputDelivery,
+        admitted,
+      });
     }
 
     await this.emitToolDecisionAudit({
@@ -475,9 +543,16 @@ export class ToolNode implements GraphNode {
             bridge: execution.bridge,
           });
         }
-        let attachments: readonly RuntimeResourceRef[] | undefined = exec.cachedAttachments;
+        const deliverModelInput = shouldDeliverToolModelInput({
+          context: prepared.toolContext,
+          delivery: execution.modelInputDelivery,
+        });
+        // 可选附件不是幂等业务结果的一部分。缓存可能来自视觉模型，当前模型不兼容时不得复用。
+        let attachments: readonly RuntimeResourceRef[] | undefined = deliverModelInput
+          ? exec.cachedAttachments
+          : undefined;
         try {
-          if (!attachments) {
+          if (deliverModelInput && !attachments) {
             attachments = await resolveToolModelInput({
               activeModelId: readLastSuccessfulLlmModelId(prepared.local),
               toolName: execution.toolName,
@@ -575,9 +650,10 @@ export class ToolNode implements GraphNode {
       return this.handleRequireUserSuccess({ ...context, control });
     }
 
-    const presentationMedia = context.parsed.media === undefined
-      ? undefined
-      : toSerializableJsonValue(context.parsed.media);
+    const presentationMedia =
+      context.parsed.media === undefined
+        ? undefined
+        : toSerializableJsonValue(context.parsed.media);
     const toolOutputMetadata = {
       ...(context.exec.idempotency
         ? {
@@ -590,9 +666,7 @@ export class ToolNode implements GraphNode {
       ...(observationGovernance.observationTruncation
         ? { observationTruncation: observationGovernance.observationTruncation }
         : {}),
-      ...(presentationMedia !== undefined
-        ? { presentation: { media: presentationMedia } }
-        : {}),
+      ...(presentationMedia !== undefined ? { presentation: { media: presentationMedia } } : {}),
     };
     context.bridge.emitToolOutput(
       {
@@ -691,11 +765,14 @@ export class ToolNode implements GraphNode {
     });
 
     const error = context.exec.error || 'tool_error';
-    context.bridge.emitToolOutput({
-      status: 'error',
-      observation: error,
-      error,
-    }, { durationMs: context.exec.durationMs });
+    context.bridge.emitToolOutput(
+      {
+        status: 'error',
+        observation: error,
+        error,
+      },
+      { durationMs: context.exec.durationMs }
+    );
 
     const fuse = checkProtocolFuse({
       local: context.local,

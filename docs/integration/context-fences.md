@@ -179,7 +179,7 @@ const orchestrator = new agentOrchestration.AgentMessageOrchestrator({
   taskResolver: myAgentTaskResolver,
   providerRegistry: myProviderRegistry,
   fenceRegistry: myFenceRegistry,              // ← 关键：让 BaseAgentTask 认识 host 的 fence
-  // host 可以保留模型级 provider replay 默认；单个 agent 可用 contextPolicy.providerReplay 覆盖。
+  // provider replay 要求只能由 host 根据显式 inference route 注入，AgentSpec 不可覆盖。
   resolveToolReplayProtocolPolicy: ({ modelId }) => myToolReplayPolicy(modelId),
   resolveContextPolicy: request => mergeContextPolicy({
     hostFallback: hostContextPolicyFallback,
@@ -273,7 +273,7 @@ formatAgentLlmMessages(..., { fenceRegistry })
   │  · 对尚未组装的 context_injection，找到 metadata.fenceKind → registry.get(kind).formatter(content, attrs)
   │  · 出关成具体 LLM messages（system / user 各按 llmRole）；不盲目合并相邻 user 消息
   ▼
-AgentAiEngine.chatCompletionStream(llmMessages, ...)
+CanonicalInferencePort.stream(canonicalRequest)
 ```
 
 ## 8. 你不要做的

@@ -10,10 +10,10 @@ import {
   extractResponseText,
   normalizeToolCalls,
   parsePrimaryToolArgs,
-  resolveReasoningDetails,
+  resolveProviderContinuations,
+  resolveAssistantReplayParts,
   resolveToolCalls,
 } from '../helpers';
-import { toSerializableJsonValue } from '../../../../contracts';
 
 export function createBuildDecisionStage(): TickStage {
   return defineTickStage({
@@ -26,12 +26,8 @@ export function createBuildDecisionStage(): TickStage {
         ? ctx.outputProcessor.processResponse(rawRespText)
         : rawRespText;
       const toolCallsRaw = resolveToolCalls(ctx.llmResp);
-      const reasoningDetailsRaw = resolveReasoningDetails(ctx.llmResp);
-      const reasoningDetails = Array.isArray(reasoningDetailsRaw)
-        ? reasoningDetailsRaw
-            .map(item => toSerializableJsonValue(item))
-            .filter((item): item is NonNullable<typeof item> => item !== undefined)
-        : undefined;
+      const providerContinuations = resolveProviderContinuations(ctx.llmResp);
+      const assistantReplayParts = resolveAssistantReplayParts(ctx.llmResp);
       const toolCalls = ctx.forceFinalAnswer ? undefined : toolCallsRaw;
 
       if (toolCalls?.length) {
@@ -64,8 +60,11 @@ export function createBuildDecisionStage(): TickStage {
           payload: {
             args: primaryArgs,
             tool_calls: normalizedToolCalls,
-            ...(reasoningDetails && reasoningDetails.length > 0
-              ? { reasoning_details: reasoningDetails }
+            ...(providerContinuations?.length
+              ? { provider_continuations: providerContinuations }
+              : {}),
+            ...(assistantReplayParts?.length
+              ? { assistant_replay_parts: assistantReplayParts }
               : {}),
           },
           meta: {
@@ -87,9 +86,9 @@ export function createBuildDecisionStage(): TickStage {
 
       if (respText.trim().length > 0) {
         const answerId = generateAnswerSegmentId();
-        const finalAnswerSidecar =
-          reasoningDetails && reasoningDetails.length > 0
-            ? { reasoning_details: reasoningDetails }
+        const finalAnswerContinuation =
+          providerContinuations?.length
+            ? { provider_continuations: providerContinuations }
             : {};
         const finalEvent: FinalAnswerEvent = {
           type: 'final_answer',
@@ -98,7 +97,10 @@ export function createBuildDecisionStage(): TickStage {
           answer_id: answerId,
           completion_reason: 'terminal',
           id: answerId,
-          ...finalAnswerSidecar,
+          ...finalAnswerContinuation,
+          ...(assistantReplayParts?.length
+            ? { assistant_replay_parts: assistantReplayParts }
+            : {}),
         };
         ctx.eventHandler?.(finalEvent);
         return {

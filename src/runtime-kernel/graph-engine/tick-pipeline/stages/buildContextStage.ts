@@ -29,6 +29,8 @@ export function createBuildContextStage(
       'history',
       'summarizationCallbacks',
       'modelId',
+      'toolDefinitionTokens',
+      'llmOptions',
       'signal',
       'telemetry',
       'conversationId',
@@ -36,13 +38,22 @@ export function createBuildContextStage(
       'input',
       'eventHandler',
     ],
-    writes: ['llmMessages', 'imageInputAdmissionEvidence', 'outputProcessor', 'contextTrace'],
+    writes: [
+      'llmMessages',
+      'imageInputAdmissionEvidence',
+      'outputProcessor',
+      'contextTrace',
+      'promptBudget',
+      'promptUsageMeasurementPolicy',
+      'llmOptions',
+    ],
     async run(ctx) {
       const contextBuildResult = await dependencies.contextBuilder.build({
         request: ctx.request,
         history: ctx.history,
         summarizationCallbacks: ctx.summarizationCallbacks,
         modelId: ctx.modelId,
+        toolDefinitionTokens: ctx.toolDefinitionTokens,
         signal: ctx.signal,
       });
 
@@ -101,6 +112,14 @@ export function createBuildContextStage(
         imageInputAdmissionEvidence: contextBuildResult.imageInputAdmissionEvidence,
         outputProcessor: contextBuildResult.outputProcessor,
         contextTrace,
+        promptBudget: contextBuildResult.promptBudget,
+        promptUsageMeasurementPolicy: contextBuildResult.promptUsageMeasurementPolicy,
+        llmOptions: contextBuildResult.promptBudget
+          ? {
+              ...ctx.llmOptions,
+              max_tokens: contextBuildResult.promptBudget.outputLimitTokens,
+            }
+          : ctx.llmOptions,
       };
     },
   });

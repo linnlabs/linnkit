@@ -227,7 +227,6 @@ export class ErrorClassifier {
     }
 
     const unsupportedPatterns = [
-      'no channels with claude tools support',
       'does not support',
       'not supported',
       'tool calling is not available',
@@ -555,6 +554,7 @@ export class ErrorClassifier {
       '已达上限',
       '免费期已结束',
       '该模型暂不可用',
+      'cloud_quota_exhausted',
     ];
     return patterns.some((pattern) => msg.includes(pattern));
   }

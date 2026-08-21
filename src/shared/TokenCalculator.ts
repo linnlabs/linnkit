@@ -5,12 +5,7 @@ import { Logger } from './logger';
 export type TokenEncodingName = Parameters<typeof get_encoding>[0];
 
 export interface TokenEstimateOptions {
-  /**
-   * tiktoken encoding 名称，或历史兼容的模型标识。
-   *
-   * 中文说明：如果传入的是 `gpt-4o` / `claude` 这类模型名，会按旧逻辑映射到 encoding；
-   * 如果传入的是 `cl100k_base` / `o200k_base`，则直接使用对应 encoding。
-   */
+  /** 显式 tiktoken encoding 名称；模型到 encoding 的选择属于 Host。 */
   encoding?: string;
   /** tiktoken 不可用或未指定 encoding 时的字符/token 兜底比。 */
   avgCharsPerToken?: number;
@@ -25,7 +20,6 @@ export class TokenCalculator {
   private static readonly OVERHEAD_PER_TOOL_CALL = 10;
   private static encoderCache = new Map<TokenEncodingName, Tiktoken>();
   private static readonly failedEncodingWarnings = new Set<string>();
-  private static readonly DEFAULT_ENCODING: TokenEncodingName = 'cl100k_base';
   private static readonly SUPPORTED_ENCODINGS = [
     'gpt2',
     'r50k_base',
@@ -35,34 +29,18 @@ export class TokenCalculator {
     'o200k_base',
   ] as const satisfies readonly TokenEncodingName[];
 
-  private static resolveEncodingFromModelIdentifier(modelIdentifier: string): TokenEncodingName {
-    const normalized = (modelIdentifier || '').trim().toLowerCase();
-
-    if (this.isSupportedEncodingName(normalized)) {
-      return normalized;
-    }
-
-    if (normalized.includes('deepseek')) {
-      return 'cl100k_base';
-    }
-
-    if (normalized.includes('gpt-4o') || normalized.startsWith('o1')) {
-      return 'o200k_base';
-    }
-
-    if (normalized.includes('gemini') || normalized.includes('claude')) {
-      return 'cl100k_base';
-    }
-
-    return this.DEFAULT_ENCODING;
+  private static requireEncodingName(value: string): TokenEncodingName {
+    const normalized = value.trim().toLowerCase();
+    if (this.isSupportedEncodingName(normalized)) return normalized;
+    throw new Error(`不支持的 tiktoken encoding: ${value}`);
   }
 
   private static isSupportedEncodingName(value: string): value is TokenEncodingName {
     return this.SUPPORTED_ENCODINGS.some(encoding => encoding === value);
   }
 
-  private static getEncoder(modelIdentifierOrEncoding: string): Tiktoken {
-    const encodingName = this.resolveEncodingFromModelIdentifier(modelIdentifierOrEncoding);
+  private static getEncoder(encoding: string): Tiktoken {
+    const encodingName = this.requireEncodingName(encoding);
     const cached = this.encoderCache.get(encodingName);
     if (cached) {
       return cached;
@@ -99,9 +77,9 @@ export class TokenCalculator {
     return Math.ceil(text.length / avgCharsPerToken);
   }
 
-  public static estimateTokensPrecise(text: string | null | undefined, modelIdentifier: string): number {
+  public static estimateTokensPrecise(text: string | null | undefined, encoding: string): number {
     if (!text) return 0;
-    const encoder = this.getEncoder(modelIdentifier);
+    const encoder = this.getEncoder(encoding);
     return encoder.encode(text).length;
   }
 
@@ -138,15 +116,18 @@ export class TokenCalculator {
     return totalTokens;
   }
 
-  public static estimateMessageTokensPrecise(message: LlmRequestMessage, modelIdentifier: string): number {
+  public static estimateMessageTokensPrecise(message: LlmRequestMessage, encoding: string): number {
     return this.estimateMessageTokens(message, {
-      encoding: modelIdentifier,
+      encoding,
       toolCallOverhead: this.OVERHEAD_PER_TOOL_CALL,
     });
   }
 
-  public static estimateMessagesTokensPrecise(messages: LlmRequestMessage[], modelIdentifier: string): number {
-    return messages.reduce((total, msg) => total + this.estimateMessageTokensPrecise(msg, modelIdentifier), 0);
+  public static estimateMessagesTokensPrecise(messages: LlmRequestMessage[], encoding: string): number {
+    return messages.reduce(
+      (total, message) => total + this.estimateMessageTokensPrecise(message, encoding),
+      0
+    );
   }
 
   private static extractToolCallsForTokenEstimate(message: LlmRequestMessage): unknown[] {
@@ -175,12 +156,12 @@ export class TokenCalculator {
   public static truncateTextByTokens(
     text: string,
     maxTokens: number,
-    modelIdentifier: string,
+    encoding: string,
     strategy: 'start' | 'end' | 'middle' = 'end',
   ): string {
     if (!text || maxTokens <= 0) return '';
 
-    const encoder = this.getEncoder(modelIdentifier);
+    const encoder = this.getEncoder(encoding);
     const tokens = encoder.encode(text);
 
     if (tokens.length <= maxTokens) {
@@ -217,16 +198,14 @@ export class TokenCalculator {
     this.failedEncodingWarnings.clear();
   }
 
-  private static warnEncodingFallbackOnce(modelIdentifierOrEncoding: string, error: unknown): void {
-    const encodingName = this.resolveEncodingFromModelIdentifier(modelIdentifierOrEncoding);
-    if (this.failedEncodingWarnings.has(encodingName)) {
+  private static warnEncodingFallbackOnce(requestedEncoding: string, error: unknown): void {
+    if (this.failedEncodingWarnings.has(requestedEncoding)) {
       return;
     }
-    this.failedEncodingWarnings.add(encodingName);
+    this.failedEncodingWarnings.add(requestedEncoding);
     const logger = new Logger('TokenCalculator');
     logger.warn('tiktoken encoding unavailable, falling back to avgCharsPerToken estimator', {
-      encodingName,
-      requestedIdentifier: modelIdentifierOrEncoding,
+      requestedEncoding,
       error,
     });
   }

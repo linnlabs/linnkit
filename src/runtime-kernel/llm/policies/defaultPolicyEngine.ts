@@ -2,10 +2,10 @@
  * @file src/agent/runtime-kernel/llm/policies/defaultPolicyEngine.ts
  *
  * @description
- * linnkit 的默认 PolicyEngine 不注册任何 provider/model 策略。
+ * Linnkit 的默认 PolicyEngine 不注册任何失败路由策略。
  *
- * provider 适配属于宿主集成层职责。宿主可以复用 `LLMPolicyEngine`
- * 并显式注入自己的 policies。
+ * Host 可以复用 `LLMPolicyEngine` 并显式注入自己的路由 policies；
+ * Provider wire 适配仍必须通过 canonical inference port 注入。
  */
 
 import { LLMPolicyEngine } from './policyEngine';

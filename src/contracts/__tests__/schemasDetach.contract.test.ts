@@ -160,7 +160,7 @@ describe('contracts migration boundary', () => {
   });
 
   it('keeps linnkit production code detached from @app/schemas', () => {
-    const linnkitSrcRoot = new URL('../../..', import.meta.url);
+    const linnkitSrcRoot = new URL('../../', import.meta.url);
     const offenders = walkProductionTypeScriptFiles(linnkitSrcRoot)
       .filter((filePath) => readFileSync(filePath, 'utf8').includes('@app/schemas'))
       .map((filePath) => path.relative(linnkitSrcRoot.pathname, filePath))

@@ -79,6 +79,7 @@ describe('eventGovernance contract', () => {
         tool_call_id: 'call_child',
         phase: 'start',
         status: 'loading',
+        args: {},
       }),
     } satisfies Record<typeof RUNTIME_EVENT_TYPES_NEVER_REPLAYED_TO_UI[number], RuntimeEvent>;
 
@@ -208,6 +209,7 @@ describe('eventGovernance contract', () => {
       tool_call_id: 'call_child',
       phase: 'start',
       status: 'loading',
+      args: {},
     });
     const hiddenUserInput = createBaseEvent({
       type: 'user_input',

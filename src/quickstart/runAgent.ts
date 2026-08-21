@@ -133,7 +133,7 @@ export async function runAgent(
   });
 
   const llmCaller = new LlmCaller({
-    aiEngine: options.llm,
+    inferencePort: options.inference,
     modelCatalog: createFixedChatModelCatalog(modelId),
     maxRetries: 0,
     enableEmptyResponseRetry: false,

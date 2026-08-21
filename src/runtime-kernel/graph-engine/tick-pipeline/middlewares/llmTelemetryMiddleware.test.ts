@@ -6,7 +6,6 @@ import type { TelemetryPort } from '../../../telemetry/telemetryPort';
 import type { TickPipelineContext, TickStage } from '../types';
 import { RunIdSchema } from '../../../../contracts';
 
-const normalizeLlmUsageMock = vi.fn();
 const normalizedUsageFromCanonicalMock = vi.fn(canonicalUsage => ({
   promptTokens: canonicalUsage.inputTokens,
   completionTokens: canonicalUsage.outputTokens,
@@ -17,7 +16,6 @@ const normalizedUsageFromCanonicalMock = vi.fn(canonicalUsage => ({
 
 vi.mock('../../../../shared/llmTelemetryContext', () => ({
   normalizedUsageFromCanonical: normalizedUsageFromCanonicalMock,
-  normalizeLlmUsage: normalizeLlmUsageMock,
 }));
 
 function createRequest(): AgentInvocationRequest {
@@ -79,6 +77,7 @@ function createContext(
     modelId: 'mock-model',
     toolSchemas: [],
     toolCallStreamingPolicies: {},
+    toolDefinitionTokens: 0,
     llmOptions: {},
     llmMessages: [{ role: 'user', content: 'hello' }],
     conversationId: 'conv_telemetry',
@@ -109,29 +108,26 @@ describe('llmTelemetryMiddleware', () => {
     vi.clearAllMocks();
   });
 
-  it('优先使用 provider usage 归一化结果记录 telemetry', async () => {
+  it('优先使用 Host 回传的 canonical usage 记录 telemetry', async () => {
     const { llmTelemetryMiddleware } = await import('./llmTelemetryMiddleware');
     const ctx = createContext();
     const stage = createStage('execute_llm');
-
-    normalizeLlmUsageMock.mockReturnValue({
-      promptTokens: 11,
-      completionTokens: 7,
+    const canonicalUsage = {
+      inputTokens: 11,
+      outputTokens: 7,
       totalTokens: 18,
-    });
+      source: 'host-supplied' as const,
+      confidence: 'actual' as const,
+    };
 
     await llmTelemetryMiddleware(ctx, stage, async () => {
       ctx.llmResp = {
         content: 'final answer',
-        usage: { prompt_tokens: 11, completion_tokens: 7, total_tokens: 18 },
+        canonicalUsage,
       };
     });
 
-    expect(normalizeLlmUsageMock).toHaveBeenCalledWith({
-      prompt_tokens: 11,
-      completion_tokens: 7,
-      total_tokens: 18,
-    });
+    expect(normalizedUsageFromCanonicalMock).toHaveBeenCalledWith(canonicalUsage);
     expectSingleLlmCall(ctx);
     expect(ctx.telemetry.emitMock).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -143,7 +139,9 @@ describe('llmTelemetryMiddleware', () => {
           promptTokens: 11,
           completionTokens: 7,
           totalTokens: 18,
+          canonicalUsage,
         },
+        canonicalUsage,
       })
     );
     expect(ctx.tokenizer.estimateMessage).not.toHaveBeenCalled();
@@ -154,8 +152,6 @@ describe('llmTelemetryMiddleware', () => {
     const { llmTelemetryMiddleware } = await import('./llmTelemetryMiddleware');
     const ctx = createContext();
     const stage = createStage('execute_llm');
-
-    normalizeLlmUsageMock.mockReturnValue(undefined);
 
     await llmTelemetryMiddleware(ctx, stage, async () => {
       ctx.llmResp = {
@@ -198,77 +194,6 @@ describe('llmTelemetryMiddleware', () => {
     expect(ctx.tokenizer.estimateText).toHaveBeenCalledWith('partial answer', 'mock-model');
   });
 
-  it('usage.tokens 这种只有总量的旧 mock 不会被伪造成 provider actual', async () => {
-    const { llmTelemetryMiddleware } = await import('./llmTelemetryMiddleware');
-    const ctx = createContext();
-    const stage = createStage('execute_llm');
-
-    normalizeLlmUsageMock.mockReturnValue(undefined);
-
-    await llmTelemetryMiddleware(ctx, stage, async () => {
-      ctx.llmResp = {
-        content: 'answer',
-        usage: { tokens: 100 },
-      };
-    });
-
-    expect(normalizeLlmUsageMock).toHaveBeenCalledWith({ tokens: 100 });
-    expectSingleLlmCall(ctx);
-    expect(ctx.telemetry.emitMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        kind: 'llm_call',
-        usage: expect.objectContaining({
-          promptTokens: 20,
-          completionTokens: 5,
-          canonicalUsage: expect.objectContaining({
-            source: 'local-estimate',
-            confidence: 'estimate',
-          }),
-        }),
-      })
-    );
-  });
-
-  it('优先使用 host 回传的 canonicalUsage，不从 raw usage 猜字段', async () => {
-    const { llmTelemetryMiddleware } = await import('./llmTelemetryMiddleware');
-    const ctx = createContext();
-    const stage = createStage('execute_llm');
-    const canonicalUsage = {
-      inputTokens: 8,
-      outputTokens: 3,
-      cacheReadTokens: 2,
-      totalTokens: 13,
-      source: 'host-supplied' as const,
-      confidence: 'actual' as const,
-    };
-
-    await llmTelemetryMiddleware(ctx, stage, async () => {
-      ctx.llmResp = {
-        content: 'answer',
-        usage: { prompt_tokens: 999, completion_tokens: 999, total_tokens: 1998 },
-        canonicalUsage,
-      };
-    });
-
-    expect(normalizeLlmUsageMock).not.toHaveBeenCalled();
-    expectSingleLlmCall(ctx);
-    expect(ctx.telemetry.emitMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        kind: 'llm_call',
-        modelId: 'mock-model',
-        stream: true,
-        durationMs: 35,
-        usage: {
-          promptTokens: 8,
-          completionTokens: 3,
-          totalTokens: 13,
-          canonicalUsage,
-        },
-        canonicalUsage,
-      })
-    );
-  });
-
   describe('B2-engine Batch 1: TelemetryPort emit', () => {
     it('emits llm_call event to ctx.telemetry with usage + scope', async () => {
       const { llmTelemetryMiddleware } = await import('./llmTelemetryMiddleware');
@@ -276,16 +201,18 @@ describe('llmTelemetryMiddleware', () => {
       const ctx = createContext(telemetry);
       const stage = createStage('execute_llm');
 
-      normalizeLlmUsageMock.mockReturnValue({
-        promptTokens: 11,
-        completionTokens: 7,
+      const canonicalUsage = {
+        inputTokens: 11,
+        outputTokens: 7,
         totalTokens: 18,
-      });
+        source: 'host-supplied' as const,
+        confidence: 'actual' as const,
+      };
 
       await llmTelemetryMiddleware(ctx, stage, async () => {
         ctx.llmResp = {
           content: 'final answer',
-          usage: { prompt_tokens: 11, completion_tokens: 7, total_tokens: 18 },
+          canonicalUsage,
         };
       });
 
@@ -299,7 +226,9 @@ describe('llmTelemetryMiddleware', () => {
           promptTokens: 11,
           completionTokens: 7,
           totalTokens: 18,
+          canonicalUsage,
         },
+        canonicalUsage,
         scope: {
           conversationId: 'conv_telemetry',
           runId: 'run_telemetry',
@@ -327,7 +256,6 @@ describe('llmTelemetryMiddleware', () => {
       ctx.conversationId = '';
       const stage = createStage('execute_llm');
 
-      normalizeLlmUsageMock.mockReturnValue(undefined);
       const tokenizer = createTokenizerMock();
       tokenizer.estimateMessageMock.mockReturnValue(0);
       tokenizer.estimateTextMock.mockReturnValue(0);

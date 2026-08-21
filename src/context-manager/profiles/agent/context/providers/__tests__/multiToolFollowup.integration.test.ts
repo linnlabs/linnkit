@@ -150,10 +150,19 @@ describe('multi tool follow-up integration', () => {
     );
   });
 
-  it('应让带真实 reasoning_details 的历史工具组经过三阶段后仍随 assistant(tool_calls) 出关', async () => {
-    const reasoningDetails = [
-      { provider: 'deepseek', type: 'reasoning_content', reasoning_content: 'Need the tool.' },
-    ];
+  it('应让带 producer identity 的 continuation 经过三阶段后仍随 assistant(tool_calls) 出关', async () => {
+    const providerContinuations = [{
+      schema_version: 2 as const,
+      producer: {
+        model_id: 'deepseek-reasoner',
+        endpoint_id: 'deepseek',
+        api_surface: 'openai_chat_completions',
+        capability_id: 'test:chat-codec',
+        endpoint_model_id: 'deepseek-reasoner',
+      },
+      kind: 'reasoning_content',
+      payload: { provider: 'deepseek', type: 'reasoning_content', reasoning_content: 'Need the tool.' },
+    }];
     const sourceMessages: AiMessage[] = [
       {
         id: 'user_old_sidecar',
@@ -169,7 +178,12 @@ describe('multi tool follow-up integration', () => {
         content: '',
         timestamp: 1100,
         metadata: {
-          reasoning_details: reasoningDetails,
+          provider_continuations: providerContinuations,
+          assistant_replay_parts: [{
+            type: 'tool_call',
+            tool_call_id: 'call_sidecar',
+            provider_continuations: providerContinuations,
+          }],
           tool_calls: [
             {
               id: ToolCallIdSchema.parse('call_sidecar'),
@@ -235,10 +249,15 @@ describe('multi tool follow-up integration', () => {
     });
 
     expect(assistantToolCalls).toBeDefined();
-    expect(assistantToolCalls?.reasoning_details).toEqual(reasoningDetails);
+    expect(assistantToolCalls?.provider_continuations).toEqual(providerContinuations);
+    expect(assistantToolCalls?.assistant_replay_parts).toEqual([{
+      type: 'tool_call',
+      tool_call_id: 'call_sidecar',
+      provider_continuations: providerContinuations,
+    }]);
   });
 
-  it('DeepSeek 历史工具组缺真实 reasoning_details 时应降级为文本，不应从 thought 伪造 sidecar', async () => {
+  it('required route 的历史工具组缺 continuation 时应直接失败', async () => {
     const sourceMessages: AiMessage[] = [
       {
         id: 'user_old_missing_sidecar',
@@ -299,25 +318,16 @@ describe('multi tool follow-up integration', () => {
       estimateTokens: () => 1,
       totalBudget: 100_000,
     });
-    const preprocessed = await pipelineHarness.runPreprocessors([
+    const processing = pipelineHarness.runPreprocessors([
       new ToolHistoryCompressorPreprocessor({ strategy: 'per-pair', keepLatestToolPairs: 2 }),
       new ToolReplayProtocolGuardPreprocessor({
         policy: {
           provider: 'deepseek',
-          requiresReasoningDetailsForToolReplay: true,
-          missingSidecarBehavior: 'degrade_to_text',
+          requiresProviderContinuationForToolReplay: true,
         },
       }),
       new HistoryPurificationPreprocessor({ logPrefix: 'SidecarGuardTest' }),
     ]);
-    const llmMessages = formatAgentLlmMessages(preprocessed.messages);
-
-    expect(
-      llmMessages.some(message => message.role === 'assistant' && 'tool_calls' in message)
-    ).toBe(false);
-    expect(llmMessages.some(message => message.role === 'tool')).toBe(false);
-    expect(
-      preprocessed.messages.some(message => message.metadata?.isDegradedToolReplay === true)
-    ).toBe(true);
+    await expect(processing).rejects.toThrow(/要求工具回放携带有序 provider continuation/);
   });
 });

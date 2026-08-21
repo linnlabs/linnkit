@@ -70,6 +70,27 @@ function normalizeNumber(v: unknown, kind: 'integer' | 'number'): unknown {
   return v;
 }
 
+function selectDiscriminatedObjectSchema(
+  prop: ToolParameterProperty,
+  value: UnknownRecord,
+): ToolParameterProperty {
+  if (!prop.oneOf || prop.oneOf.length === 0) return prop;
+
+  const matches = prop.oneOf.filter((candidate) => {
+    if (candidate.type !== 'object' || !candidate.properties) return false;
+    const discriminators = Object.entries(candidate.properties)
+      .filter(([, schema]) => schema.enum !== undefined && schema.enum.length > 0);
+    if (discriminators.length === 0) return false;
+    return discriminators.every(([key, schema]) => {
+      const discriminatorValue = value[key];
+      return typeof discriminatorValue === 'string'
+        && schema.enum?.includes(discriminatorValue) === true;
+    });
+  });
+
+  return matches.length === 1 ? matches[0] : prop;
+}
+
 function normalizeByPropertySchema(
   prop: ToolParameterProperty,
   v: unknown,
@@ -105,9 +126,10 @@ function normalizeByPropertySchema(
         logJsonEncodedNormalization('object', options);
       }
       if (!isRecord(parsedValue)) return parsedValue;
-      if (!prop.properties || !isRecord(prop.properties)) return parsedValue;
+      const selectedSchema = selectDiscriminatedObjectSchema(prop, parsedValue);
+      if (!selectedSchema.properties || !isRecord(selectedSchema.properties)) return parsedValue;
       return normalizeToolArgs(
-        { type: 'object', properties: prop.properties },
+        { type: 'object', properties: selectedSchema.properties },
         parsedValue,
         options,
       );

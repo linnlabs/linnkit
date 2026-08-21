@@ -1,9 +1,6 @@
-export type MissingSidecarBehavior = 'allow' | 'degrade_to_text' | 'provider_empty_replay_field';
-
 export interface ToolReplayProtocolPolicy {
   provider?: string;
-  requiresReasoningDetailsForToolReplay?: boolean;
-  missingSidecarBehavior?: MissingSidecarBehavior;
+  requiresProviderContinuationForToolReplay?: boolean;
 }
 
 declare module '../../../shared/preprocessors/base' {

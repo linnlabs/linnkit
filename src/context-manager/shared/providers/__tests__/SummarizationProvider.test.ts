@@ -49,7 +49,6 @@ function makeContext(
   options: {
     config?: Partial<SummarizationConfig>;
     estimateTokens?: ProviderContext<SummarizationConfig>['estimateTokens'];
-    summarizationProtectedRanges?: readonly { startIndex: number; endIndex: number }[];
   } = {},
 ): SummarizationProviderContext {
   return {
@@ -63,7 +62,6 @@ function makeContext(
     debugMode: false,
     estimateTokens: options.estimateTokens ?? (message => Math.max(1, Math.ceil(message.content.length / 10))),
     generateSummary,
-    summarizationProtectedRanges: options.summarizationProtectedRanges,
   };
 }
 
@@ -153,7 +151,7 @@ describe('SummarizationProvider', () => {
     expect(result.events).toHaveLength(1);
   });
 
-  it('含图会话轮次作为区段屏障，prompt 与 replacedMessageIds 都不能跨过它', async () => {
+  it('含图消息与普通消息服从同一摘要替换范围，退出活动上下文但不改写原始消息', async () => {
     const provider = new SummarizationProvider({
       agentId: 'history_compression',
       modelId: 'summary-model',
@@ -170,7 +168,7 @@ describe('SummarizationProvider', () => {
       id: 'user_input_6',
       role: 'user',
       type: 'user_input',
-      content: 'IMAGE_TURN_MUST_NOT_BE_SUMMARIZED',
+      content: 'IMAGE_TURN_FOLLOWS_MESSAGE_LIFECYCLE',
       timestamp: 6,
       attachments: [{
         id: 'attachment-1',
@@ -188,21 +186,29 @@ describe('SummarizationProvider', () => {
     const context = makeContext(async request => {
       summaryPrompt = request.content;
       return { summary: '摘要结果' };
-    }, {
-      summarizationProtectedRanges: [{ startIndex: 6, endIndex: 7 }],
     });
 
     const result = await provider.provide(states, 1000, context);
     const summaryEvent = result.events?.find(event => event.type === 'history_summary');
 
-    expect(summaryPrompt).not.toContain('IMAGE_TURN_MUST_NOT_BE_SUMMARIZED');
+    expect(summaryPrompt).toContain('IMAGE_TURN_FOLLOWS_MESSAGE_LIFECYCLE');
     expect(summaryEvent).toMatchObject({
-      replaced_message_ids: ['user_input_0', 'final_answer_1', 'user_input_2', 'final_answer_3'],
+      replaced_message_ids: [
+        'user_input_0',
+        'final_answer_1',
+        'user_input_2',
+        'final_answer_3',
+        'user_input_4',
+        'final_answer_5',
+        'user_input_6',
+        'final_answer_7',
+        'user_input_8',
+        'final_answer_9',
+        'user_input_10',
+      ],
     });
-    const retainedImageMessage = result.states.find(state => state.message.id === 'user_input_6')?.message;
-    expect(retainedImageMessage && 'attachments' in retainedImageMessage
-      ? retainedImageMessage.attachments
-      : undefined).toHaveLength(1);
+    expect(result.states.some(state => state.message.id === 'user_input_6')).toBe(false);
+    expect(imageMessage.attachments).toHaveLength(1);
   });
 
   it('throws typed fatal error by default when summarization generation fails', async () => {

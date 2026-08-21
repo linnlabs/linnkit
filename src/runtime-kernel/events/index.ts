@@ -25,3 +25,4 @@ export {
   findLatestProgressAnswer,
   findTerminalFinalAnswer,
 } from './finalAnswerCompletion';
+export { projectRuntimeEventToAiMessage } from './runtime-to-ai-message';

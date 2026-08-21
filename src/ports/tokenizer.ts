@@ -1,4 +1,4 @@
-import type { LlmRequestMessage } from './ai-engine.types';
+import type { LlmRequestMessage } from './llm-call';
 
 /**
  * TokenizerPort · host 可替换的 token 估算协议。

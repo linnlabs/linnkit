@@ -2,7 +2,7 @@ import { access, readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { loadConfig } from './configLoader';
 import { loadDotEnv } from './env';
-import { resolveConfiguredLlm } from '../quickstart';
+import { resolveConfiguredInference } from '../quickstart';
 
 export interface DoctorCommandOptions {
   cwd: string;
@@ -78,8 +78,8 @@ export async function runDoctorCommand(options: DoctorCommandOptions): Promise<D
     lines.push(pass(`config ${options.configPath}`));
     lines.push(pass(`agents: ${config.agents.map((agent) => agent.spec.id).join(', ')}`));
 
-    await resolveConfiguredLlm(config);
-    lines.push(pass('llm adapter shape'));
+    await resolveConfiguredInference(config);
+    lines.push(pass('canonical inference port'));
   } catch (error) {
     ok = false;
     lines.push(fail('config', error instanceof Error ? error.message : String(error)));

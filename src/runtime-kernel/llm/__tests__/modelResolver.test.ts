@@ -40,8 +40,8 @@ describe('ModelResolver', () => {
 
   it('pickFallbackChatModel 应优先使用配置的 preferred order', () => {
     mockGetModelsByCapability.mockReturnValue([
-      { id: 'fallback-a', enabled: true, capabilities: ['chat'], api_key: 'key-a', api_base: 'https://openrouter.ai/api/v1' },
-      { id: 'fallback-b', enabled: true, capabilities: ['chat'], api_key: 'key-b', api_base: 'https://api.example.com/v1' },
+      { id: 'fallback-a', enabled: true, capabilities: ['chat'], api_key: 'key-a' },
+      { id: 'fallback-b', enabled: true, capabilities: ['chat'], api_key: 'key-b' },
     ]);
 
     const resolver = new ModelResolver({
@@ -52,14 +52,14 @@ describe('ModelResolver', () => {
     expect(resolver.pickFallbackChatModel(new Set<string>(), EMPTY_MODEL_INPUT_REQUIREMENT)).toBe('fallback-b');
   });
 
-  it('pickFallbackChatModel 在没有 preferred 命中时优先避开 openrouter', () => {
+  it('pickFallbackChatModel 在没有 preferred 命中时保留 catalog 顺序', () => {
     mockGetModelsByCapability.mockReturnValue([
-      { id: 'fallback-openrouter', enabled: true, capabilities: ['chat'], api_key: 'key-a', api_base: 'https://openrouter.ai/api/v1' },
-      { id: 'fallback-direct', enabled: true, capabilities: ['chat'], api_key: 'key-b', api_base: 'https://api.example.com/v1' },
+      { id: 'fallback-first', enabled: true, capabilities: ['chat'], api_key: 'key-a' },
+      { id: 'fallback-second', enabled: true, capabilities: ['chat'], api_key: 'key-b' },
     ]);
 
     const resolver = new ModelResolver({ modelCatalog: createModelCatalog() });
 
-    expect(resolver.pickFallbackChatModel(new Set<string>(), EMPTY_MODEL_INPUT_REQUIREMENT)).toBe('fallback-direct');
+    expect(resolver.pickFallbackChatModel(new Set<string>(), EMPTY_MODEL_INPUT_REQUIREMENT)).toBe('fallback-first');
   });
 });

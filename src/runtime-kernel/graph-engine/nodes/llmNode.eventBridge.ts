@@ -6,28 +6,22 @@ import {
 } from '../../events/finalAnswerAssembler';
 import type { LlmNodeLocalState, LlmNodeAction } from './llmNode.state';
 import {
-  toSerializableJsonValue,
   type FinalAnswerCompletionReason,
-  type ProviderReasoningDetailsPayload,
+  type AssistantReplayPart,
+  type ProviderContinuation,
   type RoutedRuntimeEvent,
   type RuntimeEvent,
 } from '../../../contracts';
-import type { RuntimeEventSink } from '../types';
+import type { RuntimeEventSink, RuntimeFailureFactSink } from '../types';
+import { isRuntimeFailureFact } from '../functions/runtimeFailureFact';
 
 export type TickEvent = AnyAgentEvent | RuntimeEvent;
-
-function serializeReasoningDetails(value: unknown): ProviderReasoningDetailsPayload | undefined {
-  if (!Array.isArray(value)) return undefined;
-  const serialized = value
-    .map(item => toSerializableJsonValue(item))
-    .filter((item): item is NonNullable<typeof item> => item !== undefined);
-  return serialized.length > 0 ? serialized : undefined;
-}
 
 export interface LlmNodeEventBridgeDeps {
   getState: () => LlmNodeLocalState;
   dispatch: (action: LlmNodeAction) => void;
   runtimeEventSink: RuntimeEventSink;
+  runtimeFailureFactSink?: RuntimeFailureFactSink;
   conversationId: string;
   turnId: string;
 }
@@ -41,7 +35,7 @@ export class LlmNodeEventBridge {
   handle = (agentEvent: TickEvent): void => {
     if (!agentEvent || typeof agentEvent !== 'object') return;
 
-    if (agentEvent.type === 'provider_sidecar') {
+    if (agentEvent.type === 'provider_continuation') {
       return;
     }
 
@@ -60,7 +54,8 @@ export class LlmNodeEventBridge {
     if (agentEvent.type === 'tool_call_decision') {
       this.publishAssembledAnswer({
         completionReason: 'tool_call',
-        reasoningDetails: serializeReasoningDetails(agentEvent.payload?.reasoning_details),
+        providerContinuations: agentEvent.payload?.provider_continuations,
+        assistantReplayParts: agentEvent.payload?.assistant_replay_parts,
       });
       this.mapPublishAndBuffer(agentEvent, 'LlmNode.tool_call_decision');
       return;
@@ -70,7 +65,8 @@ export class LlmNodeEventBridge {
       if (this.assembler.hasContent()) {
         this.publishAssembledAnswer({
           completionReason: 'terminal',
-          reasoningDetails: serializeReasoningDetails(agentEvent.reasoning_details),
+          providerContinuations: agentEvent.provider_continuations,
+          assistantReplayParts: agentEvent.assistant_replay_parts,
         });
       } else {
         const finalAnswer = this.mapRuntimeEvent(agentEvent);
@@ -87,6 +83,15 @@ export class LlmNodeEventBridge {
         this.buffer(this.publish(finalAnswer, 'LlmNode.final_answer'));
       }
       this.deps.dispatch({ type: 'FINAL_ANSWER_RECEIVED' });
+      return;
+    }
+
+    if (agentEvent.type === 'error') {
+      const published = this.mapPublishAndBuffer(agentEvent, 'LlmNode.error');
+      if (!published || !isRuntimeFailureFact(published)) {
+        throw new Error('LLM terminal failure did not map to a classified Runtime error fact.');
+      }
+      this.deps.runtimeFailureFactSink?.(published);
       return;
     }
 
@@ -117,17 +122,20 @@ export class LlmNodeEventBridge {
 
   private publishAssembledAnswer(options: {
     completionReason: FinalAnswerCompletionReason;
-    reasoningDetails?: ProviderReasoningDetailsPayload;
+    providerContinuations?: ProviderContinuation[];
+    assistantReplayParts?: AssistantReplayPart[];
   }): void {
     const event = this.assembler.finalize(options);
     if (!event) return;
     this.buffer(this.publish(event, 'LlmNode.final_answer'));
   }
 
-  private mapPublishAndBuffer(agentEvent: TickEvent, source: string): void {
+  private mapPublishAndBuffer(agentEvent: TickEvent, source: string): RoutedRuntimeEvent | undefined {
     const event = this.mapRuntimeEvent(agentEvent);
-    if (!event) return;
-    this.buffer(this.publish(event, source));
+    if (!event) return undefined;
+    const published = this.publish(event, source);
+    this.buffer(published);
+    return published;
   }
 
   private mapRuntimeEvent(agentEvent: TickEvent): RuntimeEvent | null {

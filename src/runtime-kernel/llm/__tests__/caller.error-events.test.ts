@@ -6,7 +6,7 @@ import {
   validateSSEEvent,
   type RuntimeResourceRef,
 } from '../../../contracts';
-import type { AgentAiEngine } from '../../../ports';
+import type { CanonicalInferencePort } from '../../../ports';
 import { ErrorClassifier } from '../../../shared/errorClassifier';
 import { agentEventToRuntime } from '../../events/agent-to-runtime';
 import type { ErrorEvent as AgentErrorEvent } from '../../events/agentEvents';
@@ -48,12 +48,10 @@ function createCompatibleCatalog(): ModelCatalogLike {
 
 describe('LlmCaller 稳定错误事件链', () => {
   it('流式错误只分类一次并在 AgentEvent、RuntimeEvent、SSE 与 JSON replay 中保真', async () => {
-    const aiEngine: AgentAiEngine = {
-      chatCompletion: vi.fn(),
-      chatCompletionStream: vi.fn(),
-    };
+    const stream = vi.fn<CanonicalInferencePort['stream']>();
+    const inferencePort: CanonicalInferencePort = { stream };
     const caller = new LlmCaller({
-      aiEngine,
+      inferencePort,
       modelCatalog: createCompatibleCatalog(),
       maxRetries: 0,
     });
@@ -73,7 +71,7 @@ describe('LlmCaller 稳定错误事件链', () => {
     });
 
     expect(classify).toHaveBeenCalledOnce();
-    expect(aiEngine.chatCompletionStream).not.toHaveBeenCalled();
+    expect(stream).not.toHaveBeenCalled();
     expect(emitted).toHaveLength(1);
     expect(emitted[0]).toMatchObject({
       error_code: MODEL_INPUT_ERROR_CODES.MATERIALIZATION_PENDING,

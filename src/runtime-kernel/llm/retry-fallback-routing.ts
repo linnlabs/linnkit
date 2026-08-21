@@ -7,6 +7,7 @@ import {
   type ModelInputRequirement,
 } from './input-capabilities';
 import type { LlmFallbackObserver } from './definitions/llmFallbackObserver';
+import type { FallbackPromptCapacityAdmission } from './functions/evaluateFallbackPromptCapacity';
 
 const logger = new Logger('LlmCaller');
 
@@ -17,18 +18,30 @@ export function tryPolicyModelSwitch(
   requirement: ModelInputRequirement,
   fallbackObserver: LlmFallbackObserver | undefined,
   error: Error,
+  evaluateFallbackPromptCapacity?: (candidateModelId: string) => FallbackPromptCapacityAdmission,
 ): string | null {
   const activeModelConfig = deps.modelCatalog.getModelById(activeModelId);
   const policyDecision = deps.policyEngine.decideOnError(error, {
     modelId: activeModelId,
-    apiBase: activeModelConfig?.api_base,
-    requestModelName: activeModelConfig?.model_name,
   });
   if (policyDecision.action !== 'switch_model') {
     return null;
   }
 
-  const fallbackModelId = deps.modelResolver.pickFallbackChatModel(excludedModelIds, requirement);
+  let fallbackModelId = deps.modelResolver.pickFallbackChatModel(excludedModelIds, requirement);
+  while (fallbackModelId && evaluateFallbackPromptCapacity) {
+    const admission = evaluateFallbackPromptCapacity(fallbackModelId);
+    if (admission.admitted) break;
+    fallbackObserver?.onModelFallbackRejected?.({
+      fromModelId: activeModelId,
+      candidateModelId: fallbackModelId,
+      policy: 'policy-switch',
+      reason: admission.reason,
+      requiredPlacements: requirement.placements,
+    });
+    excludedModelIds.add(fallbackModelId);
+    fallbackModelId = deps.modelResolver.pickFallbackChatModel(excludedModelIds, requirement);
+  }
   if (!fallbackModelId) {
     fallbackObserver?.onModelFallbackRejected?.({
       fromModelId: activeModelId,
@@ -56,6 +69,7 @@ export function tryCloudQuotaFallback({
   requirement,
   error,
   fallbackObserver,
+  evaluateFallbackPromptCapacity,
 }: {
   deps: RetryFallbackDeps;
   activeModelId: string;
@@ -64,6 +78,7 @@ export function tryCloudQuotaFallback({
   requirement: ModelInputRequirement;
   error: Error;
   fallbackObserver?: LlmFallbackObserver;
+  evaluateFallbackPromptCapacity?: (candidateModelId: string) => FallbackPromptCapacityAdmission;
 }): string | null {
   const fallbackModelId = options.cloud_quota_fallback_model_id;
   if (
@@ -100,6 +115,22 @@ export function tryCloudQuotaFallback({
       fallbackModelId,
       requiredPlacements: requirement.placements,
       reason: compatibility.reason,
+    });
+    return null;
+  }
+
+  const capacityAdmission = evaluateFallbackPromptCapacity?.(fallbackModelId);
+  if (capacityAdmission && !capacityAdmission.admitted) {
+    fallbackObserver?.onModelFallbackRejected?.({
+      fromModelId: activeModelId,
+      candidateModelId: fallbackModelId,
+      policy: 'cloud-quota',
+      reason: capacityAdmission.reason,
+      requiredPlacements: requirement.placements,
+    });
+    logger.warn('云端限额降级目标不满足当前 Prompt 容量要求，保留原始错误', {
+      fallbackModelId,
+      reason: capacityAdmission.reason,
     });
     return null;
   }

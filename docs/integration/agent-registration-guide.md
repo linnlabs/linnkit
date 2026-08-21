@@ -33,7 +33,7 @@ my-agent-demo/
 ├── agents/
 │   ├── pptAssistant.ts          # defineAgent({...})
 │   └── emailWriter.ts
-└── main.ts                       # runAgent(agent, { input, llm })
+└── main.ts                       # runAgent(agent, { input, inference })
 ```
 
 ### 1.2 生产 host 形态（产品里长期维护）
@@ -47,7 +47,7 @@ app-hosts/<your-app>/
 │   │   ├── prompt.ts            # systemPrompt（host 自管，不进 AgentSpec）
 │   │   └── tools.ts             # toolId 字符串数组
 │   └── emailWriter/spec.ts
-├── adapters/{tools,llm}/
+├── adapters/{tools,inference}/
 └── runtime-assembly/             # GraphExecutor 装配
 ```
 
@@ -75,7 +75,6 @@ const spec = AgentSpec.parse({
   tools: [{ toolId: 'search_docs', argsSchema: searchDocsTool.parameters }],
   contextPolicy: defineContextPolicy({
     profileId: 'agent',
-    budget: { maxTokens: 128_000 },
   }),
   role: 'PPT 制作助手',           // ⚪
   audit: { redactionLevel: 'standard', pii: false }, // ⚪
@@ -121,21 +120,24 @@ import { defineContextPolicy } from '@linnlabs/linnkit/contracts';
 
 const contextPolicy = defineContextPolicy({
   profileId: 'agent',
+  // 只有这个 Agent 确实需要比模型 route 更小的窗口/输出时才声明容量 cap。
   budget: { maxTokens: 128_000, reservedForResponse: 8_000 },
   toolHistory: { strategy: 'per-run', overflowStrategy: 'keep-latest' },
-  summarization: { enabled: true, agentId: 'summarizer', triggerThreshold: 0.8 },
+  summarization: { agentId: 'summarizer', triggerThreshold: 0.8 },
 });
 ```
 
 12 大分组的详细说明见 [`context-engineering.md`](./context-engineering.md) ⭐。
 
-如果你只是想确认“改预算要不要改很多地方”，先看 [`context-engineering.md §0.1`](./context-engineering.md#context-policy-source-of-truth)：`contextPolicy` 是配置真相源，运行时会先做三层合并，再由 adapter 拆给各消费点。
+如果你只是想确认“改预算要不要改很多地方”，先看 [`context-engineering.md §0.1`](./context-engineering.md#context-policy-source-of-truth)：模型 route 是容量真相源，`contextPolicy` 是 Agent 行为与可选容量上限的声明入口；运行时会先做三层合并，再由 adapter 拆给各消费点。
 
-> ⚠️ **不要手写 `AgentSpecContextPolicy` 对象**——`defineContextPolicy()` 不只补默认值，还**校验组合约束**（如 `summarization.enabled = true` 必须有 `agentId`）。手写绕过 helper 会在运行时崩溃。
+> ⚠️ **不要手写 `AgentSpecContextPolicy` 对象**——`defineContextPolicy()` 会补齐 framework 行为默认值并执行严格 schema 校验；但不会补造 `maxTokens / reservedForResponse`，因为缺失表示继承模型 route。
 
-### 4.1 `maxTokens` 谁来算？
+### 4.1 模型容量、Agent cap 与 token 估算分别由谁负责？
 
-linnkit 内置默认 tokenizer（`tiktoken` + 字节比兜底），用于 `contextPolicy.budget` 决策。三种调整方式：
+prepared model 的正式 route 提供 `context_window_tokens / max_output_tokens`。Agent 未声明容量 cap 时直接使用 route；显式声明 `maxTokens / reservedForResponse` 时只能进一步收窄。没有模型 route 的独立 Context Manager 接入使用 256K/16K framework fallback。
+
+linnkit 内置默认 tokenizer（`tiktoken` + 字节比兜底），用于在已经解析好的 token 预算内估算消息占用。三种调整方式：
 
 | 你的场景 | 推荐做法 |
 |---------|---------|
@@ -188,7 +190,7 @@ export const pptAssistantSpec = AgentSpec.parse({
   version: '1.2.3',
   capabilities: ['agent', 'createPpt'],
   tools: [{ toolId: 'search_docs', argsSchema: searchDocsToolSchema }],
-  contextPolicy: defineContextPolicy({ profileId: 'agent', budget: { maxTokens: 128_000 } }),
+  contextPolicy: defineContextPolicy({ profileId: 'agent' }),
 });
 ```
 
@@ -205,7 +207,7 @@ export const pptAssistant = defineAgent({
   modelId: 'claude-sonnet-4',
   capabilities: ['agent', 'createPpt'],
   tools: [new SearchDocsTool()],
-  contextPolicy: { budget: { maxTokens: 128_000 } },
+  contextPolicy: {},
 });
 ```
 

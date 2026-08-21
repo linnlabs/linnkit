@@ -11,7 +11,7 @@ exports[`src/agent public exports snapshot > exposes the documented root public 
   "generateRuntimeEventId",
   "ports",
   "projectDurableLlmAuditValue",
-  "resolveConfiguredLlm",
+  "resolveConfiguredInference",
   "runAgent",
   "runtimeKernel",
   "setLlmAuditRecorder",

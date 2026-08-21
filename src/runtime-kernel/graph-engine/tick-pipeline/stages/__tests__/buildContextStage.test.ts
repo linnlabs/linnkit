@@ -23,6 +23,43 @@ describe('buildContextStage telemetry', () => {
     vi.useRealTimers();
   });
 
+  it('把 Tool definitions 预算交给 builder，并用统一预算限制最终模型输出', async () => {
+    const contextBuilder: GraphExecutorContextBuilder = {
+      build: vi.fn(
+        async (): Promise<GraphExecutorContextBuildOutput> => ({
+          llmMessages: [{ role: 'user', content: 'hello' }],
+          summaryEvents: [],
+          promptBudget: {
+            effectiveWindowTokens: 32_000,
+            outputLimitTokens: 4_000,
+            inputBudgetTokens: 28_000,
+            toolDefinitionTokens: 1_500,
+            messageBudgetTokens: 26_500,
+          },
+        })
+      ),
+    };
+    const ctx = createTestTickPipelineContext({
+      context: {
+        modelId: 'resolved-model',
+        toolDefinitionTokens: 1_500,
+        llmOptions: { reasoning_effort: 'high' },
+      },
+    });
+
+    await runTickPipeline(ctx, [createBuildContextStage({ contextBuilder })]);
+
+    expect(contextBuilder.build).toHaveBeenCalledWith(expect.objectContaining({
+      modelId: 'resolved-model',
+      toolDefinitionTokens: 1_500,
+    }));
+    expect(ctx.promptBudget?.messageBudgetTokens).toBe(26_500);
+    expect(ctx.llmOptions).toMatchObject({
+      reasoning_effort: 'high',
+      max_tokens: 4_000,
+    });
+  });
+
   it('应把 contextTrace 收口为可序列化 JSON record', async () => {
     const contextBuilder = {
       build: vi.fn(
@@ -75,10 +112,10 @@ describe('buildContextStage telemetry', () => {
           summaryEvents: [],
           tokenEstimate: {
             route: {
-              providerId: 'openrouter',
+              capabilityId: 'openrouter',
               baseURL: 'https://openrouter.ai/api/v1',
               modelId: 'glm-via-openrouter',
-              providerModelId: 'z-ai/glm-4.5',
+              endpointModelId: 'z-ai/glm-4.5',
             },
             localEstimateTokens: 20,
             calibratedEstimateTokens: 40,
@@ -139,10 +176,10 @@ describe('buildContextStage telemetry', () => {
       modelId: 'glm-via-openrouter',
       tokenEstimate: {
         route: {
-          providerId: 'openrouter',
+          capabilityId: 'openrouter',
           baseURL: 'https://openrouter.ai/api/v1',
           modelId: 'glm-via-openrouter',
-          providerModelId: 'z-ai/glm-4.5',
+          endpointModelId: 'z-ai/glm-4.5',
         },
         localEstimateTokens: 20,
         calibratedEstimateTokens: 40,
@@ -179,10 +216,10 @@ describe('buildContextStage telemetry', () => {
         turnId: 'turn_context_build',
         createdAt: 1_234,
         route: {
-          providerId: 'openrouter',
+          capabilityId: 'openrouter',
           baseURL: 'https://openrouter.ai/api/v1',
           modelId: 'glm-via-openrouter',
-          providerModelId: 'z-ai/glm-4.5',
+          endpointModelId: 'z-ai/glm-4.5',
         },
         components: [
           {

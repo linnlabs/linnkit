@@ -26,11 +26,11 @@ import { deriveModelInputRequirement, mergeModelInputRequirements } from './inpu
 import type { LlmFallbackObserver } from './definitions/llmFallbackObserver';
 import type { LlmCallInvocationContext } from './definitions/llmCallInvocationContext';
 import { runLlmInputPreflight } from './input-materialization';
+import { generateTraceId } from '../../contracts';
 
 export type {
   LlmCallOptions,
   LlmRequestMessage,
-  LlmResponseContent,
   LlmRetryConfig,
   ToolCall,
 } from './caller.types';
@@ -77,7 +77,14 @@ export class LlmCaller {
       materializer: this.deps.llmInputMaterializer,
       invocationContext,
     });
-    return callPlainCompletion(this.deps.aiEngine, modelId, resolvedMessages, options, signal);
+    return callPlainCompletion(
+      this.deps.inferencePort,
+      modelId,
+      resolvedMessages,
+      options,
+      signal,
+      generateTraceId()
+    );
   }
 
   /**
@@ -100,13 +107,14 @@ export class LlmCaller {
       eventHandler,
     });
     return callLlmStream({
-      aiEngine: this.deps.aiEngine,
+      inferencePort: this.deps.inferencePort,
       modelId,
       messages: resolvedMessages,
       options,
       eventHandler,
       signal,
       toolCallStreamingPolicies: invocationContext?.toolCallStreamingPolicies,
+      traceId: generateTraceId(),
     });
   }
 

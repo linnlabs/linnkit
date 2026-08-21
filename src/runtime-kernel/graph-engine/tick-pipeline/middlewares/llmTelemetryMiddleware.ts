@@ -1,8 +1,5 @@
-import {
-  normalizedUsageFromCanonical,
-  normalizeLlmUsage,
-} from '../../../../shared/llmTelemetryContext';
-import { extractResponseText, resolveCanonicalUsage, resolveUsage } from '../helpers';
+import { normalizedUsageFromCanonical } from '../../../../shared/llmTelemetryContext';
+import { extractResponseText, resolveCanonicalUsage } from '../helpers';
 import type { TickAroundMiddleware } from '../types';
 
 export const llmTelemetryMiddleware: TickAroundMiddleware = async (ctx, stage, next) => {
@@ -15,7 +12,7 @@ export const llmTelemetryMiddleware: TickAroundMiddleware = async (ctx, stage, n
   const canonicalUsageFromHost = resolveCanonicalUsage(ctx.llmResp);
   const normalizedUsageFromProvider = canonicalUsageFromHost
     ? normalizedUsageFromCanonical(canonicalUsageFromHost)
-    : normalizeLlmUsage(resolveUsage(ctx.llmResp));
+    : undefined;
   const respText = extractResponseText(ctx.llmResp);
   const normalizedUsage =
     normalizedUsageFromProvider ??

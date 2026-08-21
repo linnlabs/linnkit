@@ -45,6 +45,7 @@ export function createTestTickPipelineContext(
     toolSchemas: [],
     toolCallStreamingPolicies: {},
     llmOptions: {},
+    toolDefinitionTokens: 0,
     llmMessages: [],
     conversationId: 'conv_test',
     turnId: 'turn_test',

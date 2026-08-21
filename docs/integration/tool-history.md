@@ -57,6 +57,9 @@ Working memory 阶段还会再用同一个 `maxInteractionGroups` 控制最终 p
 
 注意：“原样保留工具组”不是说超长 output 可以无限进入上下文。工具执行完成时会先经过 observation governance，默认超过 `20_000` 字符或 `1_200` 行就落盘并替换为 preview；working memory 只是不再把这个 preview 再摘要成另一段文本。
 
+工具结果附件没有独立保留策略。图片与其他附件都随其 `tool_output` 所属的完整工具交互组一起进入、删除或压缩；
+不能只删附件，也不能因为工具组含图就绕过 `toolHistory`。退出活动上下文不会删除 durable 工具事实或资源。
+
 ## 5. `AgentSpecContextPolicy.toolHistory` 字段
 
 ```ts

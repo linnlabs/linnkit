@@ -1,6 +1,6 @@
 import { pathToFileURL } from 'node:url';
 import { resolve } from 'node:path';
-import type { LinnkitQuickstartConfig } from '../quickstart';
+import type { DefinedAgent, LinnkitQuickstartConfig } from '../quickstart';
 import { defineConfig } from '../quickstart';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -14,33 +14,41 @@ function readDefaultExport(moduleValue: unknown): unknown {
   return moduleValue;
 }
 
-function isConfiguredLlm(value: unknown): value is LinnkitQuickstartConfig['llm'] {
+function isConfiguredInference(value: unknown): value is LinnkitQuickstartConfig['inference'] {
   if (typeof value === 'function') {
     return true;
   }
   return (
     isRecord(value) &&
-    typeof value.chatCompletion === 'function' &&
-    typeof value.chatCompletionStream === 'function'
+    typeof value.stream === 'function'
   );
+}
+
+function isDefinedAgent(value: unknown): value is DefinedAgent {
+  if (!isRecord(value) || !isRecord(value.spec)) return false;
+  return typeof value.spec.id === 'string'
+    && value.spec.id.trim().length > 0
+    && typeof value.systemPrompt === 'string'
+    && Array.isArray(value.tools)
+    && (value.modelId === undefined || typeof value.modelId === 'string');
 }
 
 function readConfig(value: Record<string, unknown>, absolutePath: string): LinnkitQuickstartConfig {
   const agents = value.agents;
-  if (!Array.isArray(agents)) {
-    throw new Error(`[linnkit] config.agents must be an array: ${absolutePath}`);
+  if (!Array.isArray(agents) || !agents.every(isDefinedAgent)) {
+    throw new Error(`[linnkit] config.agents must contain defined agents: ${absolutePath}`);
   }
-  const llm = value.llm;
-  if (!isConfiguredLlm(llm)) {
-    throw new Error(`[linnkit] config.llm must be an AgentAiEngine or factory: ${absolutePath}`);
+  const inference = value.inference;
+  if (!isConfiguredInference(inference)) {
+    throw new Error(`[linnkit] config.inference must be a canonical port or factory: ${absolutePath}`);
   }
   const defaultModelId = value.defaultModelId;
   if (defaultModelId !== undefined && typeof defaultModelId !== 'string') {
     throw new Error(`[linnkit] config.defaultModelId must be a string when provided: ${absolutePath}`);
   }
   return {
-    agents: agents as LinnkitQuickstartConfig['agents'],
-    llm,
+    agents,
+    inference,
     defaultModelId,
   };
 }

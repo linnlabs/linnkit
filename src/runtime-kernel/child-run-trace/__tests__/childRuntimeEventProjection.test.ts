@@ -24,6 +24,52 @@ function childEvent(event: RuntimeEvent): RoutedRuntimeEvent {
 }
 
 describe('child RuntimeEvent -> parent subrun trace', () => {
+  it('把一次 decision 的完整工具批次保留为一个 durable parent trace fact', () => {
+    const decision = childEvent({
+      type: 'tool_call_decision',
+      id: 'child-decision-1',
+      conversation_id: 'conversation-1',
+      turn_id: 'child-turn-1',
+      timestamp: 1,
+      version: 1,
+      tool_name: 'read_file',
+      tool_call_id: ToolCallIdSchema.parse('call-read'),
+      phase: 'start',
+      status: 'loading',
+      payload: {
+        tool_calls: [
+          {
+            id: 'call-read',
+            type: 'function',
+            function: { name: 'read_file', arguments: '{"locator":"workspace:/a.md"}' },
+          },
+          {
+            id: 'call-search',
+            type: 'function',
+            function: { name: 'grep', arguments: '{"locator":"workspace:/","pattern":"P0"}' },
+          },
+        ],
+      },
+    });
+
+    expect(projectChildRuntimeEventToSubRunTrace(decision)).toEqual({
+      kind: 'tool_call_decision',
+      source_event_id: 'child-decision-1',
+      tool_calls: [
+        {
+          tool_call_id: 'call-read',
+          tool_name: 'read_file',
+          args: { locator: 'workspace:/a.md' },
+        },
+        {
+          tool_call_id: 'call-search',
+          tool_name: 'grep',
+          args: { locator: 'workspace:/', pattern: 'P0' },
+        },
+      ],
+    });
+  });
+
   it('多个答案段经同一纯投影保留 source identity、answer identity 与答案内序号', () => {
     const sourceEvents = [
       childEvent({

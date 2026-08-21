@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type {
-  AgentAiEngine,
+  CanonicalInferencePort,
   ImageInputAdmissionEvidence,
   LlmInputMaterializerPort,
 } from '../../../ports';
@@ -33,7 +33,6 @@ function model(overrides: Partial<ModelCatalogEntry> = {}): ModelCatalogEntry {
     id: 'primary',
     enabled: true,
     api_key: 'test-key',
-    api_base: 'https://models.example.com/v1',
     capabilities: ['chat', 'image_input'],
     adapter_input_support: { user_image: true, tool_result_image: true },
     ...overrides,
@@ -49,10 +48,19 @@ function createCatalog(models: readonly ModelCatalogEntry[]): ModelCatalogLike {
   };
 }
 
-function createAiEngine(chatCompletion: AgentAiEngine['chatCompletion']): AgentAiEngine {
+type Completion = (
+  modelId: string,
+  messages: Parameters<CanonicalInferencePort['stream']>[0]['messages']
+) => Promise<string>;
+
+function createInferencePort(chatCompletion: Completion): CanonicalInferencePort {
   return {
-    chatCompletion,
-    chatCompletionStream: vi.fn(),
+    async *stream(request) {
+      const content = await chatCompletion(request.model_id, request.messages);
+      yield { type: 'start', model_id: request.model_id, attempt_id: request.invocation.attempt_id };
+      if (content) yield { type: 'answer_delta', text: content };
+      yield { type: 'finish', reason: 'stop' };
+    },
   };
 }
 
@@ -127,7 +135,7 @@ describe('LlmCaller 图片输入能力门禁', () => {
     const chatCompletion = vi.fn().mockResolvedValue('tool schema accepted');
     const materializer = createTestMaterializer();
     const caller = new LlmCaller({
-      aiEngine: createAiEngine(chatCompletion),
+      inferencePort: createInferencePort(chatCompletion),
       modelCatalog: createCatalog([model()]),
       llmInputMaterializer: materializer,
     });
@@ -145,17 +153,17 @@ describe('LlmCaller 图片输入能力门禁', () => {
           placements: ['tool_result_image'],
         },
       },
-    )).resolves.toBe('tool schema accepted');
+    )).resolves.toEqual({ content: 'tool schema accepted' });
 
     expect(materializer.materialize).not.toHaveBeenCalled();
     expect(chatCompletion).toHaveBeenCalledOnce();
   });
 
-  it('能力通过后才物化，并只把 resolved input 交给 AIEngine', async () => {
+  it('能力通过后才物化，并只把 resolved input 交给 canonical port', async () => {
     const chatCompletion = vi.fn().mockResolvedValue('image success');
     const materializer = createTestMaterializer();
     const caller = new LlmCaller({
-      aiEngine: createAiEngine(chatCompletion),
+      inferencePort: createInferencePort(chatCompletion),
       modelCatalog: createCatalog([model()]),
       llmInputMaterializer: materializer,
     });
@@ -166,14 +174,17 @@ describe('LlmCaller 图片输入能力门禁', () => {
       {},
       undefined,
       { imageInputAdmissionEvidence: admissionEvidence },
-    )).resolves.toBe('image success');
+    )).resolves.toEqual({ content: 'image success' });
 
     expect(materializer.materialize).toHaveBeenCalledOnce();
     const providerMessages = chatCompletion.mock.calls[0]?.[1];
-    expect(providerMessages?.[0]).not.toHaveProperty('attachments.0.sha256');
     expect(providerMessages?.[0]).toMatchObject({
       role: 'user',
-      attachments: [{ placement: 'user_image', bytes: new Uint8Array([1, 2, 3]) }],
+      content: [{
+        type: 'image',
+        media_type: 'image/png',
+        bytes: new Uint8Array([1, 2, 3]),
+      }],
     });
   });
 
@@ -182,7 +193,7 @@ describe('LlmCaller 图片输入能力门禁', () => {
     const materializer = createTestMaterializer();
     const eventHandler = vi.fn();
     const caller = new LlmCaller({
-      aiEngine: createAiEngine(chatCompletion),
+      inferencePort: createInferencePort(chatCompletion),
       modelCatalog: createCatalog([model()]),
       llmInputMaterializer: materializer,
     });
@@ -205,13 +216,13 @@ describe('LlmCaller 图片输入能力门禁', () => {
     }));
   });
 
-  it('call 在模型不支持图片时以稳定错误阻断 AIEngine', async () => {
+  it('call 在模型不支持图片时以稳定错误阻断 Provider attempt', async () => {
     const chatCompletion = vi.fn();
     const catalog = createCatalog([
       model({ capabilities: ['chat'] }),
       model({ id: 'compatible' }),
     ]);
-    const caller = new LlmCaller({ aiEngine: createAiEngine(chatCompletion), modelCatalog: catalog });
+    const caller = new LlmCaller({ inferencePort: createInferencePort(chatCompletion), modelCatalog: catalog });
 
     await expect(caller.call('primary', userImageMessages)).rejects.toMatchObject({
       errorCode: MODEL_INPUT_ERROR_CODES.MODEL_UNSUPPORTED,
@@ -227,14 +238,13 @@ describe('LlmCaller 图片输入能力门禁', () => {
 
   it('callStream 区分 tool-result placement，不用 user 支持冒充', async () => {
     const chatCompletionStream = vi.fn();
-    const aiEngine: AgentAiEngine = {
-      chatCompletion: vi.fn(),
-      chatCompletionStream,
+    const inferencePort: CanonicalInferencePort = {
+      stream: chatCompletionStream,
     };
     const catalog = createCatalog([
       model({ adapter_input_support: { user_image: true, tool_result_image: false } }),
     ]);
-    const caller = new LlmCaller({ aiEngine, modelCatalog: catalog });
+    const caller = new LlmCaller({ inferencePort, modelCatalog: catalog });
 
     await expect(caller.callStream(
       'primary',
@@ -254,7 +264,7 @@ describe('LlmCaller 图片输入能力门禁', () => {
       model({ id: 'disabled', enabled: false, capabilities: ['chat'] }),
       model({ id: 'embedding', capabilities: ['embedding'] }),
     ]);
-    const caller = new LlmCaller({ aiEngine: createAiEngine(chatCompletion), modelCatalog: catalog });
+    const caller = new LlmCaller({ inferencePort: createInferencePort(chatCompletion), modelCatalog: catalog });
     const textMessages: LlmRequestMessage[] = [{ role: 'user', content: 'hello' }];
 
     for (const modelId of ['missing', 'disabled', 'embedding']) {
@@ -280,7 +290,7 @@ describe('LlmCaller 图片输入能力门禁', () => {
       throw new Error('Network timeout');
     });
     const callerOptions: LlmCallerOptions = {
-      aiEngine: createAiEngine(chatCompletion),
+      inferencePort: createInferencePort(chatCompletion),
       modelCatalog: catalog,
       maxRetries: 1,
       retryDelayMs: 0,
@@ -313,7 +323,7 @@ describe('LlmCaller 图片输入能力门禁', () => {
     const materializer = createTestMaterializer();
     const onLlmAttemptSucceeded = vi.fn();
     const callerOptions: LlmCallerOptions = {
-      aiEngine: createAiEngine(chatCompletion),
+      inferencePort: createInferencePort(chatCompletion),
       modelCatalog: catalog,
       modelResolver: resolver,
       maxRetries: 0,
@@ -327,7 +337,7 @@ describe('LlmCaller 图片输入能力门禁', () => {
       callerOptions,
       {},
       { onLlmAttemptSucceeded },
-    )).resolves.toBe('fallback success');
+    )).resolves.toEqual({ content: 'fallback success' });
     expect(chatCompletion.mock.calls.map((call) => call[0])).toEqual([
       'primary',
       'compatible-fallback',
@@ -355,7 +365,7 @@ describe('LlmCaller 图片输入能力门禁', () => {
     const onQuotaFallback = vi.fn();
     const onModelFallbackRejected = vi.fn();
     const callerOptions: LlmCallerOptions = {
-      aiEngine: createAiEngine(chatCompletion),
+      inferencePort: createInferencePort(chatCompletion),
       modelCatalog: catalog,
       maxRetries: 0,
     };
@@ -404,7 +414,7 @@ describe('LlmCaller 图片输入能力门禁', () => {
     const chatCompletion = vi.fn().mockRejectedValue(providerError);
     const onModelFallbackRejected = vi.fn();
     const callerOptions: LlmCallerOptions = {
-      aiEngine: createAiEngine(chatCompletion),
+      inferencePort: createInferencePort(chatCompletion),
       modelCatalog: catalog,
       modelResolver: resolver,
       maxRetries: 0,
@@ -432,7 +442,7 @@ describe('LlmCaller 图片输入能力门禁', () => {
     const catalog = createCatalog([
       model({ adapter_input_support: { user_image: false, tool_result_image: false } }),
     ]);
-    const caller = new LlmCaller({ aiEngine: createAiEngine(chatCompletion), modelCatalog: catalog });
+    const caller = new LlmCaller({ inferencePort: createInferencePort(chatCompletion), modelCatalog: catalog });
 
     await expect(caller.callWithRetries(
       'primary',
@@ -449,17 +459,17 @@ describe('LlmCaller 图片输入能力门禁', () => {
     const catalog = createCatalog([
       model({ capabilities: ['chat'] }),
     ]);
-    const caller = new LlmCaller({ aiEngine: createAiEngine(chatCompletion), modelCatalog: catalog });
+    const caller = new LlmCaller({ inferencePort: createInferencePort(chatCompletion), modelCatalog: catalog });
     const textMessages: LlmRequestMessage[] = [{ role: 'user', content: 'plain text' }];
 
-    await expect(caller.call('primary', textMessages)).resolves.toBe('text success');
+    await expect(caller.call('primary', textMessages)).resolves.toEqual({ content: 'text success' });
     await expect(caller.call('primary', userImageMessages)).rejects.toMatchObject({
       errorCode: MODEL_INPUT_ERROR_CODES.MODEL_UNSUPPORTED,
       metadata: { required_placements: ['user_image'] },
     });
 
     // child run 不继承父 run 的图片要求，但自身 final context 含图时仍独立校验。
-    await expect(caller.call('primary', textMessages)).resolves.toBe('text success');
+    await expect(caller.call('primary', textMessages)).resolves.toEqual({ content: 'text success' });
     await expect(caller.call('primary', toolImageMessages)).rejects.toMatchObject({
       errorCode: MODEL_INPUT_ERROR_CODES.MODEL_UNSUPPORTED,
       metadata: { required_placements: ['tool_result_image'] },
@@ -470,8 +480,9 @@ describe('LlmCaller 图片输入能力门禁', () => {
       Array.isArray(call[1])
       && call[1].length === 1
       && call[1][0]?.role === 'user'
-      && call[1][0]?.content === 'plain text'
-      && !('attachments' in call[1][0])
+      && Array.isArray(call[1][0]?.content)
+      && call[1][0]?.content[0]?.type === 'text'
+      && call[1][0]?.content[0]?.text === 'plain text'
     ))).toBe(true);
   });
 });

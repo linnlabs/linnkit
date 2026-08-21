@@ -3,7 +3,7 @@ import type {
   TokenCountSource,
   TokenRoute,
 } from '../contracts';
-import type { LlmRequestMessage } from './ai-engine.types';
+import type { LlmRequestMessage } from './llm-call';
 
 export interface TokenCountResult {
   inputTokens: number;

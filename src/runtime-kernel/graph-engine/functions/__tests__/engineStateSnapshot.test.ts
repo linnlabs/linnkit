@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { sanitizeCheckpointLocal } from '../engineStateSnapshot';
+import {
+  readCheckpointContextUsage,
+  sanitizeCheckpointLocal,
+} from '../engineStateSnapshot';
 
 describe('engineStateSnapshot.sanitizeCheckpointLocal', () => {
   it('剥离运行时引用，同时保留可恢复的执行状态', () => {
@@ -18,6 +21,7 @@ describe('engineStateSnapshot.sanitizeCheckpointLocal', () => {
       ],
       memory: { volatile: true },
       runtimeEventSink: () => undefined,
+      runtimeFailureFactSink: () => undefined,
       signal,
       summarizationCallbacks: { onSummarizationStart: () => undefined },
       toolContext: { runId: 'run-1' },
@@ -39,6 +43,7 @@ describe('engineStateSnapshot.sanitizeCheckpointLocal', () => {
     });
     expect(sanitized).not.toHaveProperty('memory');
     expect(sanitized).not.toHaveProperty('runtimeEventSink');
+    expect(sanitized).not.toHaveProperty('runtimeFailureFactSink');
     expect(sanitized).not.toHaveProperty('signal');
     expect(sanitized).not.toHaveProperty('summarizationCallbacks');
     expect(sanitized).not.toHaveProperty('toolContext');
@@ -65,5 +70,31 @@ describe('engineStateSnapshot.sanitizeCheckpointLocal', () => {
     Object.assign(nested, { content: 'after' });
 
     expect(local.history[0].nested.content).toBe('before');
+  });
+
+  it('保留并严格解析 context usage，非法等式不得进入 settlement', () => {
+    const contextUsage = {
+      basis: 'last_completed_llm_prompt' as const,
+      budget_model_id: 'main-model',
+      used_tokens: 10,
+      components: {
+        system_prompt_tokens: 2,
+        conversation_tokens: 8,
+        tool_definition_tokens: 0,
+      },
+      component_attribution: 'normalized_local_estimate' as const,
+      input_budget_tokens: 100,
+      remaining_tokens: 90,
+      output_limit_tokens: 20,
+      source: 'local-estimate' as const,
+      confidence: 'estimate' as const,
+      measured_at: 123,
+    };
+    const sanitized = sanitizeCheckpointLocal({ contextUsage });
+
+    expect(readCheckpointContextUsage(sanitized)).toEqual(contextUsage);
+    expect(() => readCheckpointContextUsage({
+      contextUsage: { ...contextUsage, remaining_tokens: 91 },
+    })).toThrow();
   });
 });

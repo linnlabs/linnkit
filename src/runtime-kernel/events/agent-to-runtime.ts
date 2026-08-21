@@ -110,11 +110,8 @@ function mapAgentEventToRuntime(
         {
           timestamp,
           completion_reason: finalAnswerEvent.completion_reason,
-          reasoning_details: Array.isArray(finalAnswerEvent.reasoning_details)
-            ? finalAnswerEvent.reasoning_details
-                .map((item) => toSerializableJsonValue(item))
-                .filter((item): item is NonNullable<typeof item> => item !== undefined)
-            : undefined,
+          provider_continuations: finalAnswerEvent.provider_continuations,
+          assistant_replay_parts: finalAnswerEvent.assistant_replay_parts,
           meta: toSerializableJsonRecord(readMetaFromEvent(finalAnswerEvent)),
         },
       );

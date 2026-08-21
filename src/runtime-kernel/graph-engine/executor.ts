@@ -9,7 +9,8 @@ import { ModelResolver, type ModelResolverLike } from '../llm/modelResolver';
 import { noopTelemetry } from '../telemetry/noopTelemetry';
 import type { TelemetryPort } from '../telemetry/telemetryPort';
 import { noopAudit } from '../audit/noopAudit';
-import type { AuditPort } from '../../ports';
+import type { AuditPort, TokenCounterPort } from '../../ports';
+import type { TokenRoute } from '../../contracts';
 import { createDefaultTokenizerPort } from '../../shared/defaultTokenizerPort';
 import type { TokenizerPort } from '../../ports';
 import type { ToolCatalogPort } from '../tools/ports';
@@ -23,6 +24,7 @@ import { createApplySystemReminderStage } from './tick-pipeline/stages/applySyst
 import { createBuildContextStage } from './tick-pipeline/stages/buildContextStage';
 import { createBuildDecisionStage } from './tick-pipeline/stages/buildDecisionStage';
 import { createExecuteLlmStage } from './tick-pipeline/stages/executeLlmStage';
+import { createMeasurePromptUsageStage } from './tick-pipeline/stages/measurePromptUsageStage';
 import { createPrepareCallStage } from './tick-pipeline/stages/prepareCallStage';
 import type {
   TickAroundMiddleware,
@@ -32,6 +34,7 @@ import type {
   TickPipelineContext,
   TickStage,
 } from './tick-pipeline/types';
+import { createPromptUsageMeasurer } from './orchestration/measurePromptUsage';
 
 export type { AgentStepDecision, TickEvent, TickInput, TickOutput } from './tick-pipeline/types';
 
@@ -59,6 +62,8 @@ export interface GraphAgentExecutorDependencies extends GraphAgentExecutorOption
   telemetryPort?: TelemetryPort;
   auditPort?: AuditPort;
   tokenizer?: TokenizerPort;
+  tokenCounter?: TokenCounterPort;
+  resolveTokenRoute?: (modelId: string) => TokenRoute | undefined;
 }
 
 export class GraphAgentExecutor {
@@ -88,6 +93,11 @@ export class GraphAgentExecutor {
     this.telemetryPort = dependencies.telemetryPort ?? noopTelemetry;
     this.auditPort = dependencies.auditPort ?? noopAudit;
     this.tokenizer = dependencies.tokenizer ?? createDefaultTokenizerPort();
+    const promptUsageMeasurer = createPromptUsageMeasurer({
+      tokenizer: this.tokenizer,
+      tokenCounter: dependencies.tokenCounter,
+      resolveTokenRoute: dependencies.resolveTokenRoute,
+    });
     this.stages = [
       createPrepareCallStage({
         modelResolver: this.modelResolver,
@@ -99,8 +109,11 @@ export class GraphAgentExecutor {
         contextBuilder: this.contextBuilder,
       }),
       createApplySystemReminderStage(),
+      createMeasurePromptUsageStage({ promptUsageMeasurer }),
       createExecuteLlmStage({
         llmCaller: this.llmCaller,
+        promptUsageMeasurer,
+        modelCatalog: this.modelCatalog,
       }),
       createBuildDecisionStage(),
     ];
@@ -122,6 +135,7 @@ export class GraphAgentExecutor {
       toolCallStreamingPolicies: {},
       toolModelInputRequirement: undefined,
       llmOptions: {},
+      toolDefinitionTokens: 0,
       llmMessages: [],
       conversationId: requireRuntimeIdentity(input.toolContext?.conversationId, 'conversationId'),
       turnId: requireRuntimeIdentity(input.toolContext?.turnId, 'turnId'),
@@ -142,6 +156,7 @@ export class GraphAgentExecutor {
       decision: ctx.decision ?? { kind: 'yield' },
       executorLocalPatch: ctx.executorLocalPatch,
       contextTrace: ctx.contextTrace,
+      contextUsage: ctx.contextUsage,
     };
   }
 }

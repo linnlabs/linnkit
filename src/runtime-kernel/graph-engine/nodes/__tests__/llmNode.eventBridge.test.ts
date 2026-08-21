@@ -12,6 +12,7 @@ const identity = {
 function createSubject(options: { publishError?: Error } = {}) {
   let state = initLlmNodeState({ answerId: undefined, chunkSeq: 0 });
   const published: RuntimeEvent[] = [];
+  const failureFacts: RuntimeEvent[] = [];
   const actions: LlmNodeAction[] = [];
   const bridge = new LlmNodeEventBridge({
     getState: () => state,
@@ -25,10 +26,13 @@ function createSubject(options: { publishError?: Error } = {}) {
       published.push(routed);
       return routed;
     },
+    runtimeFailureFactSink: event => {
+      failureFacts.push(event);
+    },
     conversationId: 'conv_test',
     turnId: 'turn_test',
   });
-  return { bridge, published, actions, getState: () => state };
+  return { bridge, published, failureFacts, actions, getState: () => state };
 }
 
 function emit(bridge: LlmNodeEventBridge, event: TickEvent): void {
@@ -36,6 +40,29 @@ function emit(bridge: LlmNodeEventBridge, event: TickEvent): void {
 }
 
 describe('LlmNodeEventBridge runtime facts', () => {
+  it('把已发布的 LLM 终态错误事实交给 lifecycle，且不创建第二份事实', () => {
+    const { bridge, published, failureFacts } = createSubject();
+
+    emit(bridge, {
+      type: 'error',
+      id: 'llm_failure_1',
+      timestamp: 1,
+      error: 'Canonical inference failed: provider_http_502',
+      error_code: 'llm.provider_http_502',
+      retryable: true,
+    });
+
+    expect(published).toHaveLength(1);
+    expect(failureFacts).toEqual([published[0]]);
+    expect(failureFacts[0]).toMatchObject({
+      id: 'llm_failure_1',
+      type: 'error',
+      error_code: 'llm.provider_http_502',
+      retryable: true,
+      run_id: 'run_test',
+    });
+  });
+
   it('保持 provider 的 answer_id/seq，并用同一身份组装完整 final_answer', () => {
     const { bridge, published, getState } = createSubject();
 
@@ -165,6 +192,58 @@ describe('LlmNodeEventBridge runtime facts', () => {
       is_complete: false,
       completion_reason: 'interrupted',
       meta: { partial: true, chunk_count: 1 },
+    });
+  });
+
+  it('重试 reset 清空在途组装，最终只持久化成功 attempt 的答案', () => {
+    const { bridge, published } = createSubject();
+    emit(bridge, {
+      type: 'stream_chunk',
+      id: 'chunk_partial',
+      timestamp: 1,
+      answer_id: 'answer_partial',
+      seq: 0,
+      content: '旧 attempt 的部分输出',
+    });
+    emit(bridge, {
+      type: 'stream_reset',
+      id: 'reset_partial',
+      timestamp: 2,
+      answer_id: 'answer_partial',
+    });
+    emit(bridge, {
+      type: 'stream_chunk',
+      id: 'chunk_final',
+      timestamp: 3,
+      answer_id: 'answer_final',
+      seq: 0,
+      content: '新 attempt 的完整输出',
+    });
+    emit(bridge, {
+      type: 'final_answer',
+      id: 'provider_final',
+      timestamp: 4,
+      answer_id: 'answer_final',
+      answer: '新 attempt 的完整输出',
+      completion_reason: 'terminal',
+    });
+
+    expect(published.map(event => event.type)).toEqual([
+      'final_answer_chunk',
+      'final_answer_reset',
+      'final_answer_chunk',
+      'final_answer',
+    ]);
+    expect(published[1]).toMatchObject({
+      type: 'final_answer_reset',
+      answer_id: 'answer_partial',
+    });
+    const durableAnswers = published.filter(event => event.type === 'final_answer');
+    expect(durableAnswers).toHaveLength(1);
+    expect(durableAnswers[0]).toMatchObject({
+      answer_id: 'answer_final',
+      content: '新 attempt 的完整输出',
+      is_complete: true,
     });
   });
 

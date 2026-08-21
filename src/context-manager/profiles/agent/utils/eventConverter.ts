@@ -1,50 +1,18 @@
 import { events as runtimeEvents } from '../../../../runtime-kernel';
 import {
+  AssistantReplayParts,
   FinalAnswerCompletionReason,
-  ProviderReasoningDetailsPayload,
+  ProviderContinuations,
   RuntimeEvent,
   ToolOutputMeta,
   type AiMessage,
   type FinalAnswerEvent,
-  type ObservationTruncationMeta,
   type ThoughtEvent,
   type UserInputEvent,
 } from '../../../../contracts';
 import { Logger } from '../../../../shared/logger';
 
 const logger = new Logger('AgentEventConverter');
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === 'object' && !Array.isArray(value);
-}
-
-function readObservationTruncationMeta(value: unknown): ObservationTruncationMeta | undefined {
-  if (!isRecord(value)) {
-    return undefined;
-  }
-  const originalChars = value['originalChars'];
-  const previewChars = value['previewChars'];
-  if (typeof originalChars !== 'number' || !Number.isInteger(originalChars) || originalChars < 0) {
-    return undefined;
-  }
-  if (typeof previewChars !== 'number' || !Number.isInteger(previewChars) || previewChars < 0) {
-    return undefined;
-  }
-  const originalLines = value['originalLines'];
-  const previewLines = value['previewLines'];
-  const blobId = value['blobId'];
-  return {
-    ...(typeof blobId === 'string' && blobId.trim() ? { blobId: blobId.trim() } : {}),
-    originalChars,
-    previewChars,
-    ...(typeof originalLines === 'number' && Number.isInteger(originalLines) && originalLines >= 0
-      ? { originalLines }
-      : {}),
-    ...(typeof previewLines === 'number' && Number.isInteger(previewLines) && previewLines >= 0
-      ? { previewLines }
-      : {}),
-  };
-}
 
 function isHistorySummaryEvent(event: RuntimeEvent): event is RuntimeEvent & {
   type: 'history_summary';
@@ -70,134 +38,21 @@ export function convertEventToAiMessage(event: RuntimeEvent): AiMessage {
       sampleIds: replacedIds.slice(0, 3),
     });
 
-    return {
-      id: event.id,
-      role: 'system',
-      type: 'history_summary',
-      content: event.content || '',
-      timestamp: event.timestamp,
-      metadata: {
-        messageType: 'summary',
-        originalMessageCount: event.original_message_count,
-        compressionRatio: event.compression_ratio,
-        generatedBy: event.generated_by,
-        includedOldSummary: event.included_old_summary,
-        replacedMessageIds: replacedIds,
-        summarySeq: event.summary_seq,
-      },
-    };
+    const projected = runtimeEvents.projectRuntimeEventToAiMessage(event);
+    if (projected) return projected;
   }
-
-  switch (event.type) {
-    case 'user_input':
-      return {
-        id: event.id,
-        role: 'user',
-        type: 'user_input',
-        content: event.content || '',
-        timestamp: event.timestamp,
-        ...(event.attachments ? { attachments: event.attachments } : {}),
-      };
-
-    case 'thought':
-      return {
-        id: event.id,
-        role: 'assistant',
-        type: 'thought',
-        content: event.content || '',
-        timestamp: event.timestamp,
-      };
-
-    case 'tool_call_decision':
-      return {
-        id: event.id,
-        role: 'assistant',
-        type: 'tool_calls',
-        content: '',
-        timestamp: event.timestamp,
-        metadata: {
-          tool_calls: (() => {
-            type UnknownRecord = Record<string, unknown>;
-            const isRecord = (v: unknown): v is UnknownRecord =>
-              !!v && typeof v === 'object' && !Array.isArray(v);
-
-            const payload = (event as { payload?: unknown }).payload;
-            const toolCallsFromPayload = (() => {
-              if (!isRecord(payload)) return undefined;
-              const raw = payload['tool_calls'];
-              return Array.isArray(raw) ? raw : undefined;
-            })();
-
-            if (toolCallsFromPayload && toolCallsFromPayload.length > 0) {
-              return toolCallsFromPayload;
-            }
-
-            return [
-              {
-                id: event.tool_call_id || '',
-                type: 'function' as const,
-                function: {
-                  name: event.tool_name || 'unknown',
-                  arguments: JSON.stringify(event.args || {}),
-                },
-              },
-            ];
-          })(),
-          reasoning_details: (() => {
-            type UnknownRecord = Record<string, unknown>;
-            const isRecord = (v: unknown): v is UnknownRecord =>
-              !!v && typeof v === 'object' && !Array.isArray(v);
-            const payload = (event as { payload?: unknown }).payload;
-            if (!isRecord(payload)) return undefined;
-            const rd = payload['reasoning_details'];
-            return Array.isArray(rd) ? rd : undefined;
-          })(),
-        },
-      };
-
-    case 'tool_output': {
-      const observationTruncation = readObservationTruncationMeta(event.metadata?.observationTruncation);
-
-      return {
-        id: event.id,
-        role: 'tool',
-        type: 'tool_output',
-        content: event.observation,
-        timestamp: event.timestamp,
-        metadata: {
-          tool_call_id: event.tool_call_id,
-          tool_name: event.tool_name,
-          ...(event.data !== undefined ? { data: event.data } : {}),
-          ...(event.error !== undefined ? { error: event.error } : {}),
-          ...(event.metadata?.presentation !== undefined
-            ? { presentation: event.metadata.presentation }
-            : {}),
-          ...(observationTruncation ? { observationTruncation } : {}),
-        },
-        ...(event.attachments ? { attachments: event.attachments } : {}),
-      };
-    }
-
-    case 'final_answer':
-      return {
-        id: event.id,
-        role: 'assistant',
-        type: 'final_answer',
-        content: event.content || '',
-        timestamp: event.timestamp,
-        metadata: {
-          completion_reason: event.completion_reason,
-          reasoning_details: Array.isArray(event.reasoning_details) ? event.reasoning_details : undefined,
-        },
-      };
-
-    default:
-      throw new Error(`Unsupported RuntimeEvent type during AiMessage conversion: ${event.type}`);
-  }
+  const projected = runtimeEvents.projectRuntimeEventToAiMessage(event);
+  if (projected) return projected;
+  throw new Error(`Unsupported RuntimeEvent type during AiMessage conversion: ${event.type}`);
 }
 
 export function convertEventsToAiMessages(events: RuntimeEvent[]): AiMessage[] {
-  const filtered = events.filter((event) => runtimeEvents.shouldEnterAgentContext(event));
+  const filtered = events.filter((event) => {
+    if (!runtimeEvents.shouldEnterAgentContext(event)) return false;
+    // 带工具调用的流式正文和 tool_call_decision 属于同一个 Assistant turn；
+    // 后者持有完整有序 parts，Context 不重复创建一条 assistant 消息。
+    return event.type !== 'final_answer' || event.completion_reason !== 'tool_call';
+  });
   return filtered.map((event) => convertEventToAiMessage(event));
 }
 
@@ -280,7 +135,8 @@ export function convertAiMessageToEvent(
         throw new Error(`AiMessage type ${message.type} cannot be converted to a RuntimeEvent.`);
       }
 
-      const rawReasoningDetails = message.metadata?.reasoning_details;
+      const providerContinuations = message.metadata?.provider_continuations;
+      const assistantReplayParts = message.metadata?.assistant_replay_parts;
       const completionReason = FinalAnswerCompletionReason.parse(message.metadata?.completion_reason);
       const event: FinalAnswerEvent = {
         ...base,
@@ -289,8 +145,11 @@ export function convertAiMessageToEvent(
         answer_id: message.id,
         completion_reason: completionReason,
         is_complete: completionReason !== 'interrupted',
-        ...(Array.isArray(rawReasoningDetails)
-          ? { reasoning_details: ProviderReasoningDetailsPayload.parse(rawReasoningDetails) }
+        ...(providerContinuations
+          ? { provider_continuations: ProviderContinuations.parse(providerContinuations) }
+          : {}),
+        ...(assistantReplayParts
+          ? { assistant_replay_parts: AssistantReplayParts.parse(assistantReplayParts) }
           : {}),
       };
       return event;

@@ -74,7 +74,7 @@ const testToolRegistry: ToolManagerRegistry = {
 
 function createRemoteCountRoute(modelId: string): TokenRoute {
   return {
-    providerId: 'test-provider',
+    capabilityId: 'test-provider',
     modelId,
     capabilities: {
       supportsRemoteTokenCount: true,
@@ -242,13 +242,12 @@ describe('AgentMessageOrchestrator provider sidecar policy', () => {
         modelId === 'cloud-deepseek-v4-flash'
           ? {
               provider: 'deepseek',
-              requiresReasoningDetailsForToolReplay: true,
-              missingSidecarBehavior: 'degrade_to_text',
+              requiresProviderContinuationForToolReplay: true,
             }
           : undefined,
     });
 
-    const result = await orchestrator.processAgentConversation(
+    const processing = orchestrator.processAgentConversation(
       {
         query: '继续',
         promptKey: 'default',
@@ -258,54 +257,7 @@ describe('AgentMessageOrchestrator provider sidecar policy', () => {
       new ToolManager(testToolRegistry)
     );
 
-    expect(result.messages.some(message => message.type === 'tool_calls')).toBe(false);
-    expect(result.messages.some(message => message.type === 'tool_output')).toBe(false);
-    expect(result.messages.some(message => message.metadata?.isDegradedToolReplay === true)).toBe(
-      true
-    );
-  });
-
-  it('request contextPolicy.providerReplay 应覆盖模型默认 sidecar replay 策略', async () => {
-    const providerRegistry = new ContextProviderRegistry();
-    providerRegistry.register(keepAllProvider);
-    const orchestrator = new AgentMessageOrchestrator({
-      tokenBudget: {
-        maxTokens: 100_000,
-        reservedForResponse: 1000,
-      },
-      processing: {
-        debugMode: false,
-      },
-      taskResolver: () => passThroughTask,
-      providerRegistry,
-      resolveContextPolicy: () =>
-        defineContextPolicy({
-          providerReplay: {
-            missingSidecarBehavior: 'allow',
-          },
-        }),
-      resolveToolReplayProtocolPolicy: () => ({
-        provider: 'deepseek',
-        requiresReasoningDetailsForToolReplay: true,
-        missingSidecarBehavior: 'degrade_to_text',
-      }),
-    });
-
-    const result = await orchestrator.processAgentConversation(
-      {
-        query: '继续',
-        promptKey: 'default',
-        model_id: 'cloud-deepseek-v4-flash',
-      },
-      createMissingSidecarHistory(),
-      new ToolManager(testToolRegistry)
-    );
-
-    expect(result.messages.some(message => message.type === 'tool_calls')).toBe(true);
-    expect(result.messages.some(message => message.type === 'tool_output')).toBe(true);
-    expect(result.messages.some(message => message.metadata?.isDegradedToolReplay === true)).toBe(
-      false
-    );
+    await expect(processing).rejects.toThrow(/要求工具回放携带有序 provider continuation/);
   });
 });
 
@@ -507,20 +459,71 @@ describe('AgentMessageOrchestrator contextPolicy provider registry', () => {
         promptKey: 'default',
       },
       [],
-      new ToolManager(testToolRegistry)
+      new ToolManager(testToolRegistry),
+      undefined,
+      {
+        promptBudgetLimits: {
+          modelContextWindowTokens: 128_000,
+          modelMaxOutputTokens: 16_000,
+          toolDefinitionTokens: 0,
+        },
+      },
     );
 
-    expect(result.metadata.tokenUsage.budget).toBe(17_000);
+    expect(result.contextBuildResult.tokenUsage.messageBudget).toBe(17_000);
     expect(result.contextBuildResult.contextTrace?.totalBudget).toBe(17_000);
     expect(result.contextBuildResult.contextTrace?.effectivePolicy?.budget?.maxTokens).toBe(20_000);
+  });
+
+  it('Agent 未声明容量时直接使用模型 route，而不是 constructor fallback', async () => {
+    const providerRegistry = new ContextProviderRegistry();
+    providerRegistry.register(keepAllProvider);
+    const orchestrator = new AgentMessageOrchestrator({
+      tokenBudget: {
+        maxTokens: 100_000,
+        reservedForResponse: 1000,
+      },
+      processing: {
+        debugMode: false,
+      },
+      taskResolver: () => passThroughTask,
+      providerRegistry,
+      resolveContextPolicy: () => defineContextPolicy(),
+    });
+
+    const result = await orchestrator.processAgentConversation(
+      {
+        query: '使用模型容量',
+        promptKey: 'default',
+      },
+      [],
+      new ToolManager(testToolRegistry),
+      undefined,
+      {
+        promptBudgetLimits: {
+          modelContextWindowTokens: 256_000,
+          modelMaxOutputTokens: 16_384,
+          toolDefinitionTokens: 384,
+        },
+      },
+    );
+
+    expect(result.promptBudget).toEqual({
+      effectiveWindowTokens: 256_000,
+      outputLimitTokens: 16_384,
+      inputBudgetTokens: 239_616,
+      toolDefinitionTokens: 384,
+      messageBudgetTokens: 239_232,
+    });
+    expect(result.contextBuildResult.contextTrace).toBeUndefined();
   });
 
   it('按 resolveTokenRoute 注入 route-aware TokenCounterPort，不按模型名猜 route', async () => {
     const route: TokenRoute = {
       ...createRemoteCountRoute('cloud:claude-sonnet-4-6'),
-      providerId: 'anthropic',
+      capabilityId: 'anthropic',
       baseURL: 'https://api.example.com/proxy/anthropic',
-      providerModelId: 'claude-sonnet-4-6',
+      endpointModelId: 'claude-sonnet-4-6',
     };
     const calls: Array<Parameters<TokenCounterPort['countMessages']>[0]> = [];
     const tokenCounter: TokenCounterPort = {
@@ -573,9 +576,9 @@ describe('AgentMessageOrchestrator contextPolicy provider registry', () => {
 
     expect(calls).toHaveLength(1);
     expect(calls[0]?.route).toEqual(route);
-    expect(result.metadata.tokenUsage.estimated).toBe(123);
-    expect(result.metadata.tokenUsage.source).toBe('test-fixture');
-    expect(result.metadata.tokenUsage.confidence).toBe('provider-estimate');
+    expect(result.contextBuildResult.tokenUsage.used).toBe(123);
+    expect(result.contextBuildResult.tokenUsage.source).toBe('test-fixture');
+    expect(result.contextBuildResult.tokenUsage.confidence).toBe('provider-estimate');
     expect(result.contextBuildResult.contextTrace?.remoteTokenCount).toMatchObject({
       enabled: true,
       attempted: true,

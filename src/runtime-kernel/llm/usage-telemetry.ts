@@ -1,94 +1,49 @@
-import type { AgentAiEngine } from '../../ports';
-import { CanonicalLlmUsage } from '../../contracts';
-import type { CanonicalLlmUsage as CanonicalLlmUsageType } from '../../contracts';
+import type {
+  CanonicalInferencePort,
+  ResolvedLlmInputMessage,
+} from '../../ports';
+import type {
+  CanonicalLlmUsage,
+  AssistantReplayPart,
+  ProviderContinuation,
+} from '../../contracts';
 import type { LlmCallOptions, ToolCall } from './caller.types';
-import type { ResolvedLlmInputMessage } from '../../ports';
-import { isRecord, toToolCalls } from './sidecar-replay';
+import { callLlmStream } from './streaming-adapter';
 
-export type LlmCallResult =
-  | string
-  | {
-      content: string;
-      tool_calls?: ToolCall[];
-      reasoning_details?: unknown[];
-      usage?: unknown;
-      canonicalUsage?: CanonicalLlmUsageType;
-    };
-
-function parseCanonicalUsage(value: unknown): CanonicalLlmUsageType | undefined {
-  const parsed = CanonicalLlmUsage.safeParse(value);
-  return parsed.success ? parsed.data : undefined;
+/**
+ * Linnkit 的统一调用结果只保留 canonical 字段。
+ * Provider 原始 usage 只允许作为 canonicalUsage.rawUsage 的审计证据存在。
+ */
+export interface LlmCallResult {
+  readonly content: string;
+  readonly tool_calls?: ToolCall[];
+  readonly provider_continuations?: ProviderContinuation[];
+  readonly assistant_replay_parts?: AssistantReplayPart[];
+  readonly canonicalUsage?: CanonicalLlmUsage;
 }
 
 export async function callPlainCompletion(
-  aiEngine: AgentAiEngine,
+  inferencePort: CanonicalInferencePort,
   modelId: string,
   messages: ResolvedLlmInputMessage[],
   options: LlmCallOptions = {},
   signal?: AbortSignal,
+  traceId?: string
 ): Promise<LlmCallResult> {
-  const response = await aiEngine.chatCompletion(modelId, messages, { ...options, signal });
-  return normalizeCompletionResponse(response);
-}
-
-export function normalizeCompletionResponse(response: unknown): LlmCallResult {
-  if (!response) {
-    return String(response);
-  }
-
-  if (isRecord(response)) {
-    const usage = response['usage'];
-    const canonicalUsage = parseCanonicalUsage(response['canonicalUsage']);
-    const parsedToolCalls = toToolCalls(response['tool_calls']);
-    if (parsedToolCalls) {
-      const reasoningDetails = Array.isArray(response['reasoning_details'])
-        ? response['reasoning_details']
-        : undefined;
-      return {
-        content: typeof response['content'] === 'string' ? response['content'] : '',
-        tool_calls: parsedToolCalls,
-        reasoning_details: reasoningDetails,
-        ...(usage !== undefined ? { usage } : {}),
-        ...(canonicalUsage !== undefined ? { canonicalUsage } : {}),
-      };
-    }
-  }
-
-  if (typeof response === 'string') {
-    return response;
-  }
-
-  if (typeof response === 'object') {
-    if (isRecord(response) && (response['content'] !== undefined || response['reasoning_details'] !== undefined)) {
-      const usage = response['usage'];
-      const canonicalUsage = parseCanonicalUsage(response['canonicalUsage']);
-      return {
-        content: typeof response['content'] === 'string' ? response['content'] : '',
-        reasoning_details: Array.isArray(response['reasoning_details'])
-          ? response['reasoning_details']
-          : undefined,
-        ...(usage !== undefined ? { usage } : {}),
-        ...(canonicalUsage !== undefined ? { canonicalUsage } : {}),
-      };
-    }
-
-    if (isRecord(response)) {
-      const contentValue = response['content'];
-      if (typeof contentValue === 'string') return contentValue;
-      const textValue = response['text'];
-      if (typeof textValue === 'string') return textValue;
-    }
-
-    return JSON.stringify(response);
-  }
-
-  return String(response);
+  return callLlmStream({
+    inferencePort,
+    modelId,
+    messages,
+    options,
+    signal,
+    traceId,
+  });
 }
 
 export function getLlmResultContent(result: LlmCallResult): string {
-  return typeof result === 'object' ? result.content : result;
+  return result.content;
 }
 
 export function getLlmResultToolCalls(result: LlmCallResult): ToolCall[] | undefined {
-  return typeof result === 'object' ? result.tool_calls : undefined;
+  return result.tool_calls;
 }

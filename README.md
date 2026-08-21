@@ -120,12 +120,9 @@ const agent = defineAgent({
   modelId: 'gpt-4o-mini',
   capabilities: ['agent'],
   tools: [],
-  contextPolicy: {
-    budget: { maxTokens: 16_000, reservedForResponse: 2_000 },
-  },
 });
 
-const result = await runAgent(agent, { input: 'What is linnkit?', llm });
+const result = await runAgent(agent, { input: 'What is linnkit?', inference });
 console.log(result.finalAnswer);
 ```
 

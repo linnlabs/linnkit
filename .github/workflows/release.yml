@@ -34,13 +34,22 @@ jobs:
       - name: Verify npm trusted publishing toolchain
         run: |
           npm install -g npm@11.17.0
+          npm install -g pnpm@10.20.0
           node --version
           npm --version
-      - run: npm install --no-audit --no-fund
-      - run: npm run typecheck
-      - run: npm run build
-      - run: npm run test:smoke
-      - run: npm run test:smoke:dist
+          pnpm --version
+      - run: pnpm install --frozen-lockfile
+      - name: Verify Linnkit core
+        run: |
+          pnpm run typecheck
+          pnpm run build
+          pnpm run test
+          pnpm run test:smoke
+          pnpm run test:smoke:dist
+      - name: Verify adapter compatibility with this Linnkit source
+        run: |
+          pnpm --filter @linnlabs/linnkit-provider-ai-sdk typecheck
+          pnpm --filter @linnlabs/linnkit-provider-ai-sdk test
       - run: npm pack --dry-run
       - name: Verify tag matches package.json version
         if: github.event_name == 'push'

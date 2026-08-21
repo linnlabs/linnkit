@@ -1,5 +1,5 @@
 export { defineAgent } from './defineAgent';
-export { defineConfig, resolveConfiguredLlm } from './defineConfig';
+export { defineConfig, resolveConfiguredInference } from './defineConfig';
 export { runAgent } from './runAgent';
 export { QuickstartMemoryToolRuntime } from './toolRuntime';
 

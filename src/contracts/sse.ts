@@ -27,6 +27,7 @@ import {
 } from './identity';
 import { RuntimeResourceRefs } from './resource-ref';
 import { SubRunTracePayload, validateSubRunTracePayloadSemantics } from './sub-run-trace-payload';
+import { ContextUsageSnapshot } from './token-usage';
 
 export const BaseSSEEvent = z.object({
   id: RuntimeEventIdSchema,
@@ -204,6 +205,7 @@ export const SSERunExecutionMetricsEvent = BaseSSEEvent.extend({
   duration_ms: z.number().nonnegative(),
   user_message_id: RuntimeEventIdSchema.optional(),
   benchmark: SerializableJsonRecord.optional(),
+  context_usage: ContextUsageSnapshot.optional(),
 });
 
 export type SSERunExecutionMetricsEvent = z.infer<typeof SSERunExecutionMetricsEvent>;
@@ -426,6 +428,7 @@ export function runtimeEventToSSEEvent(event: RuntimeEvent): SSEEvent | null {
         phase: event.phase,
         status: event.status,
         args: event.args,
+        tool_calls: event.tool_calls,
         output: event.output,
         duration_ms: event.duration_ms,
         meta: event.meta,
@@ -499,6 +502,7 @@ export function runtimeEventToSSEEvent(event: RuntimeEvent): SSEEvent | null {
         duration_ms: event.duration_ms,
         user_message_id: event.user_message_id,
         benchmark: event.benchmark,
+        context_usage: event.context_usage,
       };
   }
   return assertNeverRuntimeEvent(event);

@@ -6,7 +6,12 @@ import type { StandardToolCall } from '../types';
 import type { LlmCallResponse, TickPipelineContext } from './types';
 import type { ToolCall } from '../../../ports';
 import { CanonicalLlmUsage } from '../../../contracts';
-import type { CanonicalLlmUsage as CanonicalLlmUsageType, RuntimeEvent } from '../../../contracts';
+import type {
+  CanonicalLlmUsage as CanonicalLlmUsageType,
+  AssistantReplayPart,
+  ProviderContinuation,
+  RuntimeEvent,
+} from '../../../contracts';
 import { RuntimeEvent as RuntimeEventSchema } from '../../../contracts';
 
 export function readNonEmptyString(value: unknown): string | undefined {
@@ -97,13 +102,6 @@ export function parsePrimaryToolArgs(
   }
 }
 
-export function resolveUsage(response: LlmCallResponse | undefined): unknown {
-  if (!response || typeof response === 'string') {
-    return undefined;
-  }
-  return response.usage;
-}
-
 export function resolveCanonicalUsage(
   response: LlmCallResponse | undefined
 ): CanonicalLlmUsageType | undefined {
@@ -121,13 +119,20 @@ export function resolveToolCalls(response: LlmCallResponse | undefined): ToolCal
   return Array.isArray(response.tool_calls) ? response.tool_calls : undefined;
 }
 
-export function resolveReasoningDetails(
+export function resolveProviderContinuations(
   response: LlmCallResponse | undefined
-): unknown[] | undefined {
+): ProviderContinuation[] | undefined {
   if (!response || typeof response === 'string') {
     return undefined;
   }
-  return Array.isArray(response.reasoning_details) ? response.reasoning_details : undefined;
+  return response.provider_continuations;
+}
+
+export function resolveAssistantReplayParts(
+  response: LlmCallResponse | undefined
+): AssistantReplayPart[] | undefined {
+  if (!response || typeof response === 'string') return undefined;
+  return response.assistant_replay_parts;
 }
 
 export function resolveToolNamesForAudit(ctx: TickPipelineContext): string[] {

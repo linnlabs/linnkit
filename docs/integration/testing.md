@@ -1,9 +1,9 @@
 # Testing · 用 testkit 测接入
 
-> **What** · `@linnlabs/linnkit/testkit` 测试底座 —— scripted AI engine / graph loop harness / tool fixtures / replay harness / 26 条 strict invariants（15 run + 11 contextPolicy + C12 tokenizer）。
+> **What** · `@linnlabs/linnkit/testkit` 测试底座 —— scripted canonical inference / graph loop harness / tool fixtures / replay harness / 26 条 strict invariants（15 run + 11 contextPolicy + C12 tokenizer）。
 > **When to read** · 写第一个 agent 单测；要校验 `contextPolicy` 决策；要 mock LLM / tokenizer / telemetry / audit；做接入回归。
 > **Prerequisites** · [`02-quickstart.md`](./02-quickstart.md)。
-> **Key exports** · `createGraphLoopHarness` / `createScriptedAiEngine` / `createContextPipelineHarness` / `createRunSupervisorHarness` / `createCollectingAuditPort` / `createMockTelemetryPort` / `createMockTokenizerPort` from `@linnlabs/linnkit/testkit`。
+> **Key exports** · `createGraphLoopHarness` / `createScriptedInferenceHarness` / `createContextPipelineHarness` / `createRunSupervisorHarness` / `createCollectingAuditPort` / `createMockTelemetryPort` / `createMockTokenizerPort` from `@linnlabs/linnkit/testkit`。
 > **Related** · [`context-engineering.md` §9.4.6](./context-engineering.md) · [`audit.md`](./audit.md) · [`telemetry.md`](./telemetry.md) · [`constraints-and-pitfalls.md`](./constraints-and-pitfalls.md)（`AGENT-GUARD-10-no-testkit-in-production`）
 
 `@linnlabs/linnkit/testkit` 是 **package-neutral** 的测试底座。它**只**给你"linnkit 自己的合同"测试用的 primitive；不替代你的 host-bound testkit。
@@ -24,7 +24,7 @@ host application-layer test（产品级）：跟 linnkit 没关系
 
 | primitive | 用途 |
 |---|---|
-| `createScriptedAiEngineHarness` | 脚本化 AI engine |
+| `createScriptedInferenceHarness` | 脚本化 canonical inference port，可验证 request 和结构化事件 |
 | `createGraphLoopHarness` | 装配 graph loop / LlmNode factory / observationPreview 的最小 harness；`runtimeEventSink` 必须由调用者提供 |
 | `createDefaultGraphExecutor` | 返回一个最小默认 `GraphExecutor`（仅测试用）|
 | `createReplayHarness` | context replay harness |
@@ -37,7 +37,7 @@ host application-layer test（产品级）：跟 linnkit 没关系
 
 ```ts
 import {
-  createScriptedAiEngineHarness,
+  createScriptedInferenceHarness,
   createGraphLoopHarness,
   createRunSupervisorHarness,
   validateRunInvariants,
@@ -102,7 +102,7 @@ Child-run 的 host-bound harness 还必须装配真实 lifecycle，不能让 `Ch
 | 场景 | 用法 |
 |---|---|
 | 工具抛错 | `harness.tools.injectThrowOnce({ tool: 'echo', error: new Error('boom') })` |
-| LLM 抛错 | `harness.llm.injectThrow({ step: 1, error })` |
-| LLM 调用中途取消 | `harness.driver.cancelMidLlm({ step: 2, reason: 'user_aborted' })` |
+| LLM 失败终态 | scripted turn 传入 `failure: { kind, code, retryable }` |
+| LLM 事件后中断 | scripted turn 传入 `throwAfterEvents`，验证截断 stream |
 
 跑完 scenario 后用 `assertRunInvariants(report)` 验证所有 15 条不变量都没被破坏。

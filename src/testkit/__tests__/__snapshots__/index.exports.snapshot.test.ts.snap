@@ -12,7 +12,7 @@ exports[`src/agent/testkit public exports snapshot > exposes the documented test
   "createMockTokenizerPort",
   "createReplayHarness",
   "createRunSupervisorHarness",
-  "createScriptedAiEngineHarness",
+  "createScriptedInferenceHarness",
   "createToolContextFixture",
   "expectFinalStepForcedTools",
   "expectMessagesContainText",

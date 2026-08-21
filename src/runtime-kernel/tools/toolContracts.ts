@@ -1,22 +1,22 @@
 import type { ToolIdempotencyPolicy } from './idempotency/toolIdempotency';
 import type { ToolExecutionContext } from './toolExecutionContext';
 import type { ModelInputRequirement } from '../llm/input-capabilities';
+import type { ToolModelInputDelivery } from './model-input';
+import type {
+  JsonSchemaValue,
+  ToolParameterProperty,
+  ToolParameterSchema,
+  ToolParameterType,
+} from '../../ports';
+
+export type {
+  JsonSchemaValue,
+  ToolParameterProperty,
+  ToolParameterSchema,
+  ToolParameterType,
+} from '../../ports';
 
 export type ToolArgs = Record<string, unknown>;
-export type JsonObjectSchema = Record<string, unknown>;
-
-export interface ToolParameterProperty {
-  type: string;
-  description: string;
-  default?: unknown;
-  enum?: string[];
-  minimum?: number;
-  maximum?: number;
-  minLength?: number;
-  properties?: Record<string, ToolParameterProperty>;
-  items?: ToolParameterProperty;
-  required?: string[];
-}
 
 /**
  * 工具对 LLM 流式 tool_call 生命周期的显式声明。
@@ -27,13 +27,6 @@ export interface ToolParameterProperty {
 export interface ToolCallStreamingPolicy {
   readonly emitPlaceholder?: true;
   readonly emitArgumentSnapshots?: true;
-}
-
-export interface ToolParameterSchema {
-  type: 'object';
-  properties: Record<string, ToolParameterProperty>;
-  required?: string[];
-  additionalProperties?: boolean;
 }
 
 export interface ToolResult {
@@ -54,6 +47,8 @@ export abstract class BaseTool<TArgs extends ToolArgs = ToolArgs, TResult extend
 
   readonly idempotency?: ToolIdempotencyPolicy;
   readonly modelInputRequirement?: ModelInputRequirement;
+  /** 模型输入是工具成功的必要结果，还是仅在当前模型支持时提供的增强反馈。 */
+  readonly modelInputDelivery?: ToolModelInputDelivery;
   readonly resolveModelInputRequirement?: (args: ToolArgs) => ModelInputRequirement | undefined;
   readonly streaming?: ToolCallStreamingPolicy;
 
@@ -145,16 +140,16 @@ export const CommonParameterTypes = {
 export interface AgentTool<TArgs extends ToolArgs = ToolArgs, TResult = unknown> {
   name: string;
   description: string;
-  parameters: JsonObjectSchema;
+  parameters: ToolParameterSchema;
   execute(args: TArgs): Promise<TResult>;
 }
 
-export interface OpenAIToolSchema {
+export interface FunctionToolSchema {
   type: 'function';
   function: {
     name: string;
     description: string;
-    parameters: JsonObjectSchema;
+    parameters: ToolParameterSchema;
   };
 }
 

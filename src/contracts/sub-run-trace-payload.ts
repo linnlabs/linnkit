@@ -27,6 +27,13 @@ export const SubRunTraceKind = z.enum([
 ]);
 export type SubRunTraceKind = z.infer<typeof SubRunTraceKind>;
 
+export const SubRunTraceToolCallDecision = z.object({
+  tool_call_id: ToolCallIdSchema,
+  tool_name: z.string().trim().min(1),
+  args: SerializableJsonRecord,
+}).strict();
+export type SubRunTraceToolCallDecision = z.infer<typeof SubRunTraceToolCallDecision>;
+
 export const SubRunTracePayload = z.object({
   parent_tool_call_id: ToolCallIdSchema,
   subrun_id: SubrunIdSchema,
@@ -43,7 +50,8 @@ export const SubRunTracePayload = z.object({
   tool_call_id: ToolCallIdSchema.optional(),
   phase: ToolCallPhase.optional(),
   status: Status.optional(),
-  args: SerializableJsonValue.optional(),
+  args: SerializableJsonRecord.optional(),
+  tool_calls: z.array(SubRunTraceToolCallDecision).min(1).optional(),
   output: SerializableJsonValue.optional(),
   duration_ms: z.number().optional(),
   meta: SerializableJsonRecord.optional(),
@@ -91,11 +99,31 @@ export function validateSubRunTracePayloadSemantics(
       });
     }
   }
-  if (
-    payload.kind === 'tool_call_decision'
-    || payload.kind === 'tool_process'
-    || payload.kind === 'tool_output'
-  ) {
+  if (payload.kind === 'tool_call_decision') {
+    if (payload.tool_calls === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['tool_calls'],
+        message: 'tool_call_decision requires canonical tool_calls',
+      });
+    }
+    for (const field of ['tool_name', 'tool_call_id', 'phase', 'status', 'args'] as const) {
+      if (payload[field] !== undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [field],
+          message: `tool_call_decision forbids legacy scalar ${field}`,
+        });
+      }
+    }
+  } else if (payload.tool_calls !== undefined) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['tool_calls'],
+      message: `${payload.kind} forbids tool_calls`,
+    });
+  }
+  if (payload.kind === 'tool_process' || payload.kind === 'tool_output') {
     if (payload.tool_name === undefined || payload.tool_name.trim().length === 0) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['tool_name'], message: `${payload.kind} requires tool_name` });
     }
@@ -103,12 +131,19 @@ export function validateSubRunTracePayloadSemantics(
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['tool_call_id'], message: `${payload.kind} requires tool_call_id` });
     }
   }
-  if (payload.kind === 'tool_call_decision' || payload.kind === 'tool_process') {
+  if (payload.kind === 'tool_process') {
     if (payload.phase === undefined) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['phase'], message: `${payload.kind} requires phase` });
     }
     if (payload.status === undefined) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['status'], message: `${payload.kind} requires status` });
+    }
+    if (payload.args === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['args'],
+        message: 'tool_process requires owner-admitted args',
+      });
     }
   }
   if (
@@ -120,6 +155,13 @@ export function validateSubRunTracePayloadSemantics(
       code: z.ZodIssueCode.custom,
       path: ['status'],
       message: 'tool_output requires success or error status',
+    });
+  }
+  if (payload.kind === 'tool_output' && payload.output === undefined) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['output'],
+      message: 'tool_output requires structured output',
     });
   }
 }

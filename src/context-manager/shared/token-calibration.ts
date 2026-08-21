@@ -141,10 +141,10 @@ export function actualInputTokensForCalibration(input: {
 
 function routeEquals(left: TokenRoute, right: TokenRoute): boolean {
   return (
-    left.providerId === right.providerId &&
+    left.capabilityId === right.capabilityId &&
     left.baseURL === right.baseURL &&
     left.modelId === right.modelId &&
-    left.providerModelId === right.providerModelId
+    left.endpointModelId === right.endpointModelId
   );
 }
 

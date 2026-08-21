@@ -5,7 +5,8 @@ import {
   type FinalAnswerCompletionReason,
   type FinalAnswerChunkEvent,
   type FinalAnswerEvent,
-  type ProviderReasoningDetailsPayload,
+  type AssistantReplayPart,
+  type ProviderContinuation,
 } from '../../contracts';
 
 /**
@@ -52,7 +53,8 @@ export class FinalAnswerAssembler {
 
   finalize(options: {
     completionReason: FinalAnswerCompletionReason;
-    reasoningDetails?: ProviderReasoningDetailsPayload;
+    providerContinuations?: ProviderContinuation[];
+    assistantReplayParts?: AssistantReplayPart[];
   }): FinalAnswerEvent | null {
     const firstChunk = this.firstChunk;
     if (!firstChunk) return null;
@@ -70,7 +72,8 @@ export class FinalAnswerAssembler {
       {
         timestamp: Date.now(),
         completion_reason: options.completionReason,
-        reasoning_details: options.reasoningDetails,
+        provider_continuations: options.providerContinuations,
+        assistant_replay_parts: options.assistantReplayParts,
         meta: {
           chunk_count: chunkCount,
           ...(options.completionReason === 'interrupted' ? { partial: true } : {}),

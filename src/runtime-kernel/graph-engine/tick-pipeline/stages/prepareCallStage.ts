@@ -10,6 +10,7 @@ import { emitAuditEnvelope } from '../../../audit/emitAudit';
 import { prepareModelCompatibleTools } from '../../functions/prepareModelCompatibleTools';
 import { runIdFromTurnId } from '../../../../contracts';
 import type { ToolCallStreamingPolicy } from '../../../tools/toolContracts';
+import { estimateToolDefinitionTokens } from '../../functions/promptUsageComponents';
 
 export interface PrepareCallStageDependencies {
   modelResolver: Pick<ModelResolverLike, 'resolveModelId'>;
@@ -29,6 +30,7 @@ export function createPrepareCallStage(dependencies: PrepareCallStageDependencie
       'turnId',
       'input',
       'audit',
+      'tokenizer',
     ],
     writes: [
       'modelId',
@@ -36,6 +38,7 @@ export function createPrepareCallStage(dependencies: PrepareCallStageDependencie
       'toolModelInputRequirement',
       'toolCallStreamingPolicies',
       'llmOptions',
+      'toolDefinitionTokens',
     ],
     async run(ctx) {
       const lockedRunModelId = readNonEmptyString(ctx.executorLocal?.runLockedModelId);
@@ -71,12 +74,10 @@ export function createPrepareCallStage(dependencies: PrepareCallStageDependencie
           modelId,
         },
       });
-      const candidateToolSchemas = dependencies.toolCatalog.getToolSchemas(
-        ctx.request.availableTools,
-        {
-          imageGenerationModelId: ctx.request.imageGenerationModelId,
-        }
-      );
+      const candidateToolSchemas = dependencies.toolCatalog.getToolSchemas({
+        toolNames: ctx.request.availableTools,
+        invocation: ctx.request,
+      });
       const modelConfig = dependencies.modelCatalog.getModelById(modelId);
       const toolPreparation = prepareModelCompatibleTools({
         schemas: candidateToolSchemas,
@@ -91,12 +92,16 @@ export function createPrepareCallStage(dependencies: PrepareCallStageDependencie
 
       const llmOptions: LlmCallOptions = {};
       if (!ctx.forceFinalAnswer && ctx.request.enableTools !== false && toolSchemas.length > 0) {
-        llmOptions.tools = toolSchemas;
+        llmOptions.tools = toolSchemas.map(schema => ({
+          name: schema.function.name,
+          description: schema.function.description,
+          parameters: schema.function.parameters,
+        }));
         if (ctx.executorLocal?.phase === 'force_tools') {
           const firstToolName = toolSchemas[0]?.function?.name;
           llmOptions.tool_choice =
             typeof firstToolName === 'string' && firstToolName.trim().length > 0
-              ? { type: 'function', function: { name: firstToolName.trim() } }
+              ? { type: 'tool', name: firstToolName.trim() }
               : 'auto';
         } else {
           llmOptions.tool_choice = 'auto';
@@ -132,12 +137,20 @@ export function createPrepareCallStage(dependencies: PrepareCallStageDependencie
         llmOptions.reasoning_effort = effectiveEffort;
       }
 
+      const toolDefinitionTokens = estimateToolDefinitionTokens({
+        tools: llmOptions.tools,
+        toolChoice: llmOptions.tool_choice,
+        modelId,
+        tokenizer: ctx.tokenizer,
+      });
+
       return {
         modelId,
         toolSchemas,
         toolModelInputRequirement: toolPreparation.requirement,
         toolCallStreamingPolicies,
         llmOptions,
+        toolDefinitionTokens,
       };
     },
   });

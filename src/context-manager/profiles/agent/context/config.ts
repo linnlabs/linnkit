@@ -8,6 +8,10 @@
  */
 
 import { Logger } from '../../../../shared/logger';
+import {
+  DEFAULT_PROMPT_CONTEXT_WINDOW_TOKENS,
+  DEFAULT_PROMPT_MAX_OUTPUT_TOKENS,
+} from '../../../../shared/prompt-budget';
 
 const logger = new Logger('AgentContextConfig');
 
@@ -20,11 +24,11 @@ const logger = new Logger('AgentContextConfig');
 export const AGENT_CONTEXT_BUILDER_CONFIG = {
   // === 绝对Token限制设置 ===
   
-  /** 默认最大Token预算上限 */
-  DEFAULT_MAX_TOKENS: 232000,
+  /** 独立 Context Manager 没有模型 route 时使用的总窗口 fallback。 */
+  DEFAULT_MAX_TOKENS: DEFAULT_PROMPT_CONTEXT_WINDOW_TOKENS,
   
-  /** 响应预留Token数 */
-  RESERVED_FOR_RESPONSE: 2400,
+  /** 独立 Context Manager 没有模型 route 时使用的最大输出 fallback。 */
+  RESERVED_FOR_RESPONSE: DEFAULT_PROMPT_MAX_OUTPUT_TOKENS,
   
   // === Agent专用工作记忆填充策略 ===
   

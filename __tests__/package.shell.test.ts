@@ -3,6 +3,7 @@ import { isBuiltin } from 'node:module';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -20,7 +21,7 @@ async function readJson(relativePath: string): Promise<Record<string, unknown>> 
 }
 
 /**
- * Smoke test for `@linnlabs/linnkit` 0.28.0 publishable shape.
+ * Smoke test for `@linnlabs/linnkit` 0.30.0 publishable shape.
  *
  * 这个 test 是公开包 manifest 的硬性闸门，覆盖：
  *   1. 包元数据（name / version / 不再 private / repository / npmjs publishConfig）
@@ -36,11 +37,11 @@ async function readJson(relativePath: string): Promise<Record<string, unknown>> 
  * 任何破坏以上不变量的改动 = break，必须同步 CHANGELOG / integration docs。
  */
 describe('packages/linnkit shell manifest', () => {
-  it('declares the publishable @linnlabs/linnkit 0.28.0 shape with dist-only exports', async () => {
+  it('declares the publishable @linnlabs/linnkit 0.30.0 shape with dist-only exports', async () => {
     const manifest = await readJson('package.json');
 
     expect(manifest.name).toBe('@linnlabs/linnkit');
-    expect(manifest.version).toBe('0.28.0');
+    expect(manifest.version).toBe('0.30.0');
     expect(manifest.private).toBeUndefined();
     expect(manifest.type).toBe('module');
     expect(manifest.main).toBe('./dist/index.cjs');
@@ -255,19 +256,38 @@ describe('packages/linnkit src third-party import reverse audit', () => {
 
   function extractBareSpecifiers(source: string): string[] {
     const specs: string[] = [];
-    const re = /(?:^|\s|;|\}|\))\s*(?:import|export)\s+(?:[^'"]+?\s+from\s+)?['"]([^'"]+)['"]/gm;
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(source)) !== null) {
-      specs.push(m[1]);
-    }
-    const re2 = /\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)/g;
-    while ((m = re2.exec(source)) !== null) {
-      specs.push(m[1]);
-    }
-    const re3 = /\brequire\s*\(\s*['"]([^'"]+)['"]\s*\)/g;
-    while ((m = re3.exec(source)) !== null) {
-      specs.push(m[1]);
-    }
+    const sourceFile = ts.createSourceFile(
+      'source.ts',
+      source,
+      ts.ScriptTarget.Latest,
+      true,
+      ts.ScriptKind.TSX,
+    );
+    const visit = (node: ts.Node): void => {
+      if (
+        (ts.isImportDeclaration(node) || ts.isExportDeclaration(node))
+        && node.moduleSpecifier
+        && ts.isStringLiteralLike(node.moduleSpecifier)
+      ) {
+        specs.push(node.moduleSpecifier.text);
+      } else if (
+        ts.isImportEqualsDeclaration(node)
+        && ts.isExternalModuleReference(node.moduleReference)
+        && node.moduleReference.expression
+        && ts.isStringLiteralLike(node.moduleReference.expression)
+      ) {
+        specs.push(node.moduleReference.expression.text);
+      } else if (ts.isCallExpression(node) && node.arguments.length === 1) {
+        const [argument] = node.arguments;
+        const isDynamicImport = node.expression.kind === ts.SyntaxKind.ImportKeyword;
+        const isRequire = ts.isIdentifier(node.expression) && node.expression.text === 'require';
+        if ((isDynamicImport || isRequire) && argument && ts.isStringLiteralLike(argument)) {
+          specs.push(argument.text);
+        }
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(sourceFile);
     return specs;
   }
 

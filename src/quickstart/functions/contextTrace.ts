@@ -8,7 +8,6 @@ const QUICKSTART_CONTEXT_POLICY_UNSUPPORTED_FIELDS = [
   'budget',
   'toolHistory',
   'toolOutput',
-  'providerReplay',
   'summarization',
   'mustKeep',
   'workingMemory',

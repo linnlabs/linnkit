@@ -3,7 +3,7 @@ export * from './agent-harness/assertions';
 
 export { createGraphLoopHarness } from '../runtime-kernel';
 export { createDefaultGraphExecutor } from '../runtime-kernel';
-export { createScriptedAiEngineHarness } from './agent-harness/scriptedAiEngineHarness';
+export { createScriptedInferenceHarness } from './agent-harness/scriptedInferenceHarness';
 export {
   assertContextPolicyInvariants,
   createReplayHarness,
@@ -29,12 +29,12 @@ export type {
   GraphLoopLlmNodeFactoryParams,
 } from '../runtime-kernel';
 export type {
-  ScriptedAiEngineHarness,
-  ScriptedAiEngineHarnessOptions,
+  ScriptedInferenceHarness,
+  ScriptedInferenceHarnessOptions,
   ScriptedLlmCall,
   ScriptedLlmTurn,
   ScriptedToolCall,
-} from './agent-harness/scriptedAiEngineHarness';
+} from './agent-harness/scriptedInferenceHarness';
 export type {
   ContextPolicyInvariantContext,
   ContextPolicyInvariantFailure,

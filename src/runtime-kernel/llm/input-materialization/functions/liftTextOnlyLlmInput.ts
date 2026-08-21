@@ -15,7 +15,7 @@ function hasDurableAttachments(message: LlmRequestMessage): boolean {
 }
 
 /**
- * 纯文本无需访问 host 资源。含附件消息必须等 materializer 装配完成后再跨过 AgentAiEngine 边界。
+ * 纯文本无需访问 host 资源。含附件消息必须等 materializer 装配完成后再进入 canonical request builder。
  */
 export function liftTextOnlyLlmInput(
   activeModelId: string,

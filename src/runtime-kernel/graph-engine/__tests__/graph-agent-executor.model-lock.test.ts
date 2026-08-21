@@ -30,7 +30,6 @@ describe('GraphAgentExecutor - run 内 quota 模型锁定', () => {
           id: 'cloud-primary-model',
           model_name: 'cloud-primary-model',
           billing_mode: 'cloud',
-          provider: 'system_default',
           enabled: true,
         };
       }
@@ -39,7 +38,6 @@ describe('GraphAgentExecutor - run 内 quota 模型锁定', () => {
           id: 'cloud-deepseek-reasoner',
           model_name: 'deepseek-reasoner',
           billing_mode: 'cloud',
-          provider: 'system_default',
           enabled: true,
         };
       }

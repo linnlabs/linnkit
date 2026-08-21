@@ -3,11 +3,13 @@ import type {
   ImageInputAdmissionEvidence,
   LlmRequestMessage,
 } from '../../ports';
+import type { EffectivePromptBudget } from './functions/resolveEffectivePromptBudget';
 import type {
   ContextBuildTokenEstimate,
   ContextComponentTokenLedgerEntry,
   ContextTokenComponent,
   InternalLlmCallUsage,
+  PromptUsageMeasurementPolicy,
   RuntimeEvent,
   SummarizationCallbacks,
 } from '../../contracts';
@@ -31,11 +33,17 @@ export interface GraphExecutorContextBuildInput {
   history: RuntimeEvent[];
   summarizationCallbacks?: SummarizationCallbacks;
   modelId: string;
+  /** `prepare_call` 对最终 tools/control 的本地估算，Context Builder 必须先从输入预算扣除。 */
+  toolDefinitionTokens: number;
   signal?: AbortSignal;
 }
 
 export interface GraphExecutorContextBuildOutput {
   llmMessages: LlmRequestMessage[];
+  /** 模型 route、Agent policy 与 prepared tools 合并后的单一预算事实。 */
+  promptBudget?: EffectivePromptBudget;
+  /** reminder 后最终 Prompt 计数必须遵守的 route、remote count 与 calibration 策略。 */
+  promptUsageMeasurementPolicy?: PromptUsageMeasurementPolicy;
   /** Context Manager 产出的短生命周期图片预算证据；不得写入 checkpoint 或 provider options。 */
   imageInputAdmissionEvidence?: ImageInputAdmissionEvidence;
   summaryEvents: PendingContextRuntimeEvent[];

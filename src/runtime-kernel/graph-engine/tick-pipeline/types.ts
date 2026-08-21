@@ -11,7 +11,7 @@ import type {
   ToolCallDecisionEvent,
 } from '../../events/agentEvents';
 import type { ToolExecutionContext } from '../../tools/toolExecutionContext';
-import type { OpenAIToolSchema } from '../../tools/toolContracts';
+import type { FunctionToolSchema } from '../../tools/toolContracts';
 import type { ToolCallStreamingPolicy } from '../../tools/toolContracts';
 import type { LlmCallOptions } from '../../llm/caller';
 import type { ModelInputRequirement } from '../../llm/input-capabilities';
@@ -19,8 +19,13 @@ import type { TelemetryPort } from '../../telemetry/telemetryPort';
 import type { AuditPort } from '../../../ports';
 import type { ExecutorLocalPatch, ExecutorLocalState, StandardToolCall } from '../types';
 import type { GraphExecutorOutputProcessor } from '../executorContextBuilder';
+import type { EffectivePromptBudget } from '../functions/resolveEffectivePromptBudget';
 import type {
   CanonicalLlmUsage,
+  AssistantReplayPart,
+  ContextUsageSnapshot,
+  PromptUsageMeasurementPolicy,
+  ProviderContinuation,
   RuntimeEvent,
   SerializableJsonRecord,
   SummarizationCallbacks,
@@ -73,6 +78,7 @@ export interface TickOutput {
   decision: AgentStepDecision;
   executorLocalPatch?: ExecutorLocalPatch;
   contextTrace?: SerializableJsonRecord;
+  contextUsage?: ContextUsageSnapshot;
 }
 
 export type LlmCallResponse =
@@ -80,8 +86,8 @@ export type LlmCallResponse =
   | {
       content: string;
       tool_calls?: ToolCall[];
-      reasoning_details?: unknown[];
-      usage?: unknown;
+      provider_continuations?: ProviderContinuation[];
+      assistant_replay_parts?: AssistantReplayPart[];
       canonicalUsage?: CanonicalLlmUsage;
     };
 
@@ -96,10 +102,15 @@ export interface TickPipelineContext {
   executorLocalPatch?: ExecutorLocalPatch;
   summarizationCallbacks?: SummarizationCallbacks;
   modelId: string;
-  toolSchemas: OpenAIToolSchema[];
+  toolSchemas: FunctionToolSchema[];
   toolModelInputRequirement?: ModelInputRequirement;
   toolCallStreamingPolicies: Readonly<Record<string, ToolCallStreamingPolicy>>;
   llmOptions: LlmCallOptions;
+  toolDefinitionTokens: number;
+  promptBudget?: EffectivePromptBudget;
+  promptUsageMeasurementPolicy?: PromptUsageMeasurementPolicy;
+  promptUsageCandidate?: ContextUsageSnapshot;
+  contextUsage?: ContextUsageSnapshot;
   llmMessages: LlmRequestMessage[];
   imageInputAdmissionEvidence?: ImageInputAdmissionEvidence;
   conversationId: string;
@@ -129,6 +140,7 @@ export type TickStageId =
   | 'prepare_call'
   | 'build_context'
   | 'apply_system_reminder'
+  | 'measure_prompt_usage'
   | 'execute_llm'
   | 'build_decision';
 

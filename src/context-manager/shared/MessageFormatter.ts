@@ -1,4 +1,9 @@
-import type { AiMessage, RuntimeResourceRef } from '../../contracts';
+import type {
+  AiMessage,
+  AssistantReplayPart,
+  ProviderContinuation,
+  RuntimeResourceRef,
+} from '../../contracts';
 import type { FenceRegistry } from './fences';
 import type { ChatMessage } from './contracts/chatLineMessage';
 import { Logger } from '../../shared/logger';
@@ -17,8 +22,19 @@ export interface MessageFormatterOptions {
 export type NativeToolCallingMessage =
   | { role: 'system'; content: string }
   | { role: 'user'; content: string; attachments?: RuntimeResourceRef[] }
-  | { role: 'assistant'; content: string; reasoning_details?: unknown[]; provider_empty_replay_field?: true }
-  | { role: 'assistant'; content: string | null; tool_calls: unknown[]; reasoning_details?: unknown[]; provider_empty_replay_field?: true }
+  | {
+      role: 'assistant';
+      content: string;
+      provider_continuations?: ProviderContinuation[];
+      assistant_replay_parts?: AssistantReplayPart[];
+    }
+  | {
+      role: 'assistant';
+      content: string | null;
+      tool_calls: unknown[];
+      provider_continuations?: ProviderContinuation[];
+      assistant_replay_parts?: AssistantReplayPart[];
+    }
   | { role: 'tool'; tool_call_id: string; content: string; attachments?: RuntimeResourceRef[] };
 
 class MessageFormatter {
@@ -92,27 +108,25 @@ class MessageFormatter {
       if (role === 'assistant' && type === 'tool_calls' && metadata?.tool_calls) {
         const toolCallsRaw = metadata.tool_calls;
         const toolCalls = Array.isArray(toolCallsRaw) ? toolCallsRaw : [];
-        const reasoningDetailsRaw = metadata.reasoning_details;
-        const reasoningDetails = Array.isArray(reasoningDetailsRaw) ? reasoningDetailsRaw : undefined;
-        const shouldUseProviderEmptyReplayField = metadata.provider_empty_replay_field === true;
+        const providerContinuations = metadata.provider_continuations;
+        const assistantReplayParts = metadata.assistant_replay_parts;
         return {
           role: 'assistant',
           content: content || null,
           tool_calls: toolCalls,
-          ...(reasoningDetails && reasoningDetails.length > 0 ? { reasoning_details: reasoningDetails } : {}),
-          ...(shouldUseProviderEmptyReplayField ? { provider_empty_replay_field: true as const } : {}),
+          ...(providerContinuations?.length ? { provider_continuations: providerContinuations } : {}),
+          ...(assistantReplayParts?.length ? { assistant_replay_parts: assistantReplayParts } : {}),
         };
       }
 
       if (role === 'assistant' && type === 'final_answer') {
-        const reasoningDetailsRaw = metadata?.reasoning_details;
-        const reasoningDetails = Array.isArray(reasoningDetailsRaw) ? reasoningDetailsRaw : undefined;
-        const shouldUseProviderEmptyReplayField = metadata?.provider_empty_replay_field === true;
+        const providerContinuations = metadata?.provider_continuations;
+        const assistantReplayParts = metadata?.assistant_replay_parts;
         return {
           role: 'assistant',
           content,
-          ...(reasoningDetails && reasoningDetails.length > 0 ? { reasoning_details: reasoningDetails } : {}),
-          ...(shouldUseProviderEmptyReplayField ? { provider_empty_replay_field: true as const } : {}),
+          ...(providerContinuations?.length ? { provider_continuations: providerContinuations } : {}),
+          ...(assistantReplayParts?.length ? { assistant_replay_parts: assistantReplayParts } : {}),
         };
       }
 

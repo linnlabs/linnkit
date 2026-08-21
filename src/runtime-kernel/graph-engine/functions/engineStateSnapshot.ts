@@ -1,4 +1,5 @@
 import type { EngineLocalState } from '../types';
+import { ContextUsageSnapshot } from '../../../contracts';
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   if (!value || typeof value !== 'object') return false;
@@ -30,6 +31,7 @@ export function cloneEngineStateValue<T>(value: T): T {
 const NON_CHECKPOINT_LOCAL_KEYS = [
   'memory',
   'runtimeEventSink',
+  'runtimeFailureFactSink',
   'signal',
   'summarizationCallbacks',
   'toolContext',
@@ -43,4 +45,12 @@ export function sanitizeCheckpointLocal(
     delete cloned[key];
   }
   return cloned as EngineLocalState;
+}
+
+/** checkpoint 上一旦存在 contextUsage，就必须按公共合同严格 admission。 */
+export function readCheckpointContextUsage(
+  local: EngineLocalState | Record<string, unknown> | undefined,
+) {
+  const value = asLocalRecord(local).contextUsage;
+  return value === undefined ? undefined : ContextUsageSnapshot.parse(value);
 }

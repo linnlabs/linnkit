@@ -5,11 +5,11 @@ export type {
   ToolModelInputDeclaration,
   ToolModelInputResolverPort,
 } from './definitions/toolModelInput';
-export { ToolModelInputResolutionError } from './definitions/toolModelInput';
-export {
-  parseToolModelInputDeclaration,
-} from './functions/parseToolModelInputDeclaration';
-export { resolveToolModelInput } from './orchestration/resolveToolModelInput';
 export type {
-  ToolModelInputDeclarationValidation,
-} from './functions/parseToolModelInputDeclaration';
+  ToolModelInputAdmission,
+  ToolModelInputDelivery,
+} from './definitions/toolModelInputPolicy';
+export { ToolModelInputResolutionError } from './definitions/toolModelInput';
+export { parseToolModelInputDeclaration } from './functions/parseToolModelInputDeclaration';
+export { resolveToolModelInput } from './orchestration/resolveToolModelInput';
+export type { ToolModelInputDeclarationValidation } from './functions/parseToolModelInputDeclaration';

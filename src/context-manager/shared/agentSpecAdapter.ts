@@ -3,7 +3,6 @@ import type {
   AgentSpecCheckpointPolicy,
   AgentSpecContextPolicy,
   AgentSpecContextTracePolicy,
-  AgentSpecProviderReplayPolicy,
   AgentSpecSummarizationPolicy,
   AgentSpecSystemReminderPolicy,
   AgentSpecToolOutputPolicy,
@@ -39,7 +38,6 @@ export interface AgentSpecPreprocessorOptions {
     maxInteractionGroups?: number;
     overflowStrategy?: 'keep-latest' | 'fail-fast';
   };
-  providerReplay?: AgentSpecProviderReplayPolicy;
 }
 
 export interface AgentSpecProviderOptions {
@@ -145,11 +143,6 @@ export function contextPolicyToPreprocessorOptions(
     };
   }
 
-  const providerReplay = pickDefinedProviderReplayOptions(policy?.providerReplay);
-  if (providerReplay) {
-    options.providerReplay = providerReplay;
-  }
-
   return options;
 }
 
@@ -223,25 +216,6 @@ export function contextPolicyToRuntimeOptions(
     executionOptions: contextPolicyToExecutionOptions(policy),
     systemReminder: contextPolicyToSystemReminderOptions(policy),
   };
-}
-
-function pickDefinedProviderReplayOptions(
-  providerReplay: AgentSpecProviderReplayPolicy | undefined,
-): AgentSpecPreprocessorOptions['providerReplay'] {
-  if (!providerReplay) {
-    return undefined;
-  }
-  const result: AgentSpecProviderReplayPolicy = {};
-  if (providerReplay.provider !== undefined) {
-    result.provider = providerReplay.provider;
-  }
-  if (providerReplay.requiresReasoningDetailsForToolReplay !== undefined) {
-    result.requiresReasoningDetailsForToolReplay = providerReplay.requiresReasoningDetailsForToolReplay;
-  }
-  if (providerReplay.missingSidecarBehavior !== undefined) {
-    result.missingSidecarBehavior = providerReplay.missingSidecarBehavior;
-  }
-  return Object.keys(result).length > 0 ? result : undefined;
 }
 
 function pickDefinedSummarizationOptions(

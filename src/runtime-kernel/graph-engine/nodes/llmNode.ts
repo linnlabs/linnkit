@@ -51,6 +51,7 @@ export class LlmNode implements GraphNode {
       toolContext,
       summarizationCallbacks,
       runtimeEventSink,
+      runtimeFailureFactSink,
       signal,
       history,
     } = graphLocal;
@@ -99,6 +100,7 @@ export class LlmNode implements GraphNode {
       getState: () => nodeState,
       dispatch,
       runtimeEventSink,
+      runtimeFailureFactSink,
       conversationId,
       turnId,
     });
@@ -124,7 +126,7 @@ export class LlmNode implements GraphNode {
       bridge.finalizePartialAnswer();
       throw error;
     }
-    const { decision, executorLocalPatch, contextTrace } = tickOutput;
+    const { decision, executorLocalPatch, contextTrace, contextUsage } = tickOutput;
 
     // ── 决策 dispatch ──
 
@@ -160,6 +162,7 @@ export class LlmNode implements GraphNode {
       executorLocal,
       executorLocalPatch,
       contextTrace,
+      contextUsage,
     });
     state.local = { ...(state.local || {}), ...patch };
 

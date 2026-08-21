@@ -5,12 +5,9 @@ import type { ToolCatalogPort, ToolRuntimeDefinition } from '../../tools/ports';
 import { ensureToolContextRuntimeCapability } from '../../tools/toolContextRuntime';
 import type { EngineState, RuntimeEventSink, StandardToolCall } from '../types';
 import type { ModelInputRequirement } from '../../llm/input-capabilities';
+import type { ToolModelInputDelivery } from '../../tools/model-input';
 import { ToolNodeEventBridge } from './toolNode.eventBridge';
-import {
-  isRecord,
-  parseJsonSafe,
-  type UnknownRecord,
-} from './toolNode.helpers';
+import { isRecord, parseJsonSafe, type UnknownRecord } from './toolNode.helpers';
 import {
   parseRuntimeEvents,
   toSerializableJsonRecord,
@@ -41,6 +38,7 @@ export type PreparedToolExecution = {
   protocolError?: string;
   idempotencyKey?: string;
   modelInputRequirement?: ModelInputRequirement;
+  modelInputDelivery: ToolModelInputDelivery;
   modelInputRequirementError?: string;
   bridge: ToolNodeEventBridge;
 };
@@ -144,7 +142,8 @@ export function prepareToolExecution(params: {
       try {
         const validation = toolDefinition.validateArguments(toolArgs);
         if (!validation.success) {
-          protocolError = validation.error ?? `Tool '${toolName}' arguments failed owner validation.`;
+          protocolError =
+            validation.error ?? `Tool '${toolName}' arguments failed owner validation.`;
         }
       } catch (error) {
         protocolError = `Tool '${toolName}' argument validation failed: ${
@@ -197,6 +196,7 @@ export function prepareToolExecution(params: {
     ...(modelInputRequirement.requirement
       ? { modelInputRequirement: modelInputRequirement.requirement }
       : {}),
+    modelInputDelivery: toolDefinition?.modelInputDelivery ?? 'required',
     ...(modelInputRequirement.error
       ? { modelInputRequirementError: modelInputRequirement.error }
       : {}),
