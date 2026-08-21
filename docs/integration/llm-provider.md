@@ -74,7 +74,7 @@ Host 的固定 route profile 必须声明第三方 codec 实际支持的图片�
 
 ## 6. Vercel AI SDK 可选 adapter 与 Host 实现约束
 
-通用 AI SDK 实现见 [`@linnlabs/linnkit-provider-ai-sdk`](https://github.com/linnlabs/linnkit/tree/main/packages/provider-ai-sdk)。Linnkit 只看到 canonical port；可选 adapter 拥有 AI SDK Core、Provider packages 和 factory conformance，Host 仍拥有产品目录、route、credential 与 audit。核心约束是：
+通用 AI SDK 实现见公开源码中的 [`@linnlabs/linnkit-provider-ai-sdk`](https://github.com/linnlabs/linnkit/tree/main/packages/provider-ai-sdk)。它当前不是 npmjs 安装承诺。Linnkit 只看到 canonical port；可选 adapter 拥有 AI SDK Core、Provider packages 和 factory conformance，Host 仍拥有产品目录、route、credential 与 audit。核心约束是：
 
 - Adapter 只维护一个类型安全的 Provider factory registry，Host 业务代码和 Linnkit 不直接 import 具体 language package；
 - “一个 registry”不表示“一个 npm 包”：OpenAI、Anthropic、Google、DeepSeek、MiniMax 等正式协议各注册对应第三方 package factory，通用 OpenAI-compatible 只服务确实属于该兼容合同的 endpoint；

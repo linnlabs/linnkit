@@ -103,11 +103,11 @@ Host 可以注入两类扩展，但不得借此污染通用 adapter：
 
 `conformance:affected` 支持重复传入 `--package <npm-name>` 和 `--capability <id>`；`--all` 选择全部 capability，`--list` 只输出脱敏选择结果而不执行。选择 `ai` 或 `@ai-sdk/provider` 会自动升级为全矩阵；选择 `@ai-sdk/openai` 会同时覆盖 Chat 和 Responses。该命令输出 conformance suite version、受影响 capability、测试文件和 Provider package version，不输出 URL、凭据或 fixture body。
 
-## 测试与发布门禁
+## 测试与制品门禁
 
 - `pnpm --filter @linnlabs/linnkit-provider-ai-sdk typecheck`：验证源码和公开声明类型；
 - `pnpm --filter @linnlabs/linnkit-provider-ai-sdk conformance:affected -- --package @ai-sdk/deepseek`：按上游 package 运行定向矩阵；
-- `pnpm --filter @linnlabs/linnkit-provider-ai-sdk conformance`：运行全部 Provider codec 矩阵，发布前必须执行；
+- `pnpm --filter @linnlabs/linnkit-provider-ai-sdk conformance`：运行全部 Provider codec 矩阵，上游升级和公开源码同步前必须执行；
 - `pnpm --filter @linnlabs/linnkit-provider-ai-sdk test`：运行纯函数、failure/stream 与全部 Provider 两轮 conformance；
 - `pnpm --filter @linnlabs/linnkit-provider-ai-sdk build`：生成 CJS、ESM、DTS；
 - `pnpm --filter @linnlabs/linnkit-provider-ai-sdk pack-smoke`：打 tarball，并从实际打包内容分别加载 CJS/ESM 生产和 conformance 出口，完成 DeepSeek 两轮工具调用；
@@ -119,6 +119,6 @@ Host 可以注入两类扩展，但不得借此污染通用 adapter：
 
 Provider body、SSE 和错误正文只允许存在于单次调用内存或离线 fixture。日志、canonical event、audit 和 UI 只能看到稳定分类与安全聚合。SDK 默认错误打印必须被接管，package 不读取环境变量，也不持久化凭据或 Provider session。
 
-当前版本为 `0.1.x`，发布目标是 npmjs public registry。AI SDK 7 与当前正式 Provider packages 的公开运行时下限是 Node.js 22，因此本 package 不伪装支持 Node 20；Linnkit 内核仍可维持自己的独立运行时范围。
+当前版本为 `0.1.x`，公开源码位于 [`linnlabs/linnkit/packages/provider-ai-sdk`](https://github.com/linnlabs/linnkit/tree/main/packages/provider-ai-sdk)。当前不发布 npmjs，也不把 package name 可安装视为工程完成条件；manifest、构建和真实 tarball smoke 继续作为独立边界与未来分发准备。AI SDK 7 与当前正式 Provider packages 的公开运行时下限是 Node.js 22，因此本 package 不伪装支持 Node 20；Linnkit 内核仍可维持自己的独立运行时范围。
 
-发布顺序固定为：先发布通过全部 package/NOTICE/packed 门禁的 Adapter，再发布引用该精确兼容范围的 Linnkit Quickstart。npmjs 尚不可安装 Adapter 时，禁止提前删除 Quickstart 现有实现或生成一个会 404 的项目；完成首次发布后，Quickstart 必须改为本 package 的第二个真实 Host 消费者，并删除手写 AI SDK projector。迁移期间不保留旧 Host language 实现、兼容 re-export、双 registry 或运行时动态 package 下载。
+Linnya 通过私有 workspace 镜像消费本 package；其他开发者当前通过公开仓阅读、复用或贡献源码。Linnkit Quickstart 继续作为自包含 demo host，不依赖尚未发布的 Adapter。只有未来出现明确的外部安装需求，才单独决策 npm 发布、Trusted Publisher 和 Quickstart 是否切换；不得仅为了删除 Quickstart 的少量重复实现而制造新的发布义务。Linnya 生产链仍禁止保留旧 Host language 实现、兼容 re-export、双 registry 或运行时动态 package 下载。
