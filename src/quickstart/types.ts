@@ -1,4 +1,4 @@
-import type { AgentAiEngine } from '../ports';
+import type { CanonicalInferencePort } from '../ports';
 import type {
   AgentSpec,
   AgentSpecContextPolicyInput,
@@ -8,11 +8,12 @@ import type {
 } from '../contracts';
 import type {
   BaseTool,
-  OpenAIToolSchema,
+  FunctionToolSchema,
   ToolArgs,
   ToolExecutionContext,
   ToolExecutionResult,
   ToolRuntimeDefinition,
+  ToolSchemaBuildRequest,
   runSupervisor,
 } from '../runtime-kernel';
 
@@ -38,13 +39,13 @@ export interface DefineAgentInput {
 
 export interface LinnkitQuickstartConfig {
   agents: readonly DefinedAgent[];
-  llm: AgentAiEngine | (() => AgentAiEngine | Promise<AgentAiEngine>);
+  inference: CanonicalInferencePort | (() => CanonicalInferencePort | Promise<CanonicalInferencePort>);
   defaultModelId?: string;
 }
 
 export interface RunAgentOptions {
   input: string;
-  llm: AgentAiEngine;
+  inference: CanonicalInferencePort;
   modelId?: string;
   /**
    * Quickstart graph loop 最大节点步数。默认 8。
@@ -74,7 +75,7 @@ export interface RunAgentResult {
 type RunCost = runSupervisor.RunCost;
 
 export interface QuickstartToolRuntime {
-  getToolSchemas(toolNames?: string[]): OpenAIToolSchema[];
+  getToolSchemas(input: ToolSchemaBuildRequest): FunctionToolSchema[];
   getToolDefinition(toolName: string): ToolRuntimeDefinition | undefined;
   executeTool(
     toolName: string,

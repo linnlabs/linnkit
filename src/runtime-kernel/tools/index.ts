@@ -2,6 +2,10 @@ export { BaseTool, CommonParameterTypes } from './toolContracts';
 export { ContextCheckpointTool, createContextCheckpointTool } from './contextCheckpointTool';
 export { normalizeToolArgs } from './argNormalizer';
 export {
+  assertToolParameterSchema,
+  ToolParameterSchemaError,
+} from './schema/functions/assertToolParameterSchema';
+export {
   computeToolIdempotencyKey,
   findCachedToolOutputByIdempotencyKey,
 } from './idempotency/toolIdempotency';
@@ -16,13 +20,14 @@ export {
 
 export type {
   AgentTool,
-  JsonObjectSchema,
-  OpenAIToolSchema,
+  JsonSchemaValue,
+  FunctionToolSchema,
   ToolArgs,
   ToolCallResult,
   ToolCallStreamingPolicy,
   ToolParameterProperty,
   ToolParameterSchema,
+  ToolParameterType,
   ToolRegistryEntry,
   ToolResult,
   UnifiedToolResult,
@@ -45,10 +50,10 @@ export type {
   ToolModelInputCapabilityValidatorPort,
   ToolRuntimeDefinition,
   ToolRuntimePort,
+  ToolSchemaBuildRequest,
 } from './ports';
 export type { ToolContextConversationView } from './conversationView';
 export type { ToolExecutionContext } from './toolExecutionContext';
-export type { ToolSchemaContext } from './toolSchemaContext';
 export type { ToolContextPatch } from './toolContextPatch';
 export type {
   StructuredToolResult,
@@ -67,5 +72,7 @@ export type {
   ToolModelInputAttachmentSelection,
   ToolModelInputDeclaration,
   ToolModelInputDeclarationValidation,
+  ToolModelInputAdmission,
+  ToolModelInputDelivery,
   ToolModelInputResolverPort,
 } from './model-input';

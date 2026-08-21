@@ -1,10 +1,11 @@
 import type {
   BaseTool,
-  OpenAIToolSchema,
+  FunctionToolSchema,
   ToolArgs,
   ToolExecutionContext,
   ToolExecutionResult,
   ToolRuntimeDefinition,
+  ToolSchemaBuildRequest,
 } from '../runtime-kernel';
 import type { QuickstartToolRuntime } from './types';
 import { serializeToolParameters } from './toolSchema';
@@ -25,9 +26,9 @@ export class QuickstartMemoryToolRuntime implements QuickstartToolRuntime {
     }
   }
 
-  getToolSchemas(toolNames?: string[]): OpenAIToolSchema[] {
-    const allowed = Array.isArray(toolNames) && toolNames.length > 0
-      ? new Set(toolNames)
+  getToolSchemas(input: ToolSchemaBuildRequest): FunctionToolSchema[] {
+    const allowed = Array.isArray(input.toolNames) && input.toolNames.length > 0
+      ? new Set(input.toolNames)
       : undefined;
 
     return [...this.tools.values()]

@@ -17,6 +17,7 @@ import { createPrepareCallStage } from '../stages/prepareCallStage';
 import type { TickPipelineContext } from '../types';
 import { createTestTickPipelineContext } from './createTestTickPipelineContext';
 import { RunIdSchema } from '../../../../contracts';
+import type { FunctionToolSchema } from '../../../tools/toolContracts';
 
 function createRequest(): AgentInvocationRequest {
   return {
@@ -113,7 +114,7 @@ describe('tick pipeline side-effect isolation baseline', () => {
             getModelById: vi.fn(() => undefined),
           },
           toolCatalog: {
-            getToolSchemas: vi.fn(() => [
+            getToolSchemas: vi.fn((): FunctionToolSchema[] => [
               {
                 type: 'function' as const,
                 function: {
@@ -132,13 +133,19 @@ describe('tick pipeline side-effect isolation baseline', () => {
         createBuildContextStage({ contextBuilder: createContextBuilder() }),
         createApplySystemReminderStage(),
         createExecuteLlmStage({
+          promptUsageMeasurer: vi.fn(async () => {
+            throw new Error('本测试未进入 Prompt usage 测量。');
+          }),
+          modelCatalog: { getModelById: vi.fn(() => undefined) },
           llmCaller: {
             callWithRetries: vi.fn(async () => ({
               content: 'side effect final answer',
-              usage: {
-                prompt_tokens: 13,
-                completion_tokens: 5,
-                total_tokens: 18,
+              canonicalUsage: {
+                inputTokens: 13,
+                outputTokens: 5,
+                totalTokens: 18,
+                source: 'test-fixture' as const,
+                confidence: 'actual' as const,
               },
             })),
           },
@@ -188,7 +195,7 @@ describe('tick pipeline side-effect isolation baseline', () => {
             inputTokens: 13,
             outputTokens: 5,
             totalTokens: 18,
-            source: 'provider-response-usage',
+            source: 'test-fixture',
             confidence: 'actual',
           }),
         },
@@ -196,7 +203,7 @@ describe('tick pipeline side-effect isolation baseline', () => {
           inputTokens: 13,
           outputTokens: 5,
           totalTokens: 18,
-          source: 'provider-response-usage',
+          source: 'test-fixture',
           confidence: 'actual',
         }),
       })

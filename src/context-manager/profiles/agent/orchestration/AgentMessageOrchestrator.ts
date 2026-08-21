@@ -29,8 +29,6 @@ import type {
   AgentSpecContextPolicy,
   AiMessage,
   RuntimeEvent,
-  TokenCountConfidence,
-  TokenCountSource,
   TokenRoute,
   TokenUsageCalibrationSample,
 } from '../../../../contracts';
@@ -45,6 +43,10 @@ import {
   contextPolicyToPreprocessorOptions,
 } from '../../../shared/agentSpecAdapter';
 import { Logger } from '../../../../shared/logger';
+import {
+  resolveEffectivePromptBudget,
+  type EffectivePromptBudget,
+} from '../../../../shared/prompt-budget';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
@@ -100,26 +102,14 @@ export interface AgentOrchestratorOptions {
 export interface AgentProcessingResult {
   messages: AiMessage[];
   contextBuildResult: ContextBuildResult;
+  promptBudget: EffectivePromptBudget;
   metadata: {
     originalCount: number;
     processedCount: number;
-    tokenUsage: {
-      estimated: number;
-      budget: number;
-      remaining: number;
-      source: TokenCountSource;
-      confidence: TokenCountConfidence;
-    };
     processingStats: ContextBuildResult['processingStats'];
     truncated: boolean;
     truncatedCount?: number;
   };
-}
-
-interface EffectiveContextBudget {
-  maxTokens: number;
-  reservedForResponse: number;
-  totalBudget: number;
 }
 
 interface RequestContextAssembly {
@@ -256,22 +246,6 @@ export class AgentMessageOrchestrator {
     };
   }
 
-  private resolveEffectiveContextBudget(
-    contextBuilderConfig: Partial<AgentContextBuilderConfig>,
-  ): EffectiveContextBudget {
-    const maxTokens = contextBuilderConfig.DEFAULT_MAX_TOKENS ?? this.options.tokenBudget.maxTokens;
-    const reservedForResponse =
-      contextBuilderConfig.RESERVED_FOR_RESPONSE ?? this.options.tokenBudget.reservedForResponse;
-
-    return {
-      maxTokens,
-      reservedForResponse,
-      // 中文备注：ContextManager 接收的是“可放入上下文的输入预算”，不是模型完整窗口。
-      // 因此单个 agent 通过 contextPolicy.budget 覆盖预算时，这里必须同步使用覆盖后的值。
-      totalBudget: maxTokens - reservedForResponse,
-    };
-  }
-
   async processAgentConversation(
     request: AgentProfileRequest,
     history: RuntimeEvent[],
@@ -281,6 +255,11 @@ export class AgentMessageOrchestrator {
       generateSummary?: (
         request: SummaryGenerationRequest,
       ) => Promise<SummaryGenerationResponse>;
+      promptBudgetLimits: {
+        modelContextWindowTokens: number;
+        modelMaxOutputTokens: number;
+        toolDefinitionTokens: number;
+      };
     }
   ): Promise<AgentProcessingResult> {
     const historyCount = history.length;
@@ -305,7 +284,17 @@ export class AgentMessageOrchestrator {
 
       const contextPolicy = this.resolveContextPolicy(request);
       const { contextBuilderConfig, contextManager } = this.assembleRequestContext(request, contextPolicy);
-      const effectiveContextBudget = this.resolveEffectiveContextBudget(contextBuilderConfig);
+      const promptBudget = resolveEffectivePromptBudget({
+        // 容量 policy 必须直接读取 sparse 声明，不能从已叠加 framework fallback 的
+        // Context Builder config 反推，否则“未声明”会再次变成隐藏 cap。
+        policyMaxTokens: contextPolicy?.budget?.maxTokens,
+        policyReservedForResponse: contextPolicy?.budget?.reservedForResponse,
+        modelContextWindowTokens: extraOptions?.promptBudgetLimits.modelContextWindowTokens,
+        modelMaxOutputTokens: extraOptions?.promptBudgetLimits.modelMaxOutputTokens,
+        fallbackContextWindowTokens: this.options.tokenBudget.maxTokens,
+        fallbackMaxOutputTokens: this.options.tokenBudget.reservedForResponse,
+        toolDefinitionTokens: extraOptions?.promptBudgetLimits.toolDefinitionTokens ?? 0,
+      });
 
       const preprocessorPipeline = this.buildPreprocessorPipelineForRequest(toolManager, request, contextPolicy);
       const modelId = this.resolvePreprocessorModel(request);
@@ -340,7 +329,7 @@ export class AgentMessageOrchestrator {
         undefined,
         extraOptions?.generateSummary,
         contextPolicy,
-        effectiveContextBudget.totalBudget,
+        promptBudget,
       );
       this.debug('Context built', { afterContextCount: contextResult.messages.length });
 
@@ -365,16 +354,10 @@ export class AgentMessageOrchestrator {
       return {
         messages: contextResult.messages,
         contextBuildResult: contextResult,
+        promptBudget,
         metadata: {
           originalCount: allMessages.length,
           processedCount: contextResult.messages.length,
-          tokenUsage: {
-            estimated: contextResult.tokenUsage.used,
-            budget: effectiveContextBudget.totalBudget,
-            remaining: contextResult.tokenUsage.remaining,
-            source: contextResult.tokenUsage.source,
-            confidence: contextResult.tokenUsage.confidence,
-          },
           processingStats: contextResult.processingStats,
           truncated: contextResult.truncated,
           truncatedCount: contextResult.truncatedCount,
@@ -408,10 +391,11 @@ export class AgentMessageOrchestrator {
       request: SummaryGenerationRequest,
     ) => Promise<SummaryGenerationResponse>,
     contextPolicy?: AgentSpecContextPolicy,
-    totalBudget?: number,
+    promptBudget?: EffectivePromptBudget,
   ): Promise<ContextBuildResult> {
     const resolvedTotalBudget =
-      totalBudget ?? this.options.tokenBudget.maxTokens - this.options.tokenBudget.reservedForResponse;
+      promptBudget?.messageBudgetTokens
+      ?? this.options.tokenBudget.maxTokens - this.options.tokenBudget.reservedForResponse;
 
     const contextResult = await contextManager.buildContextFromPreprocessedMessages(
       request,
@@ -423,6 +407,14 @@ export class AgentMessageOrchestrator {
       {
         policy: contextPolicy?.contextTrace,
         effectiveContextPolicy: contextPolicy,
+        ...(promptBudget
+          ? {
+              budgetDetails: {
+                inputBudgetTokens: promptBudget.inputBudgetTokens,
+                toolDefinitionTokens: promptBudget.toolDefinitionTokens,
+              },
+            }
+          : {}),
       },
     );
 

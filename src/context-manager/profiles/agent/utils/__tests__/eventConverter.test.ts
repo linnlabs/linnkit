@@ -379,9 +379,18 @@ describe('agent/utils/eventConverter.convertEventsToAiMessages', () => {
   });
 
   it('工具调用回放出关时应保留 provider replay sidecar', () => {
-    const reasoningDetails = [
-      { provider: 'deepseek', type: 'reasoning_content', reasoning_content: 'Need the tool.' },
-    ];
+    const providerContinuations = [{
+      schema_version: 2 as const,
+      producer: {
+        model_id: 'deepseek-reasoner',
+        endpoint_id: 'deepseek',
+        api_surface: 'openai_chat_completions',
+        capability_id: 'test:chat-codec',
+        endpoint_model_id: 'deepseek-reasoner',
+      },
+      kind: 'reasoning_content',
+      payload: { provider: 'deepseek', type: 'reasoning_content', reasoning_content: 'Need the tool.' },
+    }];
     const events: RuntimeEvent[] = [
       RuntimeEventSchema.parse({
         type: 'tool_call_decision',
@@ -395,16 +404,20 @@ describe('agent/utils/eventConverter.convertEventsToAiMessages', () => {
         phase: 'start',
         status: 'loading',
         payload: {
-          reasoning_details: reasoningDetails,
+          provider_continuations: providerContinuations,
+          assistant_replay_parts: [
+            { type: 'text', text: '我先读文档。' },
+            {
+              type: 'tool_call',
+              tool_call_id: 'call_sidecar_1',
+              provider_continuations: providerContinuations,
+            },
+          ],
           tool_calls: [
             {
               id: 'call_sidecar_1',
               type: 'function',
               function: { name: 'workspace_read', arguments: '{"path":"README.md"}' },
-              extra_content: {
-                google: { thought_signature: '<sig>' },
-                deepseek: { replay_marker: 'opaque' },
-              },
             },
           ],
         },
@@ -419,21 +432,36 @@ describe('agent/utils/eventConverter.convertEventsToAiMessages', () => {
     if (!assistant || assistant.role !== 'assistant' || !('tool_calls' in assistant)) {
       throw new Error('expected assistant tool_calls message');
     }
-    expect(assistant.reasoning_details).toEqual(reasoningDetails);
-    expect(assistant.tool_calls[0]).toEqual(
-      expect.objectContaining({
-        extra_content: expect.objectContaining({
-          google: { thought_signature: '<sig>' },
-          deepseek: { replay_marker: 'opaque' },
-        }),
-      })
-    );
+    expect(assistant.provider_continuations).toEqual(providerContinuations);
+    expect(assistant.content).toBe('我先读文档。');
+    expect(assistant.assistant_replay_parts).toEqual([
+      { type: 'text', text: '我先读文档。' },
+      {
+        type: 'tool_call',
+        tool_call_id: 'call_sidecar_1',
+        provider_continuations: providerContinuations,
+      },
+    ]);
+    expect(assistant.tool_calls[0]).toEqual({
+      id: 'call_sidecar_1',
+      type: 'function',
+      function: { name: 'workspace_read', arguments: '{"path":"README.md"}' },
+    });
   });
 
   it('最终回答回放出关时应保留 provider replay sidecar', () => {
-    const reasoningDetails = [
-      { provider: 'deepseek', type: 'reasoning_content', reasoning_content: 'Answer after tool.' },
-    ];
+    const providerContinuations = [{
+      schema_version: 2 as const,
+      producer: {
+        model_id: 'deepseek-reasoner',
+        endpoint_id: 'deepseek',
+        api_surface: 'openai_chat_completions',
+        capability_id: 'test:chat-codec',
+        endpoint_model_id: 'deepseek-reasoner',
+      },
+      kind: 'reasoning_content',
+      payload: { provider: 'deepseek', type: 'reasoning_content', reasoning_content: 'Answer after tool.' },
+    }];
     const events: RuntimeEvent[] = [
       RuntimeEventSchema.parse({
         type: 'final_answer',
@@ -446,12 +474,17 @@ describe('agent/utils/eventConverter.convertEventsToAiMessages', () => {
         content: '最终回答。',
         is_complete: true,
         completion_reason: 'terminal',
-        reasoning_details: reasoningDetails,
+        provider_continuations: providerContinuations,
+        assistant_replay_parts: [{
+          type: 'text',
+          text: '最终回答。',
+          provider_continuations: providerContinuations,
+        }],
       }),
     ];
 
     const aiMessages = convertEventsToAiMessages(events);
-    expect(aiMessages[0].metadata?.reasoning_details).toEqual(reasoningDetails);
+    expect(aiMessages[0].metadata?.provider_continuations).toEqual(providerContinuations);
 
     const llmMessages = formatAgentLlmMessages(aiMessages);
     const assistant = llmMessages.find(message => message.role === 'assistant');
@@ -461,7 +494,45 @@ describe('agent/utils/eventConverter.convertEventsToAiMessages', () => {
       throw new Error('expected assistant final answer message');
     }
     expect(assistant.content).toBe('最终回答。');
-    expect(assistant.reasoning_details).toEqual(reasoningDetails);
+    expect(assistant.provider_continuations).toEqual(providerContinuations);
+    expect(assistant.assistant_replay_parts).toEqual([{
+      type: 'text',
+      text: '最终回答。',
+      provider_continuations: providerContinuations,
+    }]);
+  });
+
+  it('工具调用封口正文只通过 tool_call_decision 进入一次 Context', () => {
+    const replayParts = [
+      { type: 'text' as const, text: '我先读取。' },
+      { type: 'tool_call' as const, tool_call_id: 'call_once' },
+    ];
+    const events: RuntimeEvent[] = [
+      createFinalAnswerEvent('answer_once', 'c1', 't1', '我先读取。', {
+        completion_reason: 'tool_call',
+        assistant_replay_parts: replayParts,
+      }),
+      createToolCallDecisionEvent('decision_once', 'c1', 't1', 'workspace_read', 'call_once', {
+        payload: {
+          assistant_replay_parts: replayParts,
+          tool_calls: [{
+            id: 'call_once',
+            type: 'function',
+            function: { name: 'workspace_read', arguments: '{}' },
+          }],
+        },
+      }),
+    ];
+
+    const messages = convertEventsToAiMessages(events);
+
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toMatchObject({
+      role: 'assistant',
+      type: 'tool_calls',
+      content: '我先读取。',
+      metadata: { assistant_replay_parts: replayParts },
+    });
   });
 
   it('user/tool 附件经过 event、AiMessage 与 LLM wire 往返时保持身份和顺序', () => {

@@ -1,4 +1,4 @@
-import type { LlmRequestMessage } from './ai-engine.types';
+import type { LlmRequestMessage } from './llm-call';
 
 export type LlmImageInputPlacement = 'user_image' | 'tool_result_image';
 
@@ -63,7 +63,7 @@ type ReplaceDurableAttachments<T> = T extends { attachments?: unknown }
   : T;
 
 /**
- * AgentAiEngine 的唯一消息输入。该类型不能进入 durable event、context state 或 audit schema。
+ * Canonical inference request builder 的短生命周期输入。该类型不能进入 durable event、context state 或 audit schema。
  */
 export type ResolvedLlmInputMessage = ReplaceDurableAttachments<LlmRequestMessage>;
 

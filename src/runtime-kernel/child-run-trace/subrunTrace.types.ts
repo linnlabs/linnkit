@@ -2,6 +2,7 @@ import type {
   FinalAnswerCompletionReason,
   SerializableJsonRecord,
   SubRunTraceEvent,
+  SubRunTraceToolCallDecision,
   ToolCallId,
 } from '../../contracts';
 
@@ -24,19 +25,23 @@ export type SubRunTraceEnvelope = SubRunTraceEnvelopeBase &
     | { kind: 'thought_delta'; delta: string }
     | { kind: 'thought_complete'; content: string }
     | {
-        kind: 'tool_call_decision' | 'tool_process';
+        kind: 'tool_call_decision';
+        tool_calls: readonly SubRunTraceToolCallDecision[];
+      }
+    | {
+        kind: 'tool_process';
         tool_name: string;
         tool_call_id: ToolCallId;
         phase: NonNullable<SubRunTraceEvent['phase']>;
         status: NonNullable<SubRunTraceEvent['status']>;
-        args?: unknown;
+        args: SerializableJsonRecord;
       }
     | {
         kind: 'tool_output';
         tool_name: string;
         tool_call_id: ToolCallId;
         status: Extract<NonNullable<SubRunTraceEvent['status']>, 'success' | 'error'>;
-        output?: unknown;
+        output: NonNullable<SubRunTraceEvent['output']>;
         duration_ms?: number;
       }
     | {

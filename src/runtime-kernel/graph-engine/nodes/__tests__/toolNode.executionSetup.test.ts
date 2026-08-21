@@ -203,7 +203,7 @@ describe('toolNode.executionSetup', () => {
 
   it('prepareToolExecution 按规范化参数解析本次动态模型输入要求', () => {
     const resolveModelInputRequirement = vi.fn((args: Record<string, unknown>) =>
-      args.artifact_manifest === true
+      args.include_preview === true
         ? {
             requires_image_input: true as const,
             placements: ['tool_result_image'] as const,
@@ -214,9 +214,9 @@ describe('toolNode.executionSetup', () => {
       parameters: {
         type: 'object',
         properties: {
-          artifact_manifest: {
+          include_preview: {
             type: 'boolean',
-            description: '是否读取图片产物清单',
+            description: '是否返回图片预览',
           },
         },
       },
@@ -241,15 +241,15 @@ describe('toolNode.executionSetup', () => {
         id: ToolCallIdSchema.parse('call-dynamic-requirement'),
         type: 'function',
         function: {
-          name: 'command_execute',
-          arguments: '{"artifact_manifest":true}',
+          name: 'dynamic_image_tool',
+          arguments: '{"include_preview":true}',
         },
       },
       toolCatalog: { getToolDefinition: getToolDefinitionMock },
     });
 
     expect(resolveModelInputRequirement).toHaveBeenCalledWith({
-      artifact_manifest: true,
+      include_preview: true,
     });
     expect(execution?.modelInputRequirement).toEqual({
       requires_image_input: true,
@@ -282,7 +282,7 @@ describe('toolNode.executionSetup', () => {
       call: {
         id: ToolCallIdSchema.parse('call-requirement-error'),
         type: 'function',
-        function: { name: 'command', arguments: '{}' },
+        function: { name: 'dynamic_image_tool', arguments: '{}' },
       },
       toolCatalog: { getToolDefinition: getToolDefinitionMock },
     });

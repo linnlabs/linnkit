@@ -1,6 +1,7 @@
 {
   "name": "@linnlabs/linnkit",
-  "version": "0.28.0",
+  "version": "0.30.0",
+  "packageManager": "pnpm@10.20.0",
   "type": "module",
   "description": "A fine-grained context engineering framework for Agent applications — control every token sent to the model, with clear run lifecycle, audit records, and testable protocol boundaries.",
   "license": "MIT",
@@ -82,9 +83,10 @@
     "prepublishOnly": "npm run build:clean && npm run build && npm run test:smoke && npm run test:smoke:dist",
     "publish:npm": "npm publish",
     "publish:dry-run": "npm pack --dry-run",
-    "typecheck": "npx tsc --noEmit -p tsconfig.src.json && npx tsc --noEmit -p tsconfig.json",
-    "test:smoke": "npx vitest run __tests__/package.shell.test.ts",
-    "test:smoke:dist": "npx vitest run __tests__/package.runtime-import.test.ts __tests__/package.events-browser-safe.test.ts"
+    "typecheck": "tsc --noEmit -p tsconfig.src.json && tsc --noEmit -p tsconfig.json",
+    "test": "vitest run",
+    "test:smoke": "vitest run __tests__/package.shell.test.ts",
+    "test:smoke:dist": "vitest run __tests__/package.runtime-import.test.ts __tests__/package.events-browser-safe.test.ts"
   },
   "dependencies": {
     "eventsource-parser": "^3.1.0",
@@ -106,7 +108,7 @@
     "vitest": "^3.2.4"
   },
   "linnkit": {
-    "phase": "development (0.28.0 — host-owned durable observation references)",
+    "phase": "development (0.30.0 — route-driven prompt budgets and final usage snapshot)",
     "sourceOfTruth": "CHANGELOG.md",
     "notes": [
       "子入口 ./runtime-kernel/events 是 browser-safe slim seam：仅暴露 events governance 纯函数，禁止扩展任何 Node-only 依赖（如 node:async_hooks / crypto / fs）",

@@ -1,6 +1,11 @@
 import type { AgentInvocationRequest } from '../../ports';
 import type { ToolExecutionContext } from '../tools/toolExecutionContext';
-import type { EngineLocalState, ExecutorLocalState, RuntimeEventSink } from './types';
+import type {
+  EngineLocalState,
+  ExecutorLocalState,
+  RuntimeEventSink,
+  RuntimeFailureFactSink,
+} from './types';
 import type { RuntimeEvent } from '../../contracts';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -42,6 +47,10 @@ function isRuntimeEventSink(value: unknown): value is RuntimeEventSink {
   return typeof value === 'function';
 }
 
+function isRuntimeFailureFactSink(value: unknown): value is RuntimeFailureFactSink {
+  return typeof value === 'function';
+}
+
 export interface GraphAgentLocalView {
   conversationId: string;
   turnId?: string;
@@ -49,6 +58,7 @@ export interface GraphAgentLocalView {
   toolContext?: ToolExecutionContext;
   history: RuntimeEvent[];
   runtimeEventSink: RuntimeEventSink;
+  runtimeFailureFactSink?: RuntimeFailureFactSink;
   executorLocal?: ExecutorLocalState;
   answerId?: string;
   chunkSeq: number;
@@ -74,6 +84,9 @@ export function readGraphAgentLocal(local: EngineLocalState | undefined): GraphA
     toolContext: isToolExecutionContext(source.toolContext) ? source.toolContext : undefined,
     history: isRuntimeEventArray(source.history) ? source.history : [],
     runtimeEventSink: requireRuntimeEventSink(source),
+    runtimeFailureFactSink: isRuntimeFailureFactSink(source.runtimeFailureFactSink)
+      ? source.runtimeFailureFactSink
+      : undefined,
     executorLocal: isExecutorLocalState(source.executorLocal) ? source.executorLocal : undefined,
     answerId,
     chunkSeq,

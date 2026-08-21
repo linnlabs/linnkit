@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { AgentInvocationRequest, LlmRequestMessage } from '../../../../ports';
 import type { AnyAgentEvent } from '../../../events/agentEvents';
-import type { LlmFallbackObserver } from '../../../llm';
+import type { LlmCallInvocationContext, LlmFallbackObserver } from '../../../llm';
 import type {
   GraphExecutorContextBuilder,
   GraphExecutorContextBuildOutput,
@@ -11,9 +11,11 @@ import { createApplySystemReminderStage } from '../stages/applySystemReminderSta
 import { createBuildContextStage } from '../stages/buildContextStage';
 import { createBuildDecisionStage } from '../stages/buildDecisionStage';
 import { createExecuteLlmStage } from '../stages/executeLlmStage';
+import { createMeasurePromptUsageStage } from '../stages/measurePromptUsageStage';
 import { createPrepareCallStage } from '../stages/prepareCallStage';
 import type { TickPipelineContext, TickStage, TickStageContextKey, TickStagePatch } from '../types';
 import { createTestTickPipelineContext } from './createTestTickPipelineContext';
+import type { FunctionToolSchema } from '../../../tools/toolContracts';
 
 type WritableStageField = TickStageContextKey;
 
@@ -71,6 +73,13 @@ function expectStageDeclaration(
   expect(stage.writes).toEqual(expected.writes);
 }
 
+const unusedPromptUsageDependencies = {
+  promptUsageMeasurer: vi.fn(async () => {
+    throw new Error('本测试未进入 Prompt usage 测量。');
+  }),
+  modelCatalog: { getModelById: vi.fn(() => undefined) },
+};
+
 function createRequest(overrides: Partial<AgentInvocationRequest> = {}): AgentInvocationRequest {
   return {
     query: 'contract run',
@@ -85,7 +94,7 @@ function createRequest(overrides: Partial<AgentInvocationRequest> = {}): AgentIn
 
 describe('tick pipeline stage write contracts', () => {
   it('prepare_call 只写模型、工具与调用生命周期上下文', async () => {
-    const toolSchema = {
+    const toolSchema: FunctionToolSchema = {
       type: 'function' as const,
       function: {
         name: 'document_lookup_tool',
@@ -130,6 +139,7 @@ describe('tick pipeline stage write contracts', () => {
         'turnId',
         'input',
         'audit',
+        'tokenizer',
       ],
       writes: [
         'modelId',
@@ -137,6 +147,7 @@ describe('tick pipeline stage write contracts', () => {
         'toolModelInputRequirement',
         'toolCallStreamingPolicies',
         'llmOptions',
+        'toolDefinitionTokens',
       ],
     });
     const writes = await runAndExpectWrites(stage, ctx);
@@ -179,6 +190,8 @@ describe('tick pipeline stage write contracts', () => {
         'history',
         'summarizationCallbacks',
         'modelId',
+        'toolDefinitionTokens',
+        'llmOptions',
         'signal',
         'telemetry',
         'conversationId',
@@ -186,10 +199,73 @@ describe('tick pipeline stage write contracts', () => {
         'input',
         'eventHandler',
       ],
-      writes: ['llmMessages', 'imageInputAdmissionEvidence', 'outputProcessor', 'contextTrace'],
+      writes: [
+        'llmMessages',
+        'imageInputAdmissionEvidence',
+        'outputProcessor',
+        'contextTrace',
+        'promptBudget',
+        'promptUsageMeasurementPolicy',
+        'llmOptions',
+      ],
     });
     const writes = await runAndExpectWrites(stage, ctx);
 
+    expectWritesMatchDeclaration(stage, writes);
+  });
+
+  it('measure_prompt_usage 只在 reminder 后生成候选快照', async () => {
+    const promptUsageCandidate = {
+      basis: 'last_completed_llm_prompt' as const,
+      budget_model_id: 'context-model',
+      used_tokens: 10,
+      components: {
+        system_prompt_tokens: 2,
+        conversation_tokens: 8,
+        tool_definition_tokens: 0,
+      },
+      component_attribution: 'normalized_local_estimate' as const,
+      input_budget_tokens: 100,
+      remaining_tokens: 90,
+      output_limit_tokens: 20,
+      source: 'local-estimate' as const,
+      confidence: 'estimate' as const,
+      measured_at: 1,
+    };
+    const ctx = createTestTickPipelineContext({
+      context: {
+        modelId: 'context-model',
+        llmMessages: [{ role: 'user', content: 'hello' }],
+        promptBudget: {
+          effectiveWindowTokens: 120,
+          outputLimitTokens: 20,
+          inputBudgetTokens: 100,
+          toolDefinitionTokens: 0,
+          messageBudgetTokens: 100,
+        },
+        promptUsageMeasurementPolicy: {
+          remote_count_enabled: false,
+          remote_count_failure_behavior: 'use-local-estimate',
+        },
+      },
+    });
+    const stage = createMeasurePromptUsageStage({
+      promptUsageMeasurer: vi.fn(async () => promptUsageCandidate),
+    });
+    expectStageDeclaration(stage, {
+      reads: [
+        'modelId',
+        'llmMessages',
+        'llmOptions',
+        'promptBudget',
+        'promptUsageMeasurementPolicy',
+        'imageInputAdmissionEvidence',
+        'signal',
+      ],
+      writes: ['promptUsageCandidate'],
+    });
+
+    const writes = await runAndExpectWrites(stage, ctx);
     expectWritesMatchDeclaration(stage, writes);
   });
 
@@ -236,6 +312,7 @@ describe('tick pipeline stage write contracts', () => {
     });
 
     const stage = createExecuteLlmStage({
+      ...unusedPromptUsageDependencies,
       llmCaller: {
         callWithRetries: vi.fn(
           async (
@@ -249,7 +326,7 @@ describe('tick pipeline stage write contracts', () => {
             fallbackObserver?.onCloudQuotaFallbackApplied?.('fallback-model');
             fallbackObserver?.onModelFallbackApplied?.(fallbackAudit);
             fallbackObserver?.onLlmAttemptSucceeded?.('fallback-model');
-            return 'LLM response';
+            return { content: 'LLM response' };
           }
         ),
       },
@@ -265,6 +342,10 @@ describe('tick pipeline stage write contracts', () => {
         'toolCallStreamingPolicies',
         'imageInputAdmissionEvidence',
         'llmOptions',
+        'promptBudget',
+        'promptUsageMeasurementPolicy',
+        'promptUsageCandidate',
+        'tokenizer',
         'signal',
         'audit',
         'conversationId',
@@ -277,6 +358,7 @@ describe('tick pipeline stage write contracts', () => {
         'llmResp',
         'llmCallDurationMs',
         'executorLocalPatch',
+        'contextUsage',
       ],
     });
     const writes = await runAndExpectWrites(stage, ctx);
@@ -310,6 +392,7 @@ describe('tick pipeline stage write contracts', () => {
     });
 
     const stage = createExecuteLlmStage({
+      ...unusedPromptUsageDependencies,
       llmCaller: {
         callWithRetries: vi.fn(
           async (
@@ -326,7 +409,7 @@ describe('tick pipeline stage write contracts', () => {
               seq: 0,
               content: 'hello',
             });
-            return 'LLM response';
+            return { content: 'LLM response' };
           }
         ),
       },
@@ -346,6 +429,91 @@ describe('tick pipeline stage write contracts', () => {
     ]);
   });
 
+  it('execute_llm 只在 fallback provider attempt 成功后提交按真实模型重测的快照', async () => {
+    const candidate = {
+      basis: 'last_completed_llm_prompt' as const,
+      budget_model_id: 'primary-model',
+      used_tokens: 10,
+      components: {
+        system_prompt_tokens: 0,
+        conversation_tokens: 10,
+        tool_definition_tokens: 0,
+      },
+      component_attribution: 'normalized_local_estimate' as const,
+      input_budget_tokens: 100,
+      remaining_tokens: 90,
+      output_limit_tokens: 20,
+      source: 'local-estimate' as const,
+      confidence: 'estimate' as const,
+      measured_at: 1,
+    };
+    const fallbackSnapshot = {
+      ...candidate,
+      served_model_id: 'fallback-model',
+      used_tokens: 12,
+      components: { ...candidate.components, conversation_tokens: 12 },
+      remaining_tokens: 88,
+      measured_at: 2,
+    };
+    const ctx = createTestTickPipelineContext({
+      context: {
+        modelId: 'primary-model',
+        llmMessages: [{ role: 'user', content: 'hello' }],
+        promptBudget: {
+          effectiveWindowTokens: 120,
+          outputLimitTokens: 20,
+          inputBudgetTokens: 100,
+          toolDefinitionTokens: 0,
+          messageBudgetTokens: 100,
+        },
+        promptUsageMeasurementPolicy: {
+          remote_count_enabled: false,
+          remote_count_failure_behavior: 'use-local-estimate',
+        },
+        promptUsageCandidate: candidate,
+      },
+    });
+    const promptUsageMeasurer = vi.fn(async () => fallbackSnapshot);
+    const stage = createExecuteLlmStage({
+      promptUsageMeasurer,
+      modelCatalog: {
+        getModelById: vi.fn(() => ({
+          id: 'fallback-model',
+          inference_route: {
+            context_window_tokens: 120,
+            max_output_tokens: 20,
+          },
+        })),
+      },
+      llmCaller: {
+        callWithRetries: vi.fn(async (
+          _modelId: string,
+          messages: LlmRequestMessage[],
+          _options: unknown,
+          _streamHandler: unknown,
+          _signal: unknown,
+          fallbackObserver?: LlmFallbackObserver,
+          invocationContext?: LlmCallInvocationContext,
+        ) => {
+          const measured = await invocationContext?.measurePromptUsage?.(
+            'fallback-model',
+            messages,
+          );
+          fallbackObserver?.onLlmAttemptSucceeded?.('fallback-model', measured);
+          return { content: 'fallback success' };
+        }),
+      },
+    });
+
+    const patch = await stage.run(ctx);
+
+    expect(promptUsageMeasurer).toHaveBeenCalledWith(expect.objectContaining({
+      budgetModelId: 'primary-model',
+      servedModelId: 'fallback-model',
+    }));
+    expect(patch?.contextUsage).toEqual(fallbackSnapshot);
+  });
+
   it('execute_llm 在无兼容 fallback 并失败时仍记录拒绝审计', async () => {
     const providerError = new Error('provider failed');
     const audit = { emit: vi.fn() };
@@ -358,6 +526,7 @@ describe('tick pipeline stage write contracts', () => {
       },
     });
     const stage = createExecuteLlmStage({
+      ...unusedPromptUsageDependencies,
       llmCaller: {
         callWithRetries: vi.fn(
           async (

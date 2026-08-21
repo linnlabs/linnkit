@@ -47,7 +47,6 @@ function mergePolicyLayer(
     budget: mergeObject(base.budget, override.budget),
     toolHistory: mergeObject(base.toolHistory, override.toolHistory),
     toolOutput: mergeToolOutput(base.toolOutput, override.toolOutput),
-    providerReplay: mergeObject(base.providerReplay, override.providerReplay),
     summarization: mergeObject(base.summarization, override.summarization),
     mustKeep: mergeObject(base.mustKeep, override.mustKeep),
     workingMemory: mergeObject(base.workingMemory, override.workingMemory),

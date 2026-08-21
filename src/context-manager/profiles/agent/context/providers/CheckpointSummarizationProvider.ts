@@ -27,7 +27,6 @@ import {
   buildToolInteractionGroupsFromStates,
   type ToolInteractionGroup,
 } from '../../utils/toolInteractionGroup';
-import { collectImageProtectedStateIndexes } from '../functions/imageInputProtection';
 
 const logger = new Logger('CheckpointSummarizationProvider');
 
@@ -108,7 +107,6 @@ export class CheckpointSummarizationProvider extends BaseContextProvider {
     const keepSet = new Set<number>([
       ...checkpointGroup.messageIndexes,
       ...keepBefore,
-      ...collectImageProtectedStateIndexes(states),
     ]);
 
     // 2.2) 强制提升保留工具交互的 action：checkpoint 与其前两对工具对必须进入最终 messages

@@ -32,6 +32,36 @@ function expectValidSSE(event: RuntimeEvent): SSEEvent {
 }
 
 describe('runtimeEventToSSEEvent', () => {
+  it('保留 subrun decision 的 canonical tool_calls 批次', () => {
+    const decision = createSubRunTraceEvent(
+      'subrun_decision_evt',
+      'conv_1',
+      'child_turn_1',
+      'parent_call',
+      'subrun_1',
+      'tool_call_decision',
+      {
+        source_event_id: 'child_decision_evt',
+        tool_calls: [{
+          tool_call_id: ToolCallIdSchema.parse('child_call'),
+          tool_name: 'lookup',
+          args: { query: 'canonical batch' },
+        }],
+      },
+    );
+
+    const projected = expectValidSSE(decision);
+    expect(projected).toMatchObject({
+      type: 'subrun_trace',
+      kind: 'tool_call_decision',
+      tool_calls: [{
+        tool_call_id: 'child_call',
+        tool_name: 'lookup',
+        args: { query: 'canonical batch' },
+      }],
+    });
+  });
+
   it('摘要 presentation 使用稳定身份、正式 scope 和 snake_case 统计字段', () => {
     const canonical = {
       type: 'summarization_start',
@@ -173,6 +203,23 @@ describe('runtimeEventToSSEEvent', () => {
         outcome: 'completed',
         duration_ms: 123,
         user_message_id: 'user_1',
+        context_usage: {
+          basis: 'last_completed_llm_prompt',
+          budget_model_id: 'primary-model',
+          used_tokens: 900,
+          components: {
+            system_prompt_tokens: 200,
+            conversation_tokens: 600,
+            tool_definition_tokens: 100,
+          },
+          component_attribution: 'normalized_local_estimate',
+          input_budget_tokens: 1_000,
+          remaining_tokens: 100,
+          output_limit_tokens: 200,
+          source: 'provider-preflight-count',
+          confidence: 'provider-estimate',
+          measured_at: 1_230,
+        },
       }),
     ];
 
@@ -190,6 +237,46 @@ describe('runtimeEventToSSEEvent', () => {
       'error',
       'run_execution_metrics',
     ]);
+  });
+
+  it('run execution metrics 的 context usage 原样通过严格 SSE admission', () => {
+    const runtimeEvent = createRunExecutionMetricsEvent('metrics_usage', 'conv_1', 'turn_1', {
+      execution_id: 'execution_1',
+      outcome: 'completed',
+      duration_ms: 123,
+      user_message_id: 'user_1',
+      context_usage: {
+        basis: 'last_completed_llm_prompt',
+        budget_model_id: 'primary-model',
+        served_model_id: 'fallback-model',
+        used_tokens: 1_100,
+        components: {
+          system_prompt_tokens: 200,
+          conversation_tokens: 750,
+          tool_definition_tokens: 150,
+        },
+        component_attribution: 'normalized_local_estimate',
+        input_budget_tokens: 1_000,
+        remaining_tokens: -100,
+        output_limit_tokens: 200,
+        source: 'local-estimate',
+        confidence: 'estimate',
+        measured_at: 1_230,
+      },
+    });
+
+    const projected = expectValidSSE(runtimeEvent);
+    expect(projected).toMatchObject({
+      type: 'run_execution_metrics',
+      context_usage: runtimeEvent.context_usage,
+    });
+    expect(validateSSEEvent({
+      ...projected,
+      context_usage: {
+        ...runtimeEvent.context_usage,
+        remaining_tokens: 0,
+      },
+    }).success).toBe(false);
   });
 
   it('把 RuntimeEvent final_answer_chunk.content 投影为 SSE chunk', () => {
@@ -252,6 +339,7 @@ describe('runtimeEventToSSEEvent', () => {
         tool_call_id: ToolCallIdSchema.parse('child_call'),
         phase: 'update',
         status: 'loading',
+        args: { query: 'owner admitted' },
       }
     );
 

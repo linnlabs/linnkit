@@ -6,7 +6,7 @@
 > **Key exports** · `defineAgent` / `runAgent` / `defineConfig` from `@linnlabs/linnkit/quickstart`。
 > **Related** · [`tool-development-guide.md`](./tool-development-guide.md) ⭐ · [`agent-registration-guide.md`](./agent-registration-guide.md) ⭐ · [`llm-provider.md`](./llm-provider.md)
 
-本页是 **试用入口**：目标是让你装包后立刻跑通一轮 agent 对话，确认包、配置、LLM adapter 和 graph runtime 能正常工作。
+本页是 **试用入口**：目标是让你装包后立刻跑通一轮 agent 对话，确认包、配置、canonical inference port 和 graph runtime 能正常工作。
 
 它不是生产接入方案。生产 host 仍然应该按后续主题手册逐项替换 LLM provider、工具系统、持久化、实时通道、审计和上下文工程策略：
 
@@ -46,7 +46,7 @@ OPENAI_BASE_URL=https://api.openai.com/v1
 OPENAI_MODEL=gpt-4.1-mini
 ```
 
-quickstart 模板不依赖 OpenAI SDK，只用 Node 20 原生 `fetch` 调 OpenAI-compatible Chat Completions streaming API。你也可以把 `OPENAI_BASE_URL` 指向任何兼容服务。
+quickstart 模板使用 Vercel AI SDK 的 `createProviderRegistry` 和 OpenAI Provider package，不再生成手写 SSE parser。模板固定单 step、零 SDK 重试、无工具执行；`OPENAI_BASE_URL` 可指向已验证的 OpenAI-compatible Chat Completions 服务。
 
 ## 3. 检查环境
 
@@ -61,7 +61,7 @@ npx linnkit doctor
 - `OPENAI_API_KEY`
 - `linnkit.config.mjs` 能加载
 - agent id 唯一
-- LLM adapter 是否符合 `AgentAiEngine` 形状
+- `inference` 是否符合 `CanonicalInferencePort` 形状
 
 ## 4. 跑 hello agent
 
@@ -81,7 +81,7 @@ npx linnkit run hello --input "你好，介绍一下你自己"
 ```text
 hello-linnkit/
 ├── agents/hello.mjs
-├── adapters/openai-compatible.mjs
+├── adapters/ai-sdk-openai.mjs
 ├── linnkit.config.mjs
 ├── .env.example
 └── package.json
@@ -90,8 +90,8 @@ hello-linnkit/
 关键点：
 
 - `agents/hello.mjs` 用 `defineAgent()` 声明一个无工具 agent。
-- `linnkit.config.mjs` 用 `defineConfig()` 声明 agent 列表、默认模型和 LLM adapter。
-- `adapters/openai-compatible.mjs` 是 demo adapter，只证明 `AgentAiEngine` 怎么接；生产接入建议维护自己的 provider adapter。
+- `linnkit.config.mjs` 用 `defineConfig()` 声明 agent 列表、默认模型和 canonical `inference`。
+- `adapters/ai-sdk-openai.mjs` 是 demo Host adapter，Provider 协议由 Vercel AI SDK 维护，Linnkit 只消费 canonical stream。生产 Host 仍需补齐显式 route、credential、raw usage、continuation 和安全审计。
 - `linnkit run` 内部用 `runAgent()` 自动装配内存版 EventStore / Checkpointer / RunSupervisor，只适合 quickstart 和小型 smoke test。
 
 ### quickstart 的上下文边界
@@ -109,7 +109,7 @@ hello-linnkit/
 ```ts
 await runAgent(agent, {
   input: 'hi',
-  llm,
+  inference,
   maxSteps: 12,
 });
 ```

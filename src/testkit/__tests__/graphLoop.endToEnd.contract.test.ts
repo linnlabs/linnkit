@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   createDefaultGraphExecutor,
   createGraphLoopHarness,
-  createScriptedAiEngineHarness,
+  createScriptedInferenceHarness,
   createToolContextFixture,
 } from '../index';
 import {
@@ -152,7 +152,7 @@ function buildHarnessOptions(params: {
 }): GraphLoopOptions {
   const conversationId = params.conversationId ?? 'conv_linnkit_e2e';
   const turnId = params.turnId ?? 'turn_linnkit_e2e';
-  const aiHarness = createScriptedAiEngineHarness([]);
+  const aiHarness = createScriptedInferenceHarness([]);
   const toolContext = createToolContextFixture({
     conversationId,
     turnId,
@@ -186,7 +186,7 @@ describe('linnkit testkit graph loop end-to-end smoke', () => {
     const conversationId = 'conv_linnkit_stream_output_processor';
     const turnId = 'turn_linnkit_stream_output_processor';
     const streamedEvents: unknown[] = [];
-    const aiHarness = createScriptedAiEngineHarness([
+    const aiHarness = createScriptedInferenceHarness([
       {
         contentChunks: ['hello'],
       },

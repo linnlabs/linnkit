@@ -24,11 +24,11 @@ describe('TokenCalculator fallback observability', () => {
     const { TokenCalculator } = await import('../TokenCalculator');
 
     expect(TokenCalculator.estimateTokens('123456', {
-      encoding: 'gpt-4o-mini',
+      encoding: 'o200k_base',
       avgCharsPerToken: 3,
     })).toBe(2);
     expect(TokenCalculator.estimateTokens('123456', {
-      encoding: 'gpt-4o',
+      encoding: 'o200k_base',
       avgCharsPerToken: 3,
     })).toBe(2);
 
@@ -36,8 +36,7 @@ describe('TokenCalculator fallback observability', () => {
     expect(loggerWarnMock).toHaveBeenCalledWith(
       'tiktoken encoding unavailable, falling back to avgCharsPerToken estimator',
       expect.objectContaining({
-        encodingName: 'o200k_base',
-        requestedIdentifier: 'gpt-4o-mini',
+        requestedEncoding: 'o200k_base',
       }),
     );
   });

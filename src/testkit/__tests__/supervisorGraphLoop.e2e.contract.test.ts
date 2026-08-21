@@ -22,7 +22,7 @@ import { createGraphLoopHarness, execution, events as runtimeEvents } from '../.
 import {
   assertRunInvariants,
   createRunSupervisorHarness,
-  createScriptedAiEngineHarness,
+  createScriptedInferenceHarness,
   createToolContextFixture,
   type RunInvariantId,
   validateRunInvariants,
@@ -194,7 +194,7 @@ function createGraphRunFixtures(params: {
   const executor: RunExecutorPort = {
     async execute(context): Promise<RunOutcome> {
       const toolRuntime = createMockToolRuntime();
-      const aiHarness = createScriptedAiEngineHarness([]);
+      const aiHarness = createScriptedInferenceHarness([]);
       const toolContext = createToolContextFixture({
         conversationId: context.conversationId,
         turnId: context.runId,

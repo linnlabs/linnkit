@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AgentAiEngine } from '../../../ports/ai-engine';
+import type { CanonicalInferencePort } from '../../../ports';
 import type { ModelCatalogLike } from '../modelCatalog';
 import type { AiMessage } from '../../../contracts';
 
@@ -14,7 +14,7 @@ vi.mock('../policies/defaultPolicyEngine', () => ({
 }));
 
 describe('LlmCaller fallback boundary', () => {
-  let aiEngine: AgentAiEngine;
+  let inferencePort: CanonicalInferencePort;
   let modelCatalog: ModelCatalogLike;
   const messages: AiMessage[] = [
     {
@@ -37,7 +37,6 @@ describe('LlmCaller fallback boundary', () => {
       enable_client_retry: true,
       api_key: 'primary-key',
       model_name: 'primary-model',
-      api_base: 'https://api.example.com/v1',
       capabilities: ['chat'],
     });
     modelCatalog = {
@@ -45,9 +44,19 @@ describe('LlmCaller fallback boundary', () => {
       getModelsByCapability: vi.fn(() => []),
       getModelsByUIVisibility: vi.fn(() => []),
     };
-    aiEngine = {
-      chatCompletion: chatCompletionMock,
-      chatCompletionStream: vi.fn(),
+    inferencePort = {
+      async *stream(request) {
+        yield {
+          type: 'start',
+          model_id: request.model_id,
+          attempt_id: request.invocation.attempt_id,
+        };
+        const content = await chatCompletionMock(request.model_id, request.messages);
+        if (typeof content === 'string' && content) {
+          yield { type: 'answer_delta', text: content };
+        }
+        yield { type: 'finish', reason: 'stop' };
+      },
     };
   });
 
@@ -67,7 +76,7 @@ describe('LlmCaller fallback boundary', () => {
     });
 
     const onCloudQuotaFallbackApplied = vi.fn();
-    const caller = new LlmCaller({ modelResolver, modelCatalog, aiEngine });
+    const caller = new LlmCaller({ modelResolver, modelCatalog, inferencePort });
 
     const result = await caller.callWithRetries(
       'primary-model',
@@ -78,7 +87,7 @@ describe('LlmCaller fallback boundary', () => {
       { onCloudQuotaFallbackApplied },
     );
 
-    expect(result).toBe('policy fallback success');
+    expect(result).toEqual({ content: 'policy fallback success' });
     expect(chatCompletionMock.mock.calls[0]?.[0]).toBe('primary-model');
     expect(chatCompletionMock.mock.calls[1]?.[0]).toBe('policy-fallback-model');
     expect(modelResolver.pickFallbackChatModel).toHaveBeenCalledTimes(1);
@@ -105,12 +114,11 @@ describe('LlmCaller fallback boundary', () => {
       enable_client_retry: false,
       api_key: `${id}-key`,
       model_name: id,
-      api_base: 'https://api.example.com/v1',
       capabilities: ['chat'],
     }));
 
     const onCloudQuotaFallbackApplied = vi.fn();
-    const caller = new LlmCaller({ modelResolver, modelCatalog, aiEngine });
+    const caller = new LlmCaller({ modelResolver, modelCatalog, inferencePort });
 
     const result = await caller.callWithRetries(
       'cloud-primary-model',
@@ -121,7 +129,7 @@ describe('LlmCaller fallback boundary', () => {
       { onCloudQuotaFallbackApplied },
     );
 
-    expect(result).toBe('quota fallback success');
+    expect(result).toEqual({ content: 'quota fallback success' });
     expect(chatCompletionMock.mock.calls[0]?.[0]).toBe('cloud-primary-model');
     expect(chatCompletionMock.mock.calls[1]?.[0]).toBe('cloud-deepseek-reasoner');
     expect(modelResolver.pickFallbackChatModel).not.toHaveBeenCalled();
@@ -142,7 +150,7 @@ describe('LlmCaller fallback boundary', () => {
       reason: 'policy boundary',
     });
 
-    const caller = new LlmCaller({ modelResolver, modelCatalog, aiEngine });
+    const caller = new LlmCaller({ modelResolver, modelCatalog, inferencePort });
 
     await expect(
       caller.callWithRetries(
@@ -175,12 +183,11 @@ describe('LlmCaller fallback boundary', () => {
       enable_client_retry: false,
       api_key: `${id}-key`,
       model_name: id,
-      api_base: 'https://api.example.com/v1',
       capabilities: ['chat'],
     }));
 
     const onCloudQuotaFallbackApplied = vi.fn();
-    const caller = new LlmCaller({ modelResolver, modelCatalog, aiEngine });
+    const caller = new LlmCaller({ modelResolver, modelCatalog, inferencePort });
 
     await expect(
       caller.callWithRetries(
@@ -222,7 +229,7 @@ describe('LlmCaller fallback boundary', () => {
     const caller = new LlmCaller({
       modelResolver,
       modelCatalog,
-      aiEngine,
+      inferencePort,
       maxRetries: 0,
       maxTotalAttempts: 2,
     });
@@ -233,5 +240,48 @@ describe('LlmCaller fallback boundary', () => {
     expect(chatCompletionMock.mock.calls[0]?.[0]).toBe('primary-model');
     expect(chatCompletionMock.mock.calls[1]?.[0]).toBe('policy-fallback-a');
     expect(modelResolver.pickFallbackChatModel).toHaveBeenCalledTimes(1);
+  });
+
+  it('Policy Model Switch 跳过容量不足候选，并记录明确拒绝原因', async () => {
+    const { LlmCaller } = await import('../caller');
+    const modelResolver = {
+      resolveModelId: vi.fn((modelId?: string) => modelId ?? 'default-model'),
+      pickFallbackChatModel: vi.fn()
+        .mockReturnValueOnce('small-window-model')
+        .mockReturnValueOnce('large-window-model'),
+    };
+    chatCompletionMock
+      .mockRejectedValueOnce(new Error('primary failed'))
+      .mockResolvedValueOnce('large fallback success');
+    decideOnErrorMock.mockReturnValue({
+      action: 'switch_model',
+      reason: 'policy boundary',
+    });
+    const onModelFallbackRejected = vi.fn();
+    const caller = new LlmCaller({ modelResolver, modelCatalog, inferencePort });
+
+    await expect(caller.callWithRetries(
+      'primary-model',
+      messages,
+      {},
+      undefined,
+      undefined,
+      { onModelFallbackRejected },
+      {
+        evaluateFallbackPromptCapacity: candidateModelId => candidateModelId === 'small-window-model'
+          ? { admitted: false, reason: 'fallback_context_window_exceeded' }
+          : { admitted: true },
+      },
+    )).resolves.toEqual({ content: 'large fallback success' });
+
+    expect(chatCompletionMock.mock.calls.map(call => call[0])).toEqual([
+      'primary-model',
+      'large-window-model',
+    ]);
+    expect(modelResolver.pickFallbackChatModel).toHaveBeenCalledTimes(2);
+    expect(onModelFallbackRejected).toHaveBeenCalledWith(expect.objectContaining({
+      candidateModelId: 'small-window-model',
+      reason: 'fallback_context_window_exceeded',
+    }));
   });
 });

@@ -1,5 +1,5 @@
 import type { RuntimeEvent } from '../contracts';
-import { resolveConfiguredLlm, runAgent } from '../quickstart';
+import { resolveConfiguredInference, runAgent } from '../quickstart';
 import { loadConfig } from './configLoader';
 import { loadDotEnv } from './env';
 
@@ -33,14 +33,14 @@ export async function runRunCommand(options: RunCommandOptions): Promise<number>
     throw new Error(`[linnkit] unknown agent id: ${options.agentId}`);
   }
 
-  const llm = await resolveConfiguredLlm(config);
+  const inference = await resolveConfiguredInference(config);
   const modelId = options.modelId ?? agent.modelId ?? config.defaultModelId;
   const write = options.write ?? ((text: string) => process.stdout.write(text));
 
   write(`[linnkit] agent=${agent.spec.id} model=${modelId ?? '(missing)'}\n`);
   const result = await runAgent(agent, {
     input: options.input,
-    llm,
+    inference,
     modelId,
     onEvent: (event) => {
       const text = readEventText(event);

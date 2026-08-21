@@ -99,11 +99,6 @@ describe('agentSpecAdapter', () => {
         keepLatestToolPairs: 0,
         overflowStrategy: 'fail-fast',
       },
-      providerReplay: {
-        provider: 'system_default',
-        requiresReasoningDetailsForToolReplay: true,
-        missingSidecarBehavior: 'provider_empty_replay_field',
-      },
       workingMemory: {
         maxRecentToolRuns: 5,
       },
@@ -116,22 +111,19 @@ describe('agentSpecAdapter', () => {
         keepLatestToolPairs: 0,
         overflowStrategy: 'fail-fast',
       }),
-      providerReplay: {
-        provider: 'system_default',
-        requiresReasoningDetailsForToolReplay: true,
-        missingSidecarBehavior: 'provider_empty_replay_field',
-      },
     });
   });
 
-  it('does not override model-derived provider replay policy when providerReplay is empty by default', () => {
+  it('does not expose provider replay policy from Agent context config', () => {
     const policy = defineContextPolicy({
       toolHistory: {
         strategy: 'per-run',
       },
     });
 
-    expect(contextPolicyToPreprocessorOptions(policy).providerReplay).toBeUndefined();
+    expect(contextPolicyToPreprocessorOptions(policy)).toEqual({
+      toolHistory: expect.objectContaining({ strategy: 'per-run' }),
+    });
   });
 
   it('maps provider and system reminder options separately', () => {
@@ -194,7 +186,9 @@ describe('agentSpecAdapter', () => {
       }),
     });
 
-    expect(runtimeOptions.contextBuilderConfig.DEFAULT_MAX_TOKENS).toBe(232000);
+    expect(runtimeOptions.contextBuilderConfig.DEFAULT_MAX_TOKENS).toBeUndefined();
+    expect(runtimeOptions.contextBuilderConfig.RESERVED_FOR_RESPONSE).toBeUndefined();
+    expect(runtimeOptions.contextBuilderConfig.WORKING_MEMORY_BUDGET_PERCENTAGE).toBe(0.7);
     expect(runtimeOptions.preprocessorOptions.toolHistory?.strategy).toBe('per-run');
     expect(runtimeOptions.preprocessorOptions.toolHistory?.retentionMode).toBe('drop');
     expect(runtimeOptions.providerOptions.contextTrace?.enabled).toBe(true);
@@ -226,6 +220,24 @@ describe('agentSpecAdapter', () => {
 });
 
 describe('mergeContextPolicy', () => {
+  it('三层均未声明容量时保留 sparse policy，不伪造 window/output cap', () => {
+    const merged = mergeContextPolicy({
+      frameworkDefault: {
+        toolHistory: { strategy: 'per-run' },
+      },
+      hostFallback: {
+        contextTrace: { enabled: true },
+      },
+      agentSpec: {
+        systemReminder: { disabledRuleIds: ['budget-warning'] },
+      },
+    });
+
+    expect(merged.budget?.maxTokens).toBeUndefined();
+    expect(merged.budget?.reservedForResponse).toBeUndefined();
+    expect(merged.budget?.workingMemoryBudgetPercentage).toBe(0.7);
+  });
+
   it('merges framework default, host fallback and agent spec by field priority', () => {
     const merged = mergeContextPolicy({
       frameworkDefault: {
@@ -251,10 +263,6 @@ describe('mergeContextPolicy', () => {
             maxLines: 1200,
           },
         },
-        providerReplay: {
-          requiresReasoningDetailsForToolReplay: true,
-          missingSidecarBehavior: 'degrade_to_text',
-        },
       },
       agentSpec: {
         budget: {
@@ -264,9 +272,6 @@ describe('mergeContextPolicy', () => {
           observationGovernance: {
             maxLines: 400,
           },
-        },
-        providerReplay: {
-          missingSidecarBehavior: 'allow',
         },
       },
     });
@@ -278,8 +283,6 @@ describe('mergeContextPolicy', () => {
     expect(merged.toolHistory?.keepLatestRuns).toBe(2);
     expect(merged.toolOutput?.observationGovernance?.maxChars).toBe(20000);
     expect(merged.toolOutput?.observationGovernance?.maxLines).toBe(400);
-    expect(merged.providerReplay?.requiresReasoningDetailsForToolReplay).toBe(true);
-    expect(merged.providerReplay?.missingSidecarBehavior).toBe('allow');
   });
 
   it('replaces arrays instead of concatenating them', () => {

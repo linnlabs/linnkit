@@ -16,4 +16,5 @@ export * from './token-usage';
 export * from './token-accounting';
 export * from './token-calibration';
 export * from './reasoning';
+export * from './provider-continuation';
 export * from './summarization';

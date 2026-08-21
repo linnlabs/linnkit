@@ -5,7 +5,7 @@
  * 思考努力程度（Reasoning Effort）的统一用户语义、模型能力契约与降级纯函数。
  *
  * 为什么放在 contracts 而非 runtime-kernel：
- * - `ReasoningEffort` 是基础枚举，需要被 `ports/ai-engine.types.ts` 的 `LlmCallOptions`
+ * - `ReasoningEffort` 是基础枚举，需要被 `ports/llm-call.ts` 的 `LlmCallOptions`
  *   和 `runtime-kernel` 的 `ModelReasoningConfig` / `resolveEffectiveEffort` 共同使用；
  * - ports 不能 import runtime-kernel（会形成 ports ⇄ runtime-kernel 循环依赖），
  *   而 contracts 是 ports 与 runtime-kernel 都依赖的最底层共享类型层；
@@ -63,20 +63,15 @@ export function isValidReasoningEffort(value: unknown): value is ReasoningEffort
  * - `supported_efforts`：该模型支持的档位列表（含是否支持 `off`）。**约定从弱到强排序**，
  *   降级兜底会取首项（最弱档），排序保证兜底行为可预测。
  * - `default_effort`：用户没选时用哪个；不填则取 `medium`（若在 supported 中）或列表首项。
- * - `summary_supported`：仅 OpenAI Responses 系相关，是否请求思考摘要。
- * - `budget_tokens_by_effort`：仅 Claude 系相关，档位 → budget_tokens 映射。
  *
- * 模型是否「支持 reasoning」由 `supported_efforts.length > 0` 推导，不单独加布尔（对齐 OpenClaw）。
+ * 模型是否「支持 reasoning」由 `supported_efforts.length > 0` 推导，不单独加布尔。
+ * Provider 的 summary、token budget 和 wire 字段不属于 Linnkit 通用能力契约。
  */
 export interface ModelReasoningConfig {
   /** 该模型支持哪些档位（含是否支持 off）。约定从弱到强排序。 */
   supported_efforts: ReasoningEffort[];
   /** 用户没选时用哪个；不填则取 medium（若在 supported 中）或列表首项。 */
   default_effort?: ReasoningEffort;
-  /** 仅 OpenAI Responses 系：是否请求思考摘要。 */
-  summary_supported?: boolean;
-  /** 仅 Claude 系：档位 → budget_tokens 映射。 */
-  budget_tokens_by_effort?: Partial<Record<ReasoningEffort, number>>;
 }
 
 /**

@@ -3,13 +3,13 @@ import type {
   ErrorEvent as AgentErrorEvent,
   StreamResetEvent,
 } from '../events/agentEvents';
-import { generateRuntimeEventId } from '../../contracts';
+import { generateRuntimeEventId, generateTraceId } from '../../contracts';
 import {
   ErrorClassifier,
   ErrorCategory,
   type ErrorClassification,
 } from '../../shared/errorClassifier';
-import type { AgentAiEngine, LlmInputMaterializerPort } from '../../ports';
+import type { CanonicalInferencePort, LlmInputMaterializerPort } from '../../ports';
 import type { LlmCallOptions, LlmRequestMessage, LlmRetryConfig } from './caller.types';
 import type { LLMPolicyErrorDecision, LLMPolicyMatchContext } from './policies/types';
 import type { ModelCatalogLike } from './modelCatalog';
@@ -42,7 +42,7 @@ export interface RetryFallbackDeps {
   policyEngine: {
     decideOnError(error: Error, ctx: LLMPolicyMatchContext): LLMPolicyErrorDecision;
   };
-  aiEngine: AgentAiEngine;
+  inferencePort: CanonicalInferencePort;
   llmInputMaterializer?: LlmInputMaterializerPort;
 }
 
@@ -81,12 +81,13 @@ export async function callWithRetryFallback(params: CallWithRetriesParams): Prom
     maxRetries: configuredMaxRetries,
     maxTotalAttempts: deps.retryConfig.maxTotalAttempts,
   });
+  const traceId = generateTraceId();
 
   let previousAttemptTracker: LiveAttemptStreamTracker | undefined;
 
   if (!clientRetryEnabled) {
     const activeCfg = deps.modelCatalog.getModelById(modelId);
-    logger.debug('默认禁用客户端重试（除非遇到本地纯网络错误）', {
+    logger.debug('客户端重试已禁用', {
       modelId,
       billing_mode: activeCfg?.billing_mode,
       reason:
@@ -114,6 +115,9 @@ export async function callWithRetryFallback(params: CallWithRetriesParams): Prom
       eventHandler,
       requirement,
     });
+    const attemptContextUsage = invocationContext?.measurePromptUsage
+      ? await invocationContext.measurePromptUsage(activeModelId, messages)
+      : undefined;
 
     const isRetry = attempt > 0;
     let pendingErrorEvent: AgentErrorEvent | null = null;
@@ -132,7 +136,7 @@ export async function callWithRetryFallback(params: CallWithRetriesParams): Prom
       actualAttempts++;
       const llmResponse = attemptTracker
         ? await callLlmStream({
-            aiEngine: deps.aiEngine,
+            inferencePort: deps.inferencePort,
             modelId: activeModelId,
             messages: resolvedMessages,
             options,
@@ -142,13 +146,15 @@ export async function callWithRetryFallback(params: CallWithRetriesParams): Prom
             },
             signal,
             toolCallStreamingPolicies: invocationContext?.toolCallStreamingPolicies,
+            traceId,
           })
         : await callPlainCompletion(
-            deps.aiEngine,
+            deps.inferencePort,
             activeModelId,
             resolvedMessages,
             options,
-            signal
+            signal,
+            traceId
           );
 
       const responseContent = getLlmResultContent(llmResponse);
@@ -162,7 +168,11 @@ export async function callWithRetryFallback(params: CallWithRetriesParams): Prom
       }
 
       logger.debug('LLM 调用成功', { attempts: actualAttempts, maxTotalAttempts });
-      fallbackObserver?.onLlmAttemptSucceeded?.(activeModelId);
+      if (attemptContextUsage) {
+        fallbackObserver?.onLlmAttemptSucceeded?.(activeModelId, attemptContextUsage);
+      } else {
+        fallbackObserver?.onLlmAttemptSucceeded?.(activeModelId);
+      }
       return llmResponse;
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
@@ -170,20 +180,7 @@ export async function callWithRetryFallback(params: CallWithRetriesParams): Prom
       const classification =
         streamedErrorClassification ??
         ErrorClassifier.classify(lastError, { logPrefix: '[LlmCaller]' });
-      let currentMaxRetries = clientRetryEnabled ? configuredMaxRetries : 0;
-
-      if (!clientRetryEnabled && classification.category === ErrorCategory.RETRYABLE) {
-        if (
-          classification.reason.startsWith('网络错误') ||
-          classification.reason === '空响应错误' ||
-          classification.reason === '模型输出损坏: invalid tool_call.arguments'
-        ) {
-          logger.warn('云端模型检测到必须本地兜底的错误，破例允许客户端重试', {
-            reason: classification.reason,
-          });
-          currentMaxRetries = configuredMaxRetries;
-        }
-      }
+      const currentMaxRetries = clientRetryEnabled ? configuredMaxRetries : 0;
 
       logger.error('LLM 调用失败', {
         attempt: attempt + 1,
@@ -216,7 +213,8 @@ export async function callWithRetryFallback(params: CallWithRetriesParams): Prom
           excludedModelIds,
           requirement,
           fallbackObserver,
-          lastError
+          lastError,
+          invocationContext?.evaluateFallbackPromptCapacity,
         );
         if (policySwitchModelId) {
           fallbackObserver?.onModelFallbackApplied?.({
@@ -239,6 +237,7 @@ export async function callWithRetryFallback(params: CallWithRetriesParams): Prom
           requirement,
           error: lastError,
           fallbackObserver,
+          evaluateFallbackPromptCapacity: invocationContext?.evaluateFallbackPromptCapacity,
         });
         if (quotaFallbackModelId) {
           fallbackObserver?.onModelFallbackApplied?.({
@@ -294,13 +293,12 @@ function isClientRetryEnabledForModel(
   options: LlmCallOptions
 ): boolean {
   if (options.retry_policy === 'none') return false;
-  if (options.retry_policy === 'client') return true;
 
   const cfg = modelCatalog.getModelById(modelId);
+  // Cloud 每个 attempt 都可能已计费，因此不允许调用参数或模型配置破坏单次调用合同。
+  if (cfg?.billing_mode === 'cloud') return false;
+  if (options.retry_policy === 'client') return true;
   if (!cfg) return true;
-  if (cfg.billing_mode === 'cloud') {
-    return cfg.enable_client_retry === true;
-  }
   if (cfg.enable_client_retry === false) return false;
   return true;
 }

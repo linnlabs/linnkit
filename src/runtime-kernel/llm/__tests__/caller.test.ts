@@ -1,1458 +1,306 @@
-/**
- * @file src/agent/runtime-kernel/llm/__tests__/caller.test.ts
- * @description LlmCaller 单元测试
- */
-
-import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
-import { LlmCaller } from '../caller';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type {
+  CanonicalInferenceEvent,
+  CanonicalInferencePort,
+  CanonicalInferenceRequest,
+} from '../../../ports';
+import type { AiMessage, ProviderContinuation } from '../../../contracts';
 import type { AnyAgentEvent } from '../../events/agentEvents';
-import type { AgentAiEngine } from '../../../ports/ai-engine';
+import { LlmCaller } from '../caller';
 import type { ModelCatalogLike } from '../modelCatalog';
-import type { AiMessage } from '../../../contracts';
 
-const mockChatCompletion = vi.fn();
-const mockChatCompletionStream = vi.fn();
-const mockGetModelsByCapability = vi.fn();
-const mockGetModelsByUIVisibility = vi.fn();
-const mockGetModelById = vi.fn();
+type AttemptScript = (
+  request: CanonicalInferenceRequest
+) => AsyncIterable<CanonicalInferenceEvent>;
 
-type StreamParameters = Parameters<AgentAiEngine['chatCompletionStream']>;
-type StreamModelId = StreamParameters[0];
-type StreamMessages = StreamParameters[1];
-type StreamOptions = StreamParameters[2];
-type StreamOnContent = NonNullable<StreamParameters[3]>;
-type StreamOnError = NonNullable<StreamParameters[4]>;
-type StreamOnFinish = NonNullable<StreamParameters[5]>;
-type StreamOnThought = NonNullable<StreamParameters[6]>;
+const testMessages: AiMessage[] = [{
+  role: 'user',
+  type: 'user_input',
+  content: 'Hello',
+  id: 'msg_test_1',
+  timestamp: 1,
+}];
 
-function createModelCatalog(): ModelCatalogLike {
+function modelCatalog(): ModelCatalogLike {
+  const entry = {
+    id: 'test-model',
+    enabled: true,
+    capabilities: ['chat'],
+    adapter_input_support: { user_image: false, tool_result_image: false },
+    billing_mode: 'byok' as const,
+  };
   return {
-    getModelById: mockGetModelById,
-    getModelsByCapability: mockGetModelsByCapability,
-    getModelsByUIVisibility: mockGetModelsByUIVisibility,
+    getModelById: id => ({ ...entry, id }),
+    getModelsByCapability: () => [entry],
+    getModelsByUIVisibility: () => [entry],
   };
 }
 
-function collectStreamChunkContents(events: readonly AnyAgentEvent[]): string[] {
-  return events.flatMap((event) => (event.type === 'stream_chunk' ? [event.content] : []));
-}
-
-function collectStreamResetEvents(events: readonly AnyAgentEvent[]) {
-  return events.filter(
-    (event): event is Extract<AnyAgentEvent, { type: 'stream_reset' }> =>
-      event.type === 'stream_reset',
-  );
-}
-
-describe('LlmCaller', () => {
-  let llmCaller: LlmCaller;
-  let aiEngine: AgentAiEngine;
-  let modelCatalog: ModelCatalogLike;
-  const testModelId = 'test-model';
-  const testMessages: AiMessage[] = [
-    {
-      role: 'user',
-      type: 'user_input',
-      content: 'Hello',
-      id: 'msg_test_1',
-      timestamp: Date.now(),
+function createScriptedPort(scripts: AttemptScript[]) {
+  const requests: CanonicalInferenceRequest[] = [];
+  const port: CanonicalInferencePort = {
+    stream(request) {
+      requests.push(request);
+      const script = scripts.shift();
+      if (!script) throw new Error('missing inference script');
+      return script(request);
     },
-  ];
+  };
+  return { port, requests };
+}
 
-  beforeEach(() => {
-    vi.clearAllMocks();
-    aiEngine = {
-      chatCompletion: mockChatCompletion,
-      chatCompletionStream: mockChatCompletionStream,
+async function* successful(
+  request: CanonicalInferenceRequest,
+  content = 'ok'
+): AsyncIterable<CanonicalInferenceEvent> {
+  yield { type: 'start', model_id: request.model_id, attempt_id: request.invocation.attempt_id };
+  if (content) yield { type: 'answer_delta', text: content };
+  yield { type: 'finish', reason: 'stop' };
+}
+
+function continuation(): ProviderContinuation {
+  return {
+    schema_version: 2,
+    producer: {
+      model_id: 'test-model',
+      endpoint_id: 'example',
+      api_surface: 'openai_chat_completions',
+      capability_id: 'test:chat-codec',
+      endpoint_model_id: 'upstream-model',
+    },
+    kind: 'reasoning_content',
+    payload: { reasoning_content: 'opaque' },
+  };
+}
+
+describe('LlmCaller canonical inference 主链', () => {
+  beforeEach(() => vi.restoreAllMocks());
+
+  it('把 Linnkit 调用投影为 vendor-neutral request，并只返回 canonical 结果', async () => {
+    const harness = createScriptedPort([request => successful(request, 'hello')]);
+    const caller = new LlmCaller({ inferencePort: harness.port, modelCatalog: modelCatalog() });
+
+    await expect(caller.call('test-model', testMessages, {
+      temperature: 0.4,
+      top_p: 0.9,
+      max_tokens: 512,
+      reasoning_effort: 'off',
+      tools: [{
+        name: 'weather',
+        description: 'read weather',
+        parameters: {
+          type: 'object',
+          properties: { city: { type: 'string', description: 'city' } },
+          required: ['city'],
+        },
+      }],
+      tool_choice: { type: 'tool', name: 'weather' },
+    })).resolves.toEqual({ content: 'hello' });
+
+    expect(harness.requests).toHaveLength(1);
+    expect(harness.requests[0]).toMatchObject({
+      model_id: 'test-model',
+      messages: [{ role: 'user', content: [{ type: 'text', text: 'Hello' }] }],
+      tools: [{ name: 'weather' }],
+      tool_choice: { type: 'tool', name: 'weather' },
+      sampling: {
+        temperature: 0.4,
+        top_p: 0.9,
+        max_output_tokens: 512,
+        reasoning_effort: 'none',
+      },
+    });
+    expect(harness.requests[0]?.invocation.trace_id).toMatch(/^trace-/);
+    expect(harness.requests[0]?.invocation.attempt_id).toMatch(/^inference-attempt-/);
+  });
+
+  it('保持 answer/thought/tool/continuation/usage 的结构化边界', async () => {
+    const replay = continuation();
+    const canonicalUsage = {
+      inputTokens: 12,
+      outputTokens: 5,
+      reasoningTokens: 2,
+      totalTokens: 17,
+      source: 'provider-response-usage' as const,
+      confidence: 'actual' as const,
+      rawUsage: { prompt_tokens: 12, completion_tokens: 5 },
     };
-    modelCatalog = createModelCatalog();
-    llmCaller = new LlmCaller({ aiEngine, modelCatalog });
+    const harness = createScriptedPort([async function* (request) {
+      yield { type: 'start', model_id: request.model_id, attempt_id: request.invocation.attempt_id };
+      yield { type: 'thought_delta', text: '分析' };
+      yield {
+        type: 'assistant_part_end',
+        index: 0,
+        part: { type: 'reasoning', text: '分析', continuation: [replay] },
+      };
+      yield { type: 'answer_delta', text: '准备查询' };
+      yield {
+        type: 'assistant_part_end',
+        index: 2,
+        part: { type: 'text', text: '准备查询' },
+      };
+      yield { type: 'tool_call_start', index: 0, part_index: 1, id: 'call-1', name: 'weather' };
+      yield { type: 'tool_argument_delta', index: 0, json_delta: '{"city":"北京"}' };
+      yield {
+        type: 'tool_call_end',
+        index: 0,
+        call: { id: 'call-1', name: 'weather', arguments: { city: '北京' } },
+      };
+      yield { type: 'usage', usage: canonicalUsage };
+      yield { type: 'finish', reason: 'tool_use' };
+    }]);
+    const caller = new LlmCaller({ inferencePort: harness.port, modelCatalog: modelCatalog() });
+    const events: AnyAgentEvent[] = [];
 
-    // 默认 mock 行为
-    mockGetModelsByUIVisibility.mockReturnValue([{ id: 'default-model', name: 'Default Model' }]);
-    mockGetModelsByCapability.mockReturnValue([{ id: 'default-model', name: 'Default Model' }]);
-    mockGetModelById.mockImplementation((id: string) => ({
-      id,
-      enabled: true,
-      capabilities: ['chat'],
-      api_key: 'test-key',
-    }));
+    const result = await caller.callStream(
+      'test-model',
+      testMessages,
+      {},
+      event => events.push(event)
+    );
+
+    expect(result).toEqual({
+      content: '准备查询',
+      tool_calls: [{
+        id: 'call-1',
+        type: 'function',
+        function: { name: 'weather', arguments: '{"city":"北京"}' },
+      }],
+      provider_continuations: [replay],
+      assistant_replay_parts: [
+        { type: 'reasoning', text: '分析', provider_continuations: [replay] },
+        { type: 'tool_call', tool_call_id: 'call-1' },
+        { type: 'text', text: '准备查询' },
+      ],
+      canonicalUsage,
+    });
+    expect(events.some(event => event.type === 'thought' && event.delta === '分析')).toBe(true);
+    expect(events.some(event => event.type === 'stream_chunk' && event.content === '准备查询')).toBe(true);
+    expect(events.some(event => event.type === 'provider_continuation')).toBe(true);
   });
 
-  afterEach(() => {
-    vi.restoreAllMocks();
+  it('canonical failure 直接形成结构化错误，不读取 Provider body', async () => {
+    const harness = createScriptedPort([async function* (request) {
+      yield { type: 'start', model_id: request.model_id, attempt_id: request.invocation.attempt_id };
+      yield { type: 'failure', kind: 'provider', code: 'provider_http_401', retryable: false };
+    }]);
+    const caller = new LlmCaller({
+      inferencePort: harness.port,
+      modelCatalog: modelCatalog(),
+      maxRetries: 0,
+    });
+    const events: AnyAgentEvent[] = [];
+
+    await expect(caller.callWithRetries(
+      'test-model',
+      testMessages,
+      {},
+      event => events.push(event)
+    )).rejects.toMatchObject({
+      errorCode: 'llm.provider_http_401',
+      recoverable: false,
+      metadata: { failure_kind: 'provider', provider_code: 'provider_http_401' },
+    });
+    expect(events.filter(event => event.type === 'error')).toHaveLength(1);
   });
 
-  describe('构造函数', () => {
-    it('应该使用默认配置创建实例', () => {
-      const caller = new LlmCaller({ aiEngine, modelCatalog });
-      expect(caller).toBeDefined();
+  it('同一 retry 链共享 trace_id，但每个真实 attempt 使用新 attempt_id', async () => {
+    const harness = createScriptedPort([
+      async function* (request) {
+        yield { type: 'start', model_id: request.model_id, attempt_id: request.invocation.attempt_id };
+        yield { type: 'failure', kind: 'transport', code: 'network_unavailable', retryable: true };
+      },
+      request => successful(request, 'retried'),
+    ]);
+    const caller = new LlmCaller({
+      inferencePort: harness.port,
+      modelCatalog: modelCatalog(),
+      maxRetries: 1,
+      retryDelayMs: 0,
     });
 
-    it('应该接受自定义重试配置', () => {
-      const customConfig = {
-        maxRetries: 5,
-        enableEmptyResponseRetry: false,
-        retryDelayMs: 2000,
-      };
-      const caller = new LlmCaller({ ...customConfig, aiEngine, modelCatalog });
-      expect(caller).toBeDefined();
-    });
-
-    it('应该支持部分重试配置', () => {
-      const partialConfig = {
-        maxRetries: 10,
-      };
-      const caller = new LlmCaller({ ...partialConfig, aiEngine, modelCatalog });
-      expect(caller).toBeDefined();
-    });
+    await expect(caller.callWithRetries('test-model', testMessages))
+      .resolves.toEqual({ content: 'retried' });
+    expect(harness.requests).toHaveLength(2);
+    expect(harness.requests[0]?.invocation.trace_id)
+      .toBe(harness.requests[1]?.invocation.trace_id);
+    expect(harness.requests[0]?.invocation.attempt_id)
+      .not.toBe(harness.requests[1]?.invocation.attempt_id);
   });
 
-  describe('resolveModelId', () => {
-    it('应该返回提供的 modelId', () => {
-      const modelId = llmCaller.resolveModelId('custom-model');
-      expect(modelId).toBe('custom-model');
+  it('流式 attempt 超时重试前撤回部分输出，成功答案不受前次内容污染', async () => {
+    const harness = createScriptedPort([
+      async function* (request) {
+        yield { type: 'start', model_id: request.model_id, attempt_id: request.invocation.attempt_id };
+        yield { type: 'answer_delta', text: 'partial' };
+        yield {
+          type: 'failure',
+          kind: 'transport',
+          code: 'provider_stream_idle_timeout',
+          retryable: true,
+        };
+      },
+      request => successful(request, 'final'),
+    ]);
+    const caller = new LlmCaller({
+      inferencePort: harness.port,
+      modelCatalog: modelCatalog(),
+      maxRetries: 1,
+      retryDelayMs: 0,
     });
+    const events: AnyAgentEvent[] = [];
 
-    it('应该在未提供 modelId 时返回默认模型', () => {
-      mockGetModelsByUIVisibility.mockReturnValue([
-        { id: 'default-chat-model', name: 'Default Chat Model' },
-      ]);
-      mockGetModelsByCapability.mockReturnValue([
-        { id: 'default-chat-model', name: 'Default Chat Model' },
-      ]);
+    await expect(caller.callWithRetries(
+      'test-model',
+      testMessages,
+      {},
+      event => events.push(event)
+    )).resolves.toEqual({ content: 'final' });
 
-      const modelId = llmCaller.resolveModelId();
-      expect(modelId).toBe('default-chat-model');
-    });
+    const partialIndex = events.findIndex(
+      event => event.type === 'stream_chunk' && event.content === 'partial'
+    );
+    const resetIndex = events.findIndex(event => event.type === 'stream_reset');
+    const finalIndex = events.findIndex(
+      event => event.type === 'stream_chunk' && event.content === 'final'
+    );
+    const partial = events[partialIndex];
+    const reset = events[resetIndex];
 
-    it('应该在没有可用模型时抛出错误', () => {
-      mockGetModelsByUIVisibility.mockReturnValue([]);
-      mockGetModelsByCapability.mockReturnValue([]);
-
-      expect(() => llmCaller.resolveModelId()).toThrow('没有可用的聊天模型');
-    });
+    expect(partialIndex).toBeGreaterThanOrEqual(0);
+    expect(resetIndex).toBeGreaterThan(partialIndex);
+    expect(finalIndex).toBeGreaterThan(resetIndex);
+    expect(events.filter(event => event.type === 'stream_reset')).toHaveLength(1);
+    expect(events.filter(event => event.type === 'error')).toHaveLength(0);
+    if (partial?.type !== 'stream_chunk' || reset?.type !== 'stream_reset') {
+      throw new Error('retry 前必须先发出 partial stream_chunk 与 stream_reset');
+    }
+    expect(reset.answer_id).toBe(partial.answer_id);
   });
 
-  describe('call - 非流式调用', () => {
-    it('应该成功调用 LLM', async () => {
-      const mockResponse = 'Hello! How can I help you?';
-      mockChatCompletion.mockResolvedValue(mockResponse);
+  it('Provider stream 在 terminal 前 EOF 时按协议错误失败', async () => {
+    const harness = createScriptedPort([async function* (request) {
+      yield { type: 'start', model_id: request.model_id, attempt_id: request.invocation.attempt_id };
+      yield { type: 'answer_delta', text: 'partial' };
+    }]);
+    const caller = new LlmCaller({ inferencePort: harness.port, modelCatalog: modelCatalog() });
 
-      const result = await llmCaller.call(testModelId, testMessages);
-
-      expect(result).toBe(mockResponse);
-      expect(mockChatCompletion).toHaveBeenCalledWith(testModelId, testMessages, {
-        signal: undefined,
-      });
-    });
-
-    it('应该支持传递选项参数', async () => {
-      const mockResponse = 'Response';
-      mockChatCompletion.mockResolvedValue(mockResponse);
-
-      const options = {
-        temperature: 0.7,
-        max_tokens: 1000,
-        tools: [],
-      };
-
-      await llmCaller.call(testModelId, testMessages, options);
-
-      expect(mockChatCompletion).toHaveBeenCalledWith(testModelId, testMessages, {
-        ...options,
-        signal: undefined,
-      });
-    });
-
-    it('应该处理包含工具调用的响应', async () => {
-      const mockResponse = {
-        content: 'Let me help you with that.',
-        tool_calls: [
-          {
-            id: 'call_123',
-            type: 'function' as const,
-            function: {
-              name: 'get_weather',
-              arguments: '{"location":"Beijing"}',
-            },
-          },
-        ],
-      };
-      mockChatCompletion.mockResolvedValue(mockResponse);
-
-      const result = await llmCaller.call(testModelId, testMessages);
-
-      expect(result).toEqual({
-        content: 'Let me help you with that.',
-        tool_calls: mockResponse.tool_calls,
-      });
-    });
-
-    it('应该处理对象格式的响应', async () => {
-      const mockResponse = {
-        content: 'Response content',
-      };
-      mockChatCompletion.mockResolvedValue(mockResponse);
-
-      const result = await llmCaller.call(testModelId, testMessages);
-
-      expect(result).toEqual({
-        content: 'Response content',
-        reasoning_details: undefined,
-      });
-    });
-
-    it('应该透传 adapter 回传的 canonicalUsage', async () => {
-      const canonicalUsage = {
-        inputTokens: 12,
-        outputTokens: 4,
-        totalTokens: 16,
-        source: 'host-supplied' as const,
-        confidence: 'actual' as const,
-      };
-      mockChatCompletion.mockResolvedValue({
-        content: 'Response content',
-        usage: { provider_raw: true },
-        canonicalUsage,
-      });
-
-      const result = await llmCaller.call(testModelId, testMessages);
-
-      expect(result).toEqual({
-        content: 'Response content',
-        reasoning_details: undefined,
-        usage: { provider_raw: true },
-        canonicalUsage,
-      });
-    });
-
-    it('应该支持 AbortSignal', async () => {
-      const mockResponse = 'Response';
-      mockChatCompletion.mockResolvedValue(mockResponse);
-
-      const abortController = new AbortController();
-      await llmCaller.call(testModelId, testMessages, {}, abortController.signal);
-
-      expect(mockChatCompletion).toHaveBeenCalledWith(testModelId, testMessages, {
-        signal: abortController.signal,
-      });
-    });
-
-    it('应该在调用失败时抛出错误', async () => {
-      const mockError = new Error('API Error');
-      mockChatCompletion.mockRejectedValue(mockError);
-
-      await expect(llmCaller.call(testModelId, testMessages)).rejects.toThrow('API Error');
-    });
+    await expect(caller.call('test-model', testMessages)).rejects.toThrow(/terminal event 前结束/);
   });
 
-  describe('callStream - 流式调用', () => {
-    it('应该成功进行流式调用', async () => {
-      const mockResponse = 'Hello! How can I help you?';
-      mockChatCompletionStream.mockImplementation(
-        async (
-          _modelId: StreamModelId,
-          _messages: StreamMessages,
-          _options: StreamOptions,
-          onContent: StreamOnContent,
-          _onError: StreamOnError,
-          _onFinish: StreamOnFinish,
-        ) => {
-          onContent('Hello! ');
-          onContent('How can ');
-          onContent('I help you?');
-        },
-      );
-
-      const events: AnyAgentEvent[] = [];
-      const eventHandler = (event: AnyAgentEvent) => {
-        events.push(event);
-      };
-
-      const result = await llmCaller.callStream(testModelId, testMessages, {}, eventHandler);
-
-      expect(result).toBe('Hello! How can I help you?');
-      expect(events.length).toBeGreaterThan(0);
-      expect(events.every((e) => e.type === 'stream_chunk')).toBe(true);
-    });
-
-    it('应该正确处理 thought 事件', async () => {
-      mockChatCompletionStream.mockImplementation(
-        async (
-          _modelId: StreamModelId,
-          _messages: StreamMessages,
-          _options: StreamOptions,
-          onContent: StreamOnContent,
-          _onError: StreamOnError,
-          _onFinish: StreamOnFinish,
-          onThought: StreamOnThought,
-        ) => {
-          onThought('Let me think...');
-          onContent('Here is the answer.');
-        },
-      );
-
-      const events: AnyAgentEvent[] = [];
-      const eventHandler = (event: AnyAgentEvent) => {
-        events.push(event);
-      };
-
-      await llmCaller.callStream(testModelId, testMessages, {}, eventHandler);
-
-      const thoughtEvents = events.filter((e) => e.type === 'thought');
-      expect(thoughtEvents.length).toBeGreaterThan(0);
-      expect(thoughtEvents[0]).toHaveProperty('content');
-    });
-
-    it('应该通过 callback 透传流式 canonicalUsage', async () => {
-      const canonicalUsage = {
-        inputTokens: 9,
-        outputTokens: 6,
-        totalTokens: 15,
-        source: 'host-supplied' as const,
-        confidence: 'actual' as const,
-      };
-      mockChatCompletionStream.mockImplementation(
-        async (
-          _modelId: unknown,
-          _messages: unknown,
-          _options: unknown,
-          onContent: (content: string) => void,
-          _onError: unknown,
-          _onFinish: unknown,
-          _onThought: unknown,
-          _onUsage: unknown,
-          onCanonicalUsage: (usage: typeof canonicalUsage) => void,
-        ) => {
-          onContent('answer');
-          onCanonicalUsage(canonicalUsage);
-        },
-      );
-
-      const result = await llmCaller.callStream(testModelId, testMessages, {}, () => undefined);
-
-      expect(result).toEqual({
-        content: 'answer',
-        tool_calls: [],
-        reasoning_details: undefined,
-        canonicalUsage,
-      });
-    });
-
-    it('应该累积工具调用增量', async () => {
-      mockChatCompletionStream.mockImplementation(
-        async (
-          _modelId: StreamModelId,
-          _messages: StreamMessages,
-          _options: StreamOptions,
-          onContent: StreamOnContent,
-        ) => {
-          // 模拟流式工具调用
-          onContent({
-            tool_calls: [
-              {
-                index: 0,
-                id: 'call_123',
-                function: { name: 'get_weather' },
-              },
-            ],
-          });
-
-          onContent({
-            tool_calls: [
-              {
-                index: 0,
-                function: { arguments: '{"location":' },
-              },
-            ],
-          });
-
-          onContent({
-            tool_calls: [
-              {
-                index: 0,
-                function: { arguments: '"Beijing"}' },
-              },
-            ],
-          });
-        },
-      );
-
-      const events: AnyAgentEvent[] = [];
-      const result = await llmCaller.callStream(testModelId, testMessages, {}, (event) =>
-        events.push(event),
-      );
-
-      expect(typeof result).toBe('object');
-      if (typeof result === 'object' && Array.isArray(result.tool_calls)) {
-        expect(result.tool_calls).toHaveLength(1);
-        expect(result.tool_calls[0].id).toBe('call_123');
-        expect(result.tool_calls[0].function.name).toBe('get_weather');
-        expect(result.tool_calls[0].function.arguments).toBe('{"location":"Beijing"}');
-      }
-    });
-
-    it('应该累积流式 reasoning_details 并作为不透明 replay blocks 返回', async () => {
-      const reasoningDetails = [
-        { provider: 'deepseek', type: 'reasoning_content', reasoning_content: 'Need context.' },
-      ];
-      mockChatCompletionStream.mockImplementation(
-        async (
-          _modelId: unknown,
-          _messages: unknown,
-          _options: unknown,
-          onContent: (
-            content: string | { reasoning_details?: unknown[]; content?: string },
-          ) => void,
-        ) => {
-          onContent({ reasoning_details: reasoningDetails });
-        },
-      );
-
-      const events: unknown[] = [];
-      const result = await llmCaller.callStream(testModelId, testMessages, {}, (event) =>
-        events.push(event),
-      );
-
-      expect(result).toEqual({
-        content: '',
-        tool_calls: [],
-        reasoning_details: reasoningDetails,
-      });
-      expect(events).toContainEqual(
-        expect.objectContaining({
-          type: 'provider_sidecar',
-          reasoning_details: reasoningDetails,
-        }),
-      );
-    });
-
-    it('应该把流式 reasoning_content 片段归并后返回，避免工具决策 sidecar 碎片化', async () => {
-      mockChatCompletionStream.mockImplementation(
-        async (
-          _modelId: unknown,
-          _messages: unknown,
-          _options: unknown,
-          onContent: (
-            content: string | { reasoning_details?: unknown[]; content?: string },
-          ) => void,
-        ) => {
-          onContent({
-            reasoning_details: [
-              {
-                provider: 'example-reasoner',
-                type: 'reasoning_content',
-                reasoning_content: 'Need',
-              },
-            ],
-          });
-          onContent({
-            reasoning_details: [
-              {
-                provider: 'example-reasoner',
-                type: 'reasoning_content',
-                reasoning_content: ' to inspect.',
-              },
-            ],
-          });
-        },
-      );
-
-      const events: Array<{ type?: string; reasoning_details?: unknown[] }> = [];
-      const result = await llmCaller.callStream(testModelId, testMessages, {}, (event) =>
-        events.push(event as { type?: string; reasoning_details?: unknown[] }),
-      );
-
-      expect(result).toEqual({
-        content: '',
-        tool_calls: [],
-        reasoning_details: [
-          {
-            provider: 'example-reasoner',
-            type: 'reasoning_content',
-            reasoning_content: 'Need to inspect.',
-          },
-        ],
-      });
-      const providerSidecars = events.filter((event) => event.type === 'provider_sidecar');
-      expect(providerSidecars[providerSidecars.length - 1]?.reasoning_details).toEqual([
-        {
-          provider: 'example-reasoner',
-          type: 'reasoning_content',
-          reasoning_content: 'Need to inspect.',
-        },
-      ]);
-    });
-
-    it('流式 tool_call arguments 若最终不是合法 JSON，不应返回半截 tool_calls', async () => {
-      mockChatCompletionStream.mockImplementation(
-        async (
-          _modelId: unknown,
-          _messages: unknown,
-          _options: unknown,
-          onContent: (content: unknown) => void,
-        ) => {
-          onContent({
-            tool_calls: [
-              {
-                index: 0,
-                id: 'call_broken',
-                function: { name: 'code_generation_tool' },
-              },
-            ],
-          });
-
-          onContent({
-            tool_calls: [
-              {
-                index: 0,
-                function: { arguments: '{"code":"const value = computeValue();' },
-              },
-            ],
-          });
-        },
-      );
-
-      await expect(llmCaller.callStream(testModelId, testMessages, {}, vi.fn())).rejects.toThrow(
-        /Stream ended with invalid tool_call\.arguments/,
-      );
-    });
-
-    it('声明 placeholder policy 的工具应尽早发出占位 tool_process', async () => {
-      mockChatCompletionStream.mockImplementation(
-        async (
-          _modelId: unknown,
-          _messages: unknown,
-          _options: unknown,
-          onContent: (content: unknown) => void,
-        ) => {
-          onContent({
-            tool_calls: [
-              {
-                index: 0,
-                id: 'call_code_generation_1',
-                function: { name: 'code_generation_tool' },
-              },
-            ],
-          });
-
-          onContent({
-            tool_calls: [
-              {
-                index: 0,
-                function: { arguments: '{"code":"compose({})"}' },
-              },
-            ],
-          });
-        },
-      );
-
-      const events: AnyAgentEvent[] = [];
-      await llmCaller.callStream(
-        testModelId,
-        testMessages,
-        {},
-        (event) => events.push(event),
-        undefined,
-        { toolCallStreamingPolicies: { code_generation_tool: { emitPlaceholder: true } } },
-      );
-
-      const placeholderEvent = events.find((event) => {
-        if (event.type !== 'tool_process') return false;
-        return (
-          event.tool_name === 'code_generation_tool' &&
-          event.tool_call_id === 'call_code_generation_1' &&
-          event.phase === 'start' &&
-          event.status === 'loading'
-        );
-      });
-
-      expect(placeholderEvent).toBeDefined();
-    });
-
-    it('未声明流式 policy 的工具不发布未接纳的占位或参数快照', async () => {
-      mockChatCompletionStream.mockImplementation(
-        async (
-          _modelId: unknown,
-          _messages: unknown,
-          _options: unknown,
-          onContent: (content: unknown) => void,
-        ) => {
-          onContent({
-            tool_calls: [
-              {
-                index: 0,
-                id: 'call_unadmitted_1',
-                function: { name: 'external_tool', arguments: '{"value":"draft"}' },
-              },
-            ],
-          });
-        },
-      );
-
-      const events: AnyAgentEvent[] = [];
-      await llmCaller.callStream(testModelId, testMessages, {}, (event) => events.push(event));
-
-      expect(events.filter((event) => event.type === 'tool_process')).toEqual([]);
-    });
-
-    it('另一项声明 policy 的工具也独立获得占位事件', async () => {
-      mockChatCompletionStream.mockImplementation(
-        async (
-          _modelId: unknown,
-          _messages: unknown,
-          _options: unknown,
-          onContent: (content: unknown) => void,
-        ) => {
-          onContent({
-            tool_calls: [
-              {
-                index: 0,
-                id: 'call_planning_1',
-                function: { name: 'planning_tool' },
-              },
-            ],
-          });
-
-          onContent({
-            tool_calls: [
-              {
-                index: 0,
-                function: {
-                  arguments: '{"goal":"inspect","steps":[{"name":"read input"}]}',
-                },
-              },
-            ],
-          });
-        },
-      );
-
-      const events: AnyAgentEvent[] = [];
-      await llmCaller.callStream(
-        testModelId,
-        testMessages,
-        {},
-        (event) => events.push(event),
-        undefined,
-        { toolCallStreamingPolicies: { planning_tool: { emitPlaceholder: true } } },
-      );
-
-      const placeholderEvent = events.find((event) => {
-        if (event.type !== 'tool_process') return false;
-        return (
-          event.tool_name === 'planning_tool' &&
-          event.tool_call_id === 'call_planning_1' &&
-          event.phase === 'start' &&
-          event.status === 'loading'
-        );
-      });
-
-      expect(placeholderEvent).toBeDefined();
-    });
-
-    it('应该在流式工具调用中累积 Gemini thought_signature 并保留到最终 tool_calls', async () => {
-      mockChatCompletionStream.mockImplementation(
-        async (
-          _modelId: unknown,
-          _messages: unknown,
-          _options: unknown,
-          onContent: (c: unknown) => void,
-        ) => {
-          // Gemini 兼容：signature 通常只出现在当前 step 的第一个 tool_call 上
-          onContent({
-            tool_calls: [
-              {
-                index: 0,
-                id: 'call_gemini_1',
-                function: { name: 'check_weather' },
-                extra_content: { google: { thought_signature: '<Signature_A>' } },
-              },
-            ],
-          });
-
-          // 后续增量参数
-          onContent({
-            tool_calls: [
-              {
-                index: 0,
-                function: { arguments: '{"city":"Paris"}' },
-              },
-            ],
-          });
-        },
-      );
-
-      const result = await llmCaller.callStream(testModelId, testMessages, {}, vi.fn());
-
-      expect(typeof result).toBe('object');
-      if (typeof result !== 'object' || !result || !('tool_calls' in result)) {
-        throw new Error('预期返回对象包含 tool_calls');
-      }
-
-      const rawToolCalls = (result as { tool_calls: unknown }).tool_calls;
-      expect(Array.isArray(rawToolCalls)).toBe(true);
-      const toolCalls = rawToolCalls as unknown[];
-      expect(toolCalls).toHaveLength(1);
-
-      const first = toolCalls[0] as unknown;
-      if (!first || typeof first !== 'object') {
-        throw new Error('tool_calls[0] 不是对象');
-      }
-
-      const firstObj = first as Record<string, unknown>;
-      expect(firstObj['id']).toBe('call_gemini_1');
-
-      const fn = firstObj['function'];
-      if (!fn || typeof fn !== 'object') {
-        throw new Error('tool_calls[0].function 不是对象');
-      }
-      const fnObj = fn as Record<string, unknown>;
-      expect(fnObj['name']).toBe('check_weather');
-      expect(fnObj['arguments']).toBe('{"city":"Paris"}');
-
-      const extra = firstObj['extra_content'];
-      if (!extra || typeof extra !== 'object') {
-        throw new Error('tool_calls[0].extra_content 不是对象');
-      }
-      const extraObj = extra as Record<string, unknown>;
-      const google = extraObj['google'];
-      if (!google || typeof google !== 'object') {
-        throw new Error('tool_calls[0].extra_content.google 不是对象');
-      }
-      const googleObj = google as Record<string, unknown>;
-      expect(googleObj['thought_signature']).toBe('<Signature_A>');
-    });
-
-    it('应该在流式工具调用中保留非 Google provider 的 extra_content 命名空间', async () => {
-      mockChatCompletionStream.mockImplementation(
-        async (
-          _modelId: unknown,
-          _messages: unknown,
-          _options: unknown,
-          onContent: (c: unknown) => void,
-        ) => {
-          onContent({
-            tool_calls: [
-              {
-                index: 0,
-                id: 'call_vendor_1',
-                function: { name: 'document_lookup_tool' },
-                extra_content: {
-                  deepseek: { replay_marker: 'opaque' },
-                  google: { thought_signature: '<Signature_A>', other_opaque: 'kept' },
-                },
-              },
-            ],
-          });
-
-          onContent({
-            tool_calls: [
-              {
-                index: 0,
-                function: { arguments: '{"path":"README.md"}' },
-                extra_content: {
-                  anthropic: { tool_use_signature: '<anthropic-sig>' },
-                },
-              },
-            ],
-          });
-        },
-      );
-
-      const result = await llmCaller.callStream(testModelId, testMessages, {}, vi.fn());
-
-      expect(typeof result).toBe('object');
-      if (typeof result !== 'object' || !result || !('tool_calls' in result)) {
-        throw new Error('预期返回对象包含 tool_calls');
-      }
-
-      const rawToolCalls = (result as { tool_calls: unknown }).tool_calls;
-      expect(Array.isArray(rawToolCalls)).toBe(true);
-      const toolCalls = rawToolCalls as unknown[];
-      const first = toolCalls[0] as unknown;
-      if (!first || typeof first !== 'object') {
-        throw new Error('tool_calls[0] 不是对象');
-      }
-
-      const firstObj = first as Record<string, unknown>;
-      expect(firstObj['extra_content']).toEqual({
-        deepseek: { replay_marker: 'opaque' },
-        google: { thought_signature: '<Signature_A>', other_opaque: 'kept' },
-        anthropic: { tool_use_signature: '<anthropic-sig>' },
-      });
-    });
-
-    it('应该处理流式调用中的错误', async () => {
-      const mockError = new Error('Stream error');
-      mockChatCompletionStream.mockImplementation(
-        async (
-          _modelId: StreamModelId,
-          _messages: StreamMessages,
-          _options: StreamOptions,
-          _onContent: StreamOnContent,
-          onError: StreamOnError,
-        ) => {
-          onError(mockError);
-        },
-      );
-
-      const events: AnyAgentEvent[] = [];
-
-      await expect(
-        llmCaller.callStream(testModelId, testMessages, {}, (event) => events.push(event)),
-      ).rejects.toThrow('Stream error');
-
-      const errorEvents = events.filter((e) => e.type === 'error');
-      expect(errorEvents.length).toBeGreaterThan(0);
-    });
-
-    it('应该支持 AbortSignal 取消流式调用', async () => {
-      mockChatCompletionStream.mockResolvedValue(undefined);
-
-      const abortController = new AbortController();
-      const eventHandler = vi.fn();
-
-      await llmCaller.callStream(
-        testModelId,
-        testMessages,
-        {},
-        eventHandler,
-        abortController.signal,
-      );
-
-      expect(mockChatCompletionStream).toHaveBeenCalledWith(
-        testModelId,
-        testMessages,
-        expect.objectContaining({ signal: abortController.signal }),
-        expect.any(Function),
-        expect.any(Function),
-        expect.any(Function),
-        expect.any(Function),
-        expect.any(Function),
-        expect.any(Function),
-      );
-    });
-
-    it('应该过滤掉无效的工具调用', async () => {
-      mockChatCompletionStream.mockImplementation(
-        async (
-          _modelId: StreamModelId,
-          _messages: StreamMessages,
-          _options: StreamOptions,
-          onContent: StreamOnContent,
-        ) => {
-          onContent({
-            tool_calls: [
-              {
-                index: 0,
-                id: 'call_valid',
-                function: { name: 'valid_tool', arguments: '{}' },
-              },
-              {
-                index: 1,
-                id: 'call_invalid',
-                function: { name: '', arguments: '{}' }, // 无效：空名称
-              },
-            ],
-          });
-        },
-      );
-
-      const result = await llmCaller.callStream(testModelId, testMessages, {}, vi.fn());
-
-      expect(typeof result).toBe('object');
-      if (typeof result === 'object' && Array.isArray(result.tool_calls)) {
-        expect(result.tool_calls).toHaveLength(1);
-        expect(result.tool_calls[0].id).toBe('call_valid');
-      }
-    });
-  });
-
-  describe('callWithRetries - 带重试的调用', () => {
-    it('应该在首次成功时不重试', async () => {
-      const mockResponse = 'Success';
-      mockChatCompletion.mockResolvedValue(mockResponse);
-
-      const result = await llmCaller.callWithRetries(testModelId, testMessages);
-
-      expect(result).toBe(mockResponse);
-      expect(mockChatCompletion).toHaveBeenCalledTimes(1);
-    });
-
-    it('应该在失败后重试', async () => {
-      const llmCallerWithRetry = new LlmCaller({ maxRetries: 2, aiEngine, modelCatalog });
-
-      mockChatCompletion
-        .mockRejectedValueOnce(new Error('Network error'))
-        .mockResolvedValueOnce('Success after retry');
-
-      const result = await llmCallerWithRetry.callWithRetries(testModelId, testMessages);
-
-      expect(result).toBe('Success after retry');
-      expect(mockChatCompletion).toHaveBeenCalledTimes(2);
-    });
-
-    it('应该在达到最大重试次数后失败', async () => {
-      const llmCallerWithRetry = new LlmCaller({
-        maxRetries: 2,
-        retryDelayMs: 10,
-        aiEngine,
-        modelCatalog,
-      });
-
-      // 使用网络错误，这样会重试
-      const mockError = new Error('Network timeout');
-      mockError.name = 'NetworkError';
-      mockChatCompletion.mockRejectedValue(mockError);
-
-      await expect(llmCallerWithRetry.callWithRetries(testModelId, testMessages)).rejects.toThrow(
-        'Network timeout',
-      );
-
-      expect(mockChatCompletion).toHaveBeenCalledTimes(3); // 原始调用 + 2次重试
-    });
-
-    it('应该检测并拒绝空响应（如果启用）', async () => {
-      const llmCallerWithRetry = new LlmCaller({
-        maxRetries: 1,
-        enableEmptyResponseRetry: true,
-        retryDelayMs: 10,
-        aiEngine,
-        modelCatalog,
-      });
-
-      mockChatCompletion
-        .mockResolvedValueOnce('   ') // 空白响应
-        .mockResolvedValueOnce('Valid response');
-
-      const result = await llmCallerWithRetry.callWithRetries(testModelId, testMessages);
-
-      expect(result).toBe('Valid response');
-      expect(mockChatCompletion).toHaveBeenCalledTimes(2);
-    });
-
-    it('应该支持流式调用的重试', async () => {
-      const llmCallerWithRetry = new LlmCaller({
-        maxRetries: 1,
-        retryDelayMs: 10,
-        aiEngine,
-        modelCatalog,
-      });
-
-      // 第一次调用：抛出网络错误
-      mockChatCompletionStream
-        .mockRejectedValueOnce(new Error('Connection timeout'))
-        .mockImplementationOnce(
-          async (
-            _modelId: StreamModelId,
-            _messages: StreamMessages,
-            _options: StreamOptions,
-            onContent: StreamOnContent,
-          ) => {
-            onContent('Success');
-          },
-        );
-
-      const eventHandler = vi.fn();
-      const result = await llmCallerWithRetry.callWithRetries(
-        testModelId,
-        testMessages,
-        {},
-        eventHandler,
-      );
-
-      expect(result).toBe('Success');
-      // 🔥 关键语义：重试期间不应向上游透传 error 事件，否则 UI 会误判流已结束
-      const errorCalls = eventHandler.mock.calls.filter((call) => call?.[0]?.type === 'error');
-      expect(errorCalls.length).toBe(0);
-    });
-
-    it('流式重试时应实时透传 chunk，并在重试前发出 stream_reset 丢弃失败 attempt', async () => {
-      const llmCallerWithRetry = new LlmCaller({
-        maxRetries: 1,
-        retryDelayMs: 1,
-        aiEngine,
-        modelCatalog,
-      });
-
-      mockChatCompletionStream
-        .mockImplementationOnce(
-          async (
-            _modelId: unknown,
-            _messages: unknown,
-            _options: unknown,
-            onContent: (content: string) => void,
-            onError: (error: Error) => void,
-          ) => {
-            onContent('失败前半段');
-            onError(new Error('Connection timeout'));
-          },
-        )
-        .mockImplementationOnce(
-          async (
-            _modelId: unknown,
-            _messages: unknown,
-            _options: unknown,
-            onContent: (content: string) => void,
-          ) => {
-            onContent('最终成功内容');
-          },
-        );
-
-      const events: AnyAgentEvent[] = [];
-      const result = await llmCallerWithRetry.callWithRetries(
-        testModelId,
-        testMessages,
-        {},
-        (event) => events.push(event),
-      );
-
-      expect(result).toBe('最终成功内容');
-      expect(mockChatCompletionStream).toHaveBeenCalledTimes(2);
-      expect(collectStreamChunkContents(events)).toEqual(['失败前半段', '最终成功内容']);
-      expect(events.filter((event) => event.type === 'error')).toHaveLength(0);
-
-      const resetEvents = collectStreamResetEvents(events);
-      expect(resetEvents).toHaveLength(1);
-      const failedChunk = events.find(
-        (event) => event.type === 'stream_chunk' && event.content === '失败前半段',
-      );
-      expect(failedChunk?.type).toBe('stream_chunk');
-      if (failedChunk?.type === 'stream_chunk') {
-        expect(resetEvents[0]?.answer_id).toBe(failedChunk.answer_id);
-      }
-    });
-
-    it('流式 tool_call.arguments 非法时应按可重试错误自动重试', async () => {
-      const llmCallerWithRetry = new LlmCaller({
-        maxRetries: 1,
-        retryDelayMs: 1,
-        aiEngine,
-        modelCatalog,
-      });
-
-      mockChatCompletionStream
-        .mockImplementationOnce(
-          async (
-            _modelId: unknown,
-            _messages: unknown,
-            _options: unknown,
-            onContent: (content: unknown) => void,
-          ) => {
-            onContent({
-              tool_calls: [
-                {
-                  index: 0,
-                  id: 'call_broken',
-                  function: { name: 'planning_tool' },
-                },
-              ],
-            });
-            onContent({
-              tool_calls: [
-                {
-                  index: 0,
-                  function: {
-                    arguments: '{"goal":"inspect input","steps":[{"name":"read source"',
-                  },
-                },
-              ],
-            });
-          },
-        )
-        .mockImplementationOnce(
-          async (
-            _modelId: unknown,
-            _messages: unknown,
-            _options: unknown,
-            onContent: (content: unknown) => void,
-          ) => {
-            onContent({
-              tool_calls: [
-                {
-                  index: 0,
-                  id: 'call_ok',
-                  function: { name: 'planning_tool' },
-                },
-              ],
-            });
-            onContent({
-              tool_calls: [
-                {
-                  index: 0,
-                  function: {
-                    arguments:
-                      '{"goal":"inspect input","steps":[{"name":"read source","inputs":["primary","secondary"]}]}',
-                  },
-                },
-              ],
-            });
-          },
-        );
-
-      const eventHandler = vi.fn();
-      const result = await llmCallerWithRetry.callWithRetries(
-        testModelId,
-        testMessages,
-        {},
-        eventHandler,
-      );
-
-      expect(typeof result).toBe('object');
-      expect(mockChatCompletionStream).toHaveBeenCalledTimes(2);
-      const errorCalls = eventHandler.mock.calls.filter((call) => call?.[0]?.type === 'error');
-      expect(errorCalls.length).toBe(0);
-    });
-
-    it('应该在云端模型触发额度限制时自动切到 quota fallback，并且不消耗 retry 次数', async () => {
-      const cloudModelId = 'cloud-primary-model';
-      const quotaFallbackModelId = 'cloud-deepseek-reasoner';
-      const onCloudQuotaFallbackApplied = vi.fn();
-
-      mockGetModelById.mockImplementation((id: string) => {
-        if (id === cloudModelId) {
-          return {
-            id: cloudModelId,
-            model_name: 'primary',
-            billing_mode: 'cloud',
-            enable_client_retry: false,
-            api_key: 'cloud-key',
-            capabilities: ['chat'],
-          };
-        }
-        if (id === quotaFallbackModelId) {
-          return {
-            id: quotaFallbackModelId,
-            model_name: 'deepseek-reasoner',
-            billing_mode: 'cloud',
-            enable_client_retry: false,
-            api_key: 'fallback-key',
-            capabilities: ['chat'],
-          };
-        }
-        return undefined;
-      });
-
-      mockChatCompletionStream.mockImplementation(
-        async (
-          modelId: string,
-          _messages: AiMessage[],
-          _options: Record<string, unknown>,
-          onContent?: (content: string) => void,
-          onError?: (error: Error) => void,
-        ) => {
-          if (modelId === cloudModelId) {
-            onContent?.('前半段');
-            onError?.(new Error('今日使用次数已达上限（3次），明天再来吧'));
-            return;
-          }
-
-          if (modelId === quotaFallbackModelId) {
-            onContent?.('已切换到 deepseek 继续执行');
-            return;
-          }
-
-          throw new Error(`unexpected model: ${modelId}`);
-        },
-      );
-
-      const events: AnyAgentEvent[] = [];
-      const result = await llmCaller.callWithRetries(
-        cloudModelId,
-        testMessages,
-        { cloud_quota_fallback_model_id: quotaFallbackModelId },
-        (event) => events.push(event),
-        undefined,
-        { onCloudQuotaFallbackApplied },
-      );
-
-      expect(result).toBe('已切换到 deepseek 继续执行');
-      expect(mockChatCompletionStream).toHaveBeenCalledTimes(2);
-      expect(mockChatCompletionStream.mock.calls[0]?.[0]).toBe(cloudModelId);
-      expect(mockChatCompletionStream.mock.calls[1]?.[0]).toBe(quotaFallbackModelId);
-      expect(onCloudQuotaFallbackApplied).toHaveBeenCalledTimes(1);
-      expect(onCloudQuotaFallbackApplied).toHaveBeenCalledWith(quotaFallbackModelId);
-
-      expect(collectStreamChunkContents(events)).toEqual(['前半段', '已切换到 deepseek 继续执行']);
-      expect(collectStreamResetEvents(events)).toHaveLength(1);
-      expect(events.filter((event) => event.type === 'error')).toHaveLength(0);
-    });
-
-    it('云端模型即使禁用客户端重试，也应对损坏的 tool_call.arguments 做本地兜底重试', async () => {
-      const cloudModelId = 'cloud-stream-model';
-
-      mockGetModelById.mockImplementation((id: string) => {
-        if (id === cloudModelId) {
-          return {
-            id: cloudModelId,
-            model_name: 'cloud-stream',
-            billing_mode: 'cloud',
-            enable_client_retry: false,
-            api_key: 'cloud-key',
-            capabilities: ['chat'],
-          };
-        }
-        return undefined;
-      });
-
-      mockChatCompletionStream
-        .mockImplementationOnce(
-          async (
-            _modelId: unknown,
-            _messages: unknown,
-            _options: unknown,
-            onContent: (content: unknown) => void,
-          ) => {
-            onContent({
-              tool_calls: [
-                {
-                  index: 0,
-                  id: 'call_broken_cloud',
-                  function: { name: 'planning_tool' },
-                },
-              ],
-            });
-            onContent({
-              tool_calls: [
-                {
-                  index: 0,
-                  function: { arguments: '{"title":"损坏参数"' },
-                },
-              ],
-            });
-          },
-        )
-        .mockImplementationOnce(
-          async (
-            _modelId: unknown,
-            _messages: unknown,
-            _options: unknown,
-            onContent: (content: unknown) => void,
-          ) => {
-            onContent({
-              tool_calls: [
-                {
-                  index: 0,
-                  id: 'call_ok_cloud',
-                  function: { name: 'planning_tool' },
-                },
-              ],
-            });
-            onContent({
-              tool_calls: [
-                {
-                  index: 0,
-                  function: { arguments: '{"goal":"recovered","steps":[{"name":"continue"}]}' },
-                },
-              ],
-            });
-          },
-        );
-
-      const result = await llmCaller.callWithRetries(cloudModelId, testMessages, {}, vi.fn());
-
-      expect(typeof result).toBe('object');
-      expect(mockChatCompletionStream).toHaveBeenCalledTimes(2);
-    });
-
-    it('应该仅在最终失败时才向上游发出一次 error（流式重试场景）', async () => {
-      const llmCallerWithRetry = new LlmCaller({
-        maxRetries: 1,
-        retryDelayMs: 1,
-        aiEngine,
-        modelCatalog,
-      });
-
-      const mockError = new Error('Rate limited');
-      mockChatCompletionStream.mockImplementation(
-        async (
-          _modelId: StreamModelId,
-          _messages: StreamMessages,
-          _options: StreamOptions,
-          _onContent: StreamOnContent,
-          onError: StreamOnError,
-        ) => {
-          onError(mockError);
-        },
-      );
-
-      const eventHandler = vi.fn();
-
-      await expect(
-        llmCallerWithRetry.callWithRetries(testModelId, testMessages, {}, eventHandler),
-      ).rejects.toThrow('Rate limited');
-
-      const errorCalls = eventHandler.mock.calls.filter((call) => call?.[0]?.type === 'error');
-      expect(errorCalls.length).toBe(1);
-    });
-
-    it('应该在取消信号触发时立即停止', async () => {
-      const llmCallerWithRetry = new LlmCaller({
-        maxRetries: 3,
-        retryDelayMs: 100,
-        aiEngine,
-        modelCatalog,
-      });
-
-      const abortController = new AbortController();
-      mockChatCompletion.mockRejectedValue(new Error('Network error'));
-
-      // 在短时间后取消
-      setTimeout(() => abortController.abort(), 50);
-
-      await expect(
-        llmCallerWithRetry.callWithRetries(
-          testModelId,
-          testMessages,
-          {},
-          undefined,
-          abortController.signal,
-        ),
-      ).rejects.toThrow(/cancelled|abort/i);
-    });
-
-    it('应该正确分类不可重试的错误', async () => {
-      const llmCallerWithRetry = new LlmCaller({ maxRetries: 2, aiEngine, modelCatalog });
-
-      // 模拟一个不可重试的错误（如权限错误）
-      const authError = new Error('Invalid API key');
-      authError.name = 'AuthenticationError';
-      mockChatCompletion.mockRejectedValue(authError);
-
-      await expect(llmCallerWithRetry.callWithRetries(testModelId, testMessages)).rejects.toThrow(
-        'Invalid API key',
-      );
-
-      // 不应该重试
-      expect(mockChatCompletion).toHaveBeenCalledTimes(1);
-    });
-
-    it('应该处理速率限制错误并使用更长延迟', async () => {
-      const llmCallerWithRetry = new LlmCaller({
-        maxRetries: 1,
-        retryDelayMs: 10,
-        aiEngine,
-        modelCatalog,
-      });
-
-      const rateLimitError = new Error('Rate limit exceeded');
-      rateLimitError.name = 'RateLimitError';
-
-      mockChatCompletion.mockRejectedValueOnce(rateLimitError).mockResolvedValueOnce('Success');
-
-      const startTime = Date.now();
-      const result = await llmCallerWithRetry.callWithRetries(testModelId, testMessages);
-      const endTime = Date.now();
-
-      expect(result).toBe('Success');
-      // 验证确实有延迟（至少10ms）
-      expect(endTime - startTime).toBeGreaterThanOrEqual(10);
-    });
-  });
-
-  describe('边界条件和错误处理', () => {
-    it('应该处理 undefined 响应', async () => {
-      mockChatCompletion.mockResolvedValue(undefined);
-
-      const result = await llmCaller.call(testModelId, testMessages);
-
-      expect(result).toBe('undefined');
-    });
-
-    it('应该处理 null 响应', async () => {
-      mockChatCompletion.mockResolvedValue(null);
-
-      const result = await llmCaller.call(testModelId, testMessages);
-
-      expect(result).toBe('null');
-    });
-
-    it('应该处理数字响应', async () => {
-      mockChatCompletion.mockResolvedValue(42);
-
-      const result = await llmCaller.call(testModelId, testMessages);
-
-      expect(result).toBe('42');
-    });
-
-    it('应该处理复杂对象响应', async () => {
-      const complexResponse = {
-        data: { nested: 'value' },
-        meta: { count: 1 },
-      };
-      mockChatCompletion.mockResolvedValue(complexResponse);
-
-      const result = await llmCaller.call(testModelId, testMessages);
-
-      expect(result).toBe(JSON.stringify(complexResponse));
-    });
-
-    it('应该在流式调用中忽略空的 thought', async () => {
-      mockChatCompletionStream.mockImplementation(
-        async (
-          _modelId: StreamModelId,
-          _messages: StreamMessages,
-          _options: StreamOptions,
-          onContent: StreamOnContent,
-          _onError: StreamOnError,
-          _onFinish: StreamOnFinish,
-          onThought: StreamOnThought,
-        ) => {
-          onThought(''); // 空 thought
-          onThought('   '); // 空白 thought
-          onContent('Actual content');
-        },
-      );
-
-      const events: AnyAgentEvent[] = [];
-      await llmCaller.callStream(testModelId, testMessages, {}, (event) => events.push(event));
-
-      const thoughtEvents = events.filter((e) => e.type === 'thought');
-      // 空的 thought 应该被忽略（根据实现中的 if (!thought) return;）
-      expect(thoughtEvents.length).toBe(0);
-    });
-  });
-
-  describe('性能和并发', () => {
-    it('应该能够处理多个并发调用', async () => {
-      mockChatCompletion.mockImplementation(async () => {
-        // 模拟网络延迟
-        await new Promise((resolve) => setTimeout(resolve, 10));
-        return 'Response';
-      });
-
-      const promises = Array.from({ length: 10 }, () => llmCaller.call(testModelId, testMessages));
-
-      const results = await Promise.all(promises);
-
-      expect(results).toHaveLength(10);
-      expect(results.every((r) => r === 'Response')).toBe(true);
-      expect(mockChatCompletion).toHaveBeenCalledTimes(10);
-    });
-
-    it('应该能够处理大量消息历史', async () => {
-      const largeMessages: AiMessage[] = Array.from({ length: 100 }, (_, i) => {
-        const isUser = i % 2 === 0;
-        return {
-          role: isUser ? 'user' : 'assistant',
-          type: isUser ? 'user_input' : 'final_answer',
-          content: `Message ${i}`,
-          id: `msg_${i}`,
-          timestamp: Date.now() + i,
-        } as AiMessage;
-      });
-
-      mockChatCompletion.mockResolvedValue('Response');
-
-      const result = await llmCaller.call(testModelId, largeMessages);
-
-      expect(result).toBe('Response');
-      expect(mockChatCompletion).toHaveBeenCalledWith(
-        testModelId,
-        largeMessages,
-        expect.any(Object),
-      );
-    });
+  it('assistant tool arguments 不是 JSON object 时在 Provider 调用前失败', async () => {
+    const harness = createScriptedPort([request => successful(request)]);
+    const caller = new LlmCaller({ inferencePort: harness.port, modelCatalog: modelCatalog() });
+
+    await expect(caller.call('test-model', [{
+      role: 'assistant',
+      content: null,
+      tool_calls: [{
+        id: 'call-invalid',
+        type: 'function',
+        function: { name: 'bad', arguments: '[]' },
+      }],
+    }])).rejects.toThrow(/必须是 JSON object/);
+    expect(harness.requests).toHaveLength(0);
   });
 });

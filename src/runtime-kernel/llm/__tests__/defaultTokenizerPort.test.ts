@@ -19,27 +19,22 @@ describe('DefaultTokenizerPort', () => {
     const config = {
       avgCharsPerToken: 2,
       toolCallOverhead: 17,
-      preferModelIdWhenEncodingMissing: false,
     };
 
     const tokenizer = createDefaultTokenizerPort(config);
 
-    expect(tokenizer.estimateMessage(message, 'gpt-4o-mini')).toBe(
+    expect(tokenizer.estimateMessage(message, 'model-a')).toBe(
       TokenCalculator.estimateMessageTokens(message, config),
     );
   });
 
-  it('uses modelId for default encoding selection when no encoding is configured', () => {
+  it('does not infer encoding from modelId when no encoding is configured', () => {
     const tokenizer = createDefaultTokenizerPort({
       avgCharsPerToken: 2,
     });
 
-    expect(tokenizer.estimateText('hello world', 'gpt-4o-mini')).toBe(
-      TokenCalculator.estimateTokens('hello world', {
-        encoding: 'gpt-4o-mini',
-        avgCharsPerToken: 2,
-      }),
-    );
+    expect(tokenizer.estimateText('hello world', 'model-a')).toBe(6);
+    expect(tokenizer.estimateText('hello world', 'model-b')).toBe(6);
   });
 
   it('keeps explicit encoding ahead of modelId', () => {
@@ -48,7 +43,7 @@ describe('DefaultTokenizerPort', () => {
       avgCharsPerToken: 2,
     });
 
-    expect(tokenizer.estimateText('hello world', 'gpt-4o-mini')).toBe(
+    expect(tokenizer.estimateText('hello world', 'model-a')).toBe(
       TokenCalculator.estimateTokens('hello world', {
         encoding: 'cl100k_base',
         avgCharsPerToken: 2,

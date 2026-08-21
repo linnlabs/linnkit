@@ -14,14 +14,25 @@ const durableAttachment = {
 };
 
 describe('projectDurableLlmAuditValue', () => {
-  it('保留可回放文本、工具协议、reasoning sidecar 和 durable 图片引用', () => {
+  it('保留可回放文本、工具协议、provider continuation 和 durable 图片引用', () => {
     const messages = [
       { role: 'user', content: '', attachments: [durableAttachment] },
       {
         role: 'assistant',
         content: null,
         tool_calls: [{ id: 'call-1', type: 'function', function: { name: 'inspect', arguments: '{"asset":"asset-1"}' } }],
-        reasoning_details: [{ type: 'reasoning.encrypted', data: 'opaque-sidecar' }],
+        provider_continuations: [{
+          schema_version: 2,
+          producer: {
+            model_id: 'claude-sonnet',
+            endpoint_id: 'anthropic',
+            api_surface: 'anthropic_messages',
+            capability_id: 'test:messages-codec',
+            endpoint_model_id: 'claude-sonnet-4',
+          },
+          kind: 'reasoning.encrypted',
+          payload: { type: 'reasoning.encrypted', data: 'opaque-sidecar' },
+        }],
       },
       { role: 'tool', tool_call_id: 'call-1', content: 'done' },
     ];

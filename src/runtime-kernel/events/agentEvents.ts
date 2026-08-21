@@ -9,7 +9,9 @@
 import { z } from 'zod';
 import {
   AnswerSegmentIdSchema,
+  AssistantReplayParts,
   FinalAnswerCompletionReason,
+  ProviderContinuations,
   RuntimeEventIdSchema,
   RuntimeResourceRefs,
   Status,
@@ -59,6 +61,15 @@ export type ThoughtEvent = z.infer<typeof ThoughtEventSchema>;
 
 export const ToolCallDecisionEventSchema = BaseToolLifecycleAgentEvent.extend({
   type: z.literal('tool_call_decision'),
+  payload: z
+    .object({
+      args: UnknownRecord.optional(),
+      tool_calls: z.array(z.unknown()).optional(),
+      provider_continuations: ProviderContinuations.optional(),
+      assistant_replay_parts: AssistantReplayParts.optional(),
+    })
+    .strict()
+    .optional(),
 }).strict();
 export type ToolCallDecisionEvent = z.infer<typeof ToolCallDecisionEventSchema>;
 
@@ -87,7 +98,8 @@ export const FinalAnswerEventSchema = BaseAgentEvent.extend({
   /** 由答案事实创建者生成；下游映射和发布层只读。 */
   answer_id: AnswerSegmentIdSchema,
   completion_reason: FinalAnswerCompletionReason,
-  reasoning_details: z.array(z.unknown()).optional(),
+  provider_continuations: ProviderContinuations.optional(),
+  assistant_replay_parts: AssistantReplayParts.optional(),
   meta: UnknownRecord.optional(),
 }).strict();
 export type FinalAnswerEvent = z.infer<typeof FinalAnswerEventSchema>;
@@ -119,11 +131,11 @@ export const StreamResetEventSchema = BaseAgentEvent.extend({
 }).strict();
 export type StreamResetEvent = z.infer<typeof StreamResetEventSchema>;
 
-export const ProviderSidecarEventSchema = BaseAgentEvent.extend({
-  type: z.literal('provider_sidecar'),
-  reasoning_details: z.array(z.unknown()).optional(),
+export const ProviderContinuationEventSchema = BaseAgentEvent.extend({
+  type: z.literal('provider_continuation'),
+  continuations: ProviderContinuations.min(1),
 }).strict();
-export type ProviderSidecarEvent = z.infer<typeof ProviderSidecarEventSchema>;
+export type ProviderContinuationEvent = z.infer<typeof ProviderContinuationEventSchema>;
 
 export const AgentEventSchema = z.discriminatedUnion('type', [
   ThoughtEventSchema,
@@ -134,7 +146,7 @@ export const AgentEventSchema = z.discriminatedUnion('type', [
   ErrorEventSchema,
   StreamChunkEventSchema,
   StreamResetEventSchema,
-  ProviderSidecarEventSchema,
+  ProviderContinuationEventSchema,
 ]).superRefine((event, ctx) => {
   if (event.type !== 'observation') return;
   if (event.success && event.data === undefined) {

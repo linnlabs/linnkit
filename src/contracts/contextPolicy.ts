@@ -21,7 +21,7 @@ export type AgentSpecMessageType = z.infer<typeof AgentSpecMessageType>;
 
 export const AgentSpecBudgetPolicy = z.object({
   maxTokens: z.number().int().positive().optional(),
-  reservedForResponse: z.number().int().nonnegative().optional(),
+  reservedForResponse: z.number().int().positive().optional(),
   workingMemoryBudgetPercentage: z.number().min(0).max(1).optional(),
 });
 export type AgentSpecBudgetPolicy = z.infer<typeof AgentSpecBudgetPolicy>;
@@ -47,13 +47,6 @@ export const AgentSpecToolOutputPolicy = z.object({
   observationGovernance: AgentSpecToolObservationGovernancePolicy.optional(),
 });
 export type AgentSpecToolOutputPolicy = z.infer<typeof AgentSpecToolOutputPolicy>;
-
-export const AgentSpecProviderReplayPolicy = z.object({
-  provider: z.string().min(1).optional(),
-  requiresReasoningDetailsForToolReplay: z.boolean().optional(),
-  missingSidecarBehavior: z.enum(['allow', 'degrade_to_text', 'provider_empty_replay_field']).optional(),
-});
-export type AgentSpecProviderReplayPolicy = z.infer<typeof AgentSpecProviderReplayPolicy>;
 
 export const AgentSpecSummarizationPolicy = z.object({
   triggerThreshold: z.number().min(0).max(1).optional(),
@@ -179,7 +172,6 @@ export const AgentSpecContextPolicy = z.object({
   budget: AgentSpecBudgetPolicy.optional(),
   toolHistory: AgentSpecToolHistoryPolicy.optional(),
   toolOutput: AgentSpecToolOutputPolicy.optional(),
-  providerReplay: AgentSpecProviderReplayPolicy.optional(),
   summarization: AgentSpecSummarizationPolicy.optional(),
   mustKeep: AgentSpecMustKeepPolicy.optional(),
   workingMemory: AgentSpecWorkingMemoryPolicy.optional(),
@@ -188,7 +180,7 @@ export const AgentSpecContextPolicy = z.object({
   tokenEstimation: AgentSpecTokenEstimationPolicy.optional(),
   systemReminder: AgentSpecSystemReminderPolicy.optional(),
   contextTrace: AgentSpecContextTracePolicy.optional(),
-});
+}).strict();
 export type AgentSpecContextPolicy = z.infer<typeof AgentSpecContextPolicy>;
 
 export type AgentSpecContextPolicyInput = Omit<z.input<typeof AgentSpecContextPolicy>, 'profileId'> & {
@@ -198,8 +190,6 @@ export type AgentSpecContextPolicyInput = Omit<z.input<typeof AgentSpecContextPo
 const DEFAULT_CONTEXT_POLICY: Required<AgentSpecContextPolicy> = {
   profileId: 'agent',
   budget: {
-    maxTokens: 232000,
-    reservedForResponse: 2400,
     workingMemoryBudgetPercentage: 0.7,
   },
   toolHistory: {
@@ -217,7 +207,6 @@ const DEFAULT_CONTEXT_POLICY: Required<AgentSpecContextPolicy> = {
       maxLines: 1_200,
     },
   },
-  providerReplay: {},
   summarization: {
     triggerThreshold: 0.7,
     budgetPercentage: 0.12,
@@ -271,7 +260,9 @@ const DEFAULT_CONTEXT_POLICY: Required<AgentSpecContextPolicy> = {
  *
  * 中文备注：
  * - schema 保持 optional，避免现有 host 的 `{ profileId: 'agent' }` 类型大面积变红；
- * - 需要完整默认值时走这个 helper，后续 F1.2/F1.3 的 adapter 与 fallback 会复用它。
+ * - 框架拥有的行为策略在这里补齐；
+ * - `budget.maxTokens` 与 `budget.reservedForResponse` 是 Agent 显式容量上限，
+ *   未声明时必须保持缺失，让 orchestration 使用模型 route 能力。
  */
 export function defineContextPolicy(input: AgentSpecContextPolicyInput = {}): AgentSpecContextPolicy {
   const merged: Required<AgentSpecContextPolicy> = {
@@ -286,7 +277,6 @@ export function defineContextPolicy(input: AgentSpecContextPolicyInput = {}): Ag
         ...input.toolOutput?.observationGovernance,
       },
     },
-    providerReplay: { ...DEFAULT_CONTEXT_POLICY.providerReplay, ...input.providerReplay },
     summarization: { ...DEFAULT_CONTEXT_POLICY.summarization, ...input.summarization },
     mustKeep: { ...DEFAULT_CONTEXT_POLICY.mustKeep, ...input.mustKeep },
     workingMemory: mergeWorkingMemoryPolicy(input.workingMemory),

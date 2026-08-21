@@ -15,6 +15,11 @@
 
 同一逻辑 run 可以经历多个 execution 与 HTTP/SSE transport。`run_execution_metrics` 记录本次 execution 的 durable 结算事实，`run_status` 投影 RunRegistry 权威状态，`transport_end` 只关闭当前连接。`awaiting_user` 等非终态 run 必须保留，resume 沿用 `run_id` 并分配新 `execution_id`。
 
+Host 的 cancel command 必须按精确 `run_id` 读取持久身份，并等待该 execution 的事实 drain 与
+Host finalize。cancel 与自然 `completed/failed` 同时发生属于合法终态竞争；Host 应返回竞争后的
+真实 terminal status，不能因为 run 已从 active 列表消失就返回冲突。不存在的 run、错误的
+conversation 归属或 child/root 身份错误仍必须拒绝，不能把幂等扩大成无条件成功。
+
 并发 Agent 还必须显式声明投影边界：foreground 正文用 `lane=foreground / visibility=conversation`；标题、摘要等不应进入正文的辅助 run 用 `lane=auxiliary / visibility=none`。lane 决定控制权，visibility 决定消息是否可见，二者都不能靠 promptKey 或事件内容猜测。
 
 ## 1. 事件转换链路
@@ -134,6 +139,9 @@ child thought 的完成性也属于 child fact：provider 正常完成、失败�
 
 - `SubRunTraceKind` 是 trace `kind` 的唯一 schema；RuntimeEvent、SSE、Host 查询和任何 UI/插件公开类型都必须派生，不能重列字符串联合；
 - 每条 trace 都必须在顶层携带 `source_event_id`，指向唯一 child RuntimeEvent；
+- `tool_call_decision` 必须携带本次 child fact 的 canonical `tool_calls[]` 完整批次，不得拆成多条 trace，也不得使用标量 `tool_name/tool_call_id/args` 代替；
+- `tool_process` 必须携带 owner admission 后的 `tool_name + tool_call_id + args + phase + status`；decision 不表示已开始，不定义 queued/pending 展示状态；
+- `tool_output` 必须携带单个工具身份、terminal success/error 状态与结构化 output；Host 紧凑历史保存 decision 是为了在 ephemeral process 不存在时可确定恢复 args；
 - `final_answer_chunk` 必须在顶层携带 `answer_id / seq / delta`，可选 `is_last`；
 - `final_answer` 必须在顶层携带 `answer_id / content / completion_reason`；
 - `answer_id / seq / is_last / source_event_id` 禁止放进开放 `meta`；
@@ -212,7 +220,7 @@ child thought 的完成性也属于 child fact：provider 正常完成、失败�
 
 `final_answer` 仍进入 realtime channel，但它不是第二条正文输入，只用于验证 chunk 聚合结果与规范身份、记录封口原因并结束该 answer segment。它不得替换 live message id。只有 `completion_reason=terminal` 可以被 settlement、复制与操作栏视为最终交付；`tool_call` 和 `interrupted` 仍可展示，但不得冒充终答。缺少 chunk 的非空完整答案是协议错误，不能静默渲染。
 
-`tool_call_decision` 表示模型提交了调用清单，不等于所有调用正在执行。普通 ToolNode 串行消费清单，实际开始由 ephemeral `tool_process(start)` 表达。无论成功、失败还是 run 取消，decision 中每个 `tool_call_id` 都必须有 durable `tool_output` 配对；未启动就取消的调用使用 error output 明确结算，不能让 Host 或 Renderer把永久 loading 当成可恢复状态。
+`tool_call_decision` 表示模型提交了调用清单，不等于所有调用正在执行。普通 ToolNode 串行消费清单，实际开始由 ephemeral `tool_process(start)` 表达。客户端不应为 decision 创建 queued/pending 可见行；未来 ToolNode 并行化时只是多个 process 同时开始，协议不变。无论成功、失败还是 run 取消，decision 中每个 `tool_call_id` 都必须有 durable `tool_output` 配对；未启动就取消的调用使用 error output 明确结算，不能让 Host 或 Renderer 把永久 loading 当成可恢复状态。
 
 实际决策一律以 `shouldXxxRuntimeEvent()` 函数返回值为准；这张表只是速查。
 

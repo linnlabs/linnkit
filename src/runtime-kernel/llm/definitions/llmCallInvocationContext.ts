@@ -1,6 +1,8 @@
-import type { ImageInputAdmissionEvidence } from '../../../ports';
+import type { ContextUsageSnapshot } from '../../../contracts';
+import type { ImageInputAdmissionEvidence, LlmRequestMessage } from '../../../ports';
 import type { ModelInputRequirement } from '../input-capabilities';
 import type { ToolCallStreamingPolicy } from '../../tools/toolContracts';
+import type { FallbackPromptCapacityAdmission } from '../functions/evaluateFallbackPromptCapacity';
 
 /**
  * 单次 LLM 调用的短生命周期上下文。
@@ -17,4 +19,13 @@ export interface LlmCallInvocationContext {
    * 该调用上下文不会进入 provider options，请求适配器不得接触此字段。
    */
   readonly toolCallStreamingPolicies?: Readonly<Record<string, ToolCallStreamingPolicy>>;
+  /** 每个真实 provider attempt 发送前，按 active route 测量最终 Prompt。 */
+  readonly measurePromptUsage?: (
+    activeModelId: string,
+    messages: readonly LlmRequestMessage[],
+  ) => Promise<ContextUsageSnapshot>;
+  /** fallback candidate 在真实 attempt 前的本地容量 admission。 */
+  readonly evaluateFallbackPromptCapacity?: (
+    candidateModelId: string,
+  ) => FallbackPromptCapacityAdmission;
 }

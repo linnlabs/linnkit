@@ -76,11 +76,13 @@ export interface ProviderResult {
 
 export const TOOL_HISTORY_OVERFLOW_ERROR_CODE = 'TOOL_HISTORY_OVERFLOW' as const;
 export const SUMMARIZATION_FAILED_ERROR_CODE = 'SUMMARIZATION_FAILED' as const;
+export const TOOL_REPLAY_PROTOCOL_ERROR_CODE = 'TOOL_REPLAY_PROTOCOL_INVALID' as const;
 
 export type ContextProviderErrorCode =
   | 'context_provider_failed'
   | typeof SUMMARIZATION_FAILED_ERROR_CODE
-  | typeof TOOL_HISTORY_OVERFLOW_ERROR_CODE;
+  | typeof TOOL_HISTORY_OVERFLOW_ERROR_CODE
+  | typeof TOOL_REPLAY_PROTOCOL_ERROR_CODE;
 
 export interface ContextProviderErrorOptions {
   code: ContextProviderErrorCode;

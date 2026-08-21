@@ -1,4 +1,4 @@
-import type { AgentAiEngine, LlmInputMaterializerPort } from '../../ports';
+import type { CanonicalInferencePort, LlmInputMaterializerPort } from '../../ports';
 import type { LlmRetryConfig } from './caller.types';
 import type { LLMPolicyErrorDecision, LLMPolicyMatchContext } from './policies/types';
 import type { ModelCatalogLike } from './modelCatalog';
@@ -17,7 +17,7 @@ export interface LlmCallerOptions {
   policyEngine?: {
     decideOnError(error: Error, ctx: LLMPolicyMatchContext): LLMPolicyErrorDecision;
   };
-  aiEngine: AgentAiEngine;
+  inferencePort: CanonicalInferencePort;
   llmInputMaterializer?: LlmInputMaterializerPort;
 }
 
@@ -25,7 +25,7 @@ export interface NormalizedLlmCallerDeps {
   retryConfig: LlmRetryConfig;
   modelResolver: ModelResolverLike;
   policyEngine: NonNullable<LlmCallerOptions['policyEngine']>;
-  aiEngine: AgentAiEngine;
+  inferencePort: CanonicalInferencePort;
   llmInputMaterializer?: LlmInputMaterializerPort;
 }
 
@@ -51,7 +51,7 @@ export function buildLlmCallerDeps(
         modelCatalog,
       }),
     policyEngine: options.policyEngine ?? defaultPolicyEngine,
-    aiEngine: options.aiEngine,
+    inferencePort: options.inferencePort,
     llmInputMaterializer: options.llmInputMaterializer,
   };
 }

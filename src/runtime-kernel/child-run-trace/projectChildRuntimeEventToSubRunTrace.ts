@@ -1,4 +1,9 @@
-import type { RoutedRuntimeEvent } from '../../contracts';
+import {
+  SerializableJsonRecord,
+  ToolCallWire,
+  type RoutedRuntimeEvent,
+  type SubRunTraceToolCallDecision,
+} from '../../contracts';
 import type { SubRunTraceEnvelope } from './subrunTrace.types';
 
 /**
@@ -22,7 +27,15 @@ export function projectChildRuntimeEventToSubRunTrace(
             delta: event.delta ?? event.content,
           };
     case 'tool_call_decision':
+      return {
+        kind: 'tool_call_decision',
+        source_event_id: event.id,
+        tool_calls: readDecisionBatch(event),
+      };
     case 'tool_process':
+      if (event.args === undefined) {
+        throw new Error(`[SubrunTrace] tool_process ${event.id} 缺少 owner-admitted args`);
+      }
       return {
         kind: event.type,
         source_event_id: event.id,
@@ -30,7 +43,7 @@ export function projectChildRuntimeEventToSubRunTrace(
         tool_call_id: event.tool_call_id,
         phase: event.phase,
         status: event.status,
-        ...(event.args === undefined ? {} : { args: event.args }),
+        args: event.args,
       };
     case 'tool_output':
       return {
@@ -50,8 +63,8 @@ export function projectChildRuntimeEventToSubRunTrace(
                 : {}),
             }
           : {
-              error: event.error,
               observation: event.observation,
+              ...(event.error === undefined ? {} : { error: event.error }),
             },
         ...(event.duration_ms === undefined ? {} : { duration_ms: event.duration_ms }),
       };
@@ -75,4 +88,29 @@ export function projectChildRuntimeEventToSubRunTrace(
     default:
       return null;
   }
+}
+
+function readDecisionBatch(
+  event: Extract<RoutedRuntimeEvent, { type: 'tool_call_decision' }>,
+): SubRunTraceToolCallDecision[] {
+  const rawCalls = event.payload?.tool_calls;
+  if (!Array.isArray(rawCalls) || rawCalls.length === 0) {
+    throw new Error(`[SubrunTrace] tool_call_decision ${event.id} 缺少 canonical tool_calls`);
+  }
+  return rawCalls.map((rawCall, index) => {
+    const call = ToolCallWire.parse(rawCall, { path: ['payload', 'tool_calls', index] });
+    let decodedArgs: unknown;
+    try {
+      decodedArgs = JSON.parse(call.function.arguments);
+    } catch {
+      throw new Error(`[SubrunTrace] tool_call_decision ${call.id} arguments 不是合法 JSON`);
+    }
+    return {
+      tool_call_id: call.id,
+      tool_name: call.function.name,
+      args: SerializableJsonRecord.parse(decodedArgs, {
+        path: ['payload', 'tool_calls', index, 'function', 'arguments'],
+      }),
+    };
+  });
 }

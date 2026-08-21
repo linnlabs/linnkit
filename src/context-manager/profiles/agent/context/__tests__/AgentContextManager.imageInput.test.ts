@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   defineContextPolicy,
   type AiMessage,
+  ToolCallIdSchema,
   type TokenRoute,
 } from '../../../../../contracts';
 import type {
@@ -12,6 +13,7 @@ import type {
 import { AgentContextManager } from '../AgentContextManager';
 import {
   AgentCoreContextProvider,
+  AgentWorkingMemoryProvider,
   ContextProviderRegistry,
 } from '../providers';
 
@@ -27,7 +29,7 @@ const imageRef = {
 };
 
 const route: TokenRoute = {
-  providerId: 'test',
+  capabilityId: 'test',
   modelId: 'vision-model',
   capabilities: { supportsRemoteTokenCount: true },
 };
@@ -60,6 +62,70 @@ function createManager(tokenCounter: TokenCounterPort): AgentContextManager {
 }
 
 describe('AgentContextManager image input budget', () => {
+  it('同一 run 的 14 个含图工具组服从当前 run 通用规则，不受旧的 10 张图片门禁影响', async () => {
+    const registry = new ContextProviderRegistry();
+    registry.register(new AgentCoreContextProvider());
+    registry.register(new AgentWorkingMemoryProvider());
+    const manager = new AgentContextManager({
+      providerRegistry: registry,
+      tokenizer,
+      tokenizerModelId: route.modelId,
+      tokenRoute: route,
+      tokenCounter: { countMessages: vi.fn() },
+      imageInputEstimator: estimator,
+    });
+    const messages: AiMessage[] = [{
+      id: 'current-user',
+      role: 'user',
+      type: 'user_input',
+      content: '检查全部幻灯片',
+      timestamp: 1,
+    }];
+    for (let index = 0; index < 14; index += 1) {
+      const toolCallId = ToolCallIdSchema.parse(`call-slide-${index}`);
+      messages.push({
+        id: `tool-call-${index}`,
+        role: 'assistant',
+        type: 'tool_calls',
+        content: '',
+        timestamp: index + 2,
+        metadata: {
+          tool_calls: [{
+            id: toolCallId,
+            type: 'function',
+            function: { name: 'read_file', arguments: `{"path":"slide-${index}.png"}` },
+          }],
+        },
+      }, {
+        id: `tool-output-${index}`,
+        role: 'tool',
+        type: 'tool_output',
+        content: `已读取 slide-${index}.png`,
+        timestamp: index + 2,
+        metadata: {
+          tool_call_id: toolCallId,
+          tool_name: 'read_file',
+          data: { path: `slide-${index}.png` },
+        },
+        attachments: [{
+          ...imageRef,
+          id: `attachment-${index}`,
+          resourceId: `asset-${index}`,
+        }],
+      });
+    }
+
+    const result = await manager.buildContextFromPreprocessedMessages(
+      { promptKey: 'default', query: '检查全部幻灯片' },
+      messages,
+      20_000,
+    );
+
+    expect(result.messages).toHaveLength(messages.length);
+    expect(result.imageInputAdmissionEvidence?.attachments).toHaveLength(14);
+    expect(result.messages.filter(message => message.type === 'tool_output')).toHaveLength(14);
+  });
+
   it('图片-only 消息按整条消息参与预算，并从同一估算拆出 component 与 admission evidence', async () => {
     const countMessages = vi.fn<TokenCounterPort['countMessages']>();
     const manager = createManager({ countMessages });
@@ -169,10 +235,10 @@ describe('AgentContextManager image input budget', () => {
     });
   });
 
-  it('图片屏障保留后仍超出预算时抛出原始结构化错误，不再被通用 Error 包装', async () => {
+  it('图片不触发 Context Manager 专属超预算错误，最终 route 继续消费 admission evidence 做统一 preflight', async () => {
     const manager = createManager({ countMessages: vi.fn() });
 
-    await expect(manager.buildContextFromPreprocessedMessages(
+    const result = await manager.buildContextFromPreprocessedMessages(
       { promptKey: 'default', query: '' },
       [{
         id: 'user-image',
@@ -183,20 +249,14 @@ describe('AgentContextManager image input budget', () => {
         attachments: [imageRef],
       }],
       100,
-    )).rejects.toMatchObject({
-      name: 'LlmImageInputError',
-      errorCode: 'llm.image_input.context_budget_exceeded',
-      recoverable: false,
-      metadata: {
-        active_model_id: 'vision-model',
-        placement: 'user_image',
-        attachment_id: imageRef.id,
-        resource_id: imageRef.resourceId,
-        profile_id: 'vision-profile',
-        limit_kind: 'context_tokens',
-        actual_value: 105,
-        limit_value: 100,
-      },
+    );
+
+    expect(result.messages.map(message => message.id)).toEqual(['user-image']);
+    expect(result.tokenUsage.used).toBe(105);
+    expect(result.imageInputAdmissionEvidence).toMatchObject({
+      inputBudget: 100,
+      initialProfileId: 'vision-profile',
+      attachments: [{ id: imageRef.id, resourceId: imageRef.resourceId }],
     });
   });
 });

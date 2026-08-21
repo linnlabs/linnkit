@@ -84,7 +84,7 @@ describe('eventMappers.applyRuntimeEventToMemory', () => {
     );
   });
 
-  it('重建 final_answer 时保留封口原因，避免内存消息丢失 segment 语义', () => {
+  it('重建 terminal final_answer 时保留封口原因，避免内存消息丢失 segment 语义', () => {
     const memory = new TestMemory();
     const event: RuntimeEvent = {
       type: 'final_answer',
@@ -96,14 +96,65 @@ describe('eventMappers.applyRuntimeEventToMemory', () => {
       answer_id: 'answer-preamble',
       content: '我先读取资料。',
       is_complete: true,
-      completion_reason: 'tool_call',
+      completion_reason: 'terminal',
     };
 
     applyRuntimeEventToMemory(event, memory);
 
     expect(memory.messages[0]).toMatchObject({
       type: 'final_answer',
-      metadata: { completion_reason: 'tool_call' },
+      metadata: { completion_reason: 'terminal' },
+    });
+  });
+
+  it('tool_call 封口正文与决策合并为一个有序 assistant turn', () => {
+    const memory = new TestMemory();
+    const assistantReplayParts = [
+      { type: 'text' as const, text: '我先读取资料。' },
+      { type: 'tool_call' as const, tool_call_id: 'call_1' },
+    ];
+    const events: RuntimeEvent[] = [
+      {
+        type: 'final_answer',
+        id: 'answer-preamble',
+        conversation_id: 'conv-1',
+        turn_id: 'turn-1',
+        timestamp: 1,
+        version: 1,
+        answer_id: 'answer-preamble',
+        content: '我先读取资料。',
+        is_complete: true,
+        completion_reason: 'tool_call',
+        assistant_replay_parts: assistantReplayParts,
+      },
+      {
+        type: 'tool_call_decision',
+        id: 'tool-decision-1',
+        conversation_id: 'conv-1',
+        turn_id: 'turn-1',
+        timestamp: 2,
+        version: 1,
+        tool_name: 'workspace_read',
+        tool_call_id: ToolCallIdSchema.parse('call_1'),
+        phase: 'start',
+        status: 'loading',
+        payload: {
+          assistant_replay_parts: assistantReplayParts,
+          tool_calls: [
+            { id: 'call_1', type: 'function', function: { name: 'workspace_read', arguments: '{}' } },
+          ],
+        },
+      },
+    ];
+
+    for (const event of events) applyRuntimeEventToMemory(event, memory);
+
+    expect(memory.messages).toHaveLength(1);
+    expect(memory.messages[0]).toMatchObject({
+      role: 'assistant',
+      type: 'tool_calls',
+      content: '我先读取资料。',
+      metadata: { assistant_replay_parts: assistantReplayParts },
     });
   });
 
@@ -166,11 +217,20 @@ describe('eventMappers.applyRuntimeEventToMemory', () => {
     ]);
   });
 
-  it('重建 tool_call_decision 时应保留 payload.reasoning_details sidecar', () => {
+  it('重建 tool_call_decision 时应保留 payload.provider_continuations', () => {
     const memory = new TestMemory();
-    const reasoningDetails = [
-      { provider: 'deepseek', type: 'reasoning_content', reasoning_content: 'Need the tool.' },
-    ];
+    const providerContinuations = [{
+      schema_version: 2 as const,
+      producer: {
+        model_id: 'deepseek-reasoner',
+        endpoint_id: 'deepseek',
+        api_surface: 'openai_chat_completions',
+        capability_id: 'test:chat-codec',
+        endpoint_model_id: 'deepseek-reasoner',
+      },
+      kind: 'reasoning_content',
+      payload: { provider: 'deepseek', type: 'reasoning_content', reasoning_content: 'Need the tool.' },
+    }];
     const event: RuntimeEvent = {
       type: 'tool_call_decision',
       id: 'tool_decision_1',
@@ -183,7 +243,7 @@ describe('eventMappers.applyRuntimeEventToMemory', () => {
       phase: 'start',
       status: 'loading',
       payload: {
-        reasoning_details: reasoningDetails,
+        provider_continuations: providerContinuations,
         tool_calls: [
           { id: 'call_1', type: 'function', function: { name: 'workspace_read', arguments: '{}' } },
         ],
@@ -193,7 +253,7 @@ describe('eventMappers.applyRuntimeEventToMemory', () => {
     applyRuntimeEventToMemory(event, memory);
 
     expect(memory.messages).toHaveLength(1);
-    expect(memory.messages[0].metadata?.reasoning_details).toEqual(reasoningDetails);
+    expect(memory.messages[0].metadata?.provider_continuations).toEqual(providerContinuations);
   });
 });
 

@@ -7,7 +7,7 @@
  * - 安全地把 JSON 字符串解析为 Record（不使用 any）
  *
  * 背景：
- * 部分 OpenAI-compat 供应商在流式工具调用中，可能会把多个 JSON 对象片段连续输出；
+ * 部分模型在流式工具调用中可能会把多个 JSON 对象片段连续输出；
  * 如果直接拼接，会得到 `}{` 导致 arguments 不是合法 JSON，从而：
  * - 本地 JSON.parse 失败，工具拿到空参数
  * - 更严重：非法 tool_calls 被写入 history 并在下一轮回放，触发上游 400/500 校验错误
@@ -96,4 +96,3 @@ export function splitConcatenatedJsonObjects(input: string): string[] {
 
   return results;
 }
-

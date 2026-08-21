@@ -10,6 +10,7 @@ import {
 } from '../../../llm/input-capabilities';
 import { createRuntimeEventAdmissionSink } from './runtimeEventAdmissionFixture';
 import { RunIdSchema, ToolCallIdSchema } from '../../../../contracts';
+import { setLlmAuditRecorder } from '../../../../shared/llmAuditRecorder';
 
 function buildCall(overrides: Partial<StandardToolCall> = {}): StandardToolCall {
   return {
@@ -195,6 +196,39 @@ describe('ToolNode audit', () => {
     );
   });
 
+  it('协议错误同时进入专用 LLM 审计 recorder', async () => {
+    const recordToolProtocolError = vi.fn();
+    setLlmAuditRecorder({ recordToolProtocolError });
+
+    try {
+      const node = new ToolNode({
+        toolRuntime: {
+          getToolDefinition: vi.fn().mockReturnValue(undefined),
+          executeTool: vi.fn(),
+        },
+        observationPreview,
+      });
+
+      await node.run(
+        buildState(
+          buildCall({
+            function: { name: 'ask', arguments: '{"questions":' },
+          })
+        )
+      );
+
+      expect(recordToolProtocolError).toHaveBeenCalledWith({
+        toolName: 'ask',
+        toolCallId: 'call_1',
+        rawArguments: '{"questions":',
+        parsedArguments: {},
+        error: expect.stringContaining('Tool arguments are not valid JSON'),
+      });
+    } finally {
+      setLlmAuditRecorder(null);
+    }
+  });
+
   it('owner 参数 admission 失败时不发布 tool_process，并配对 error output', async () => {
     const executeTool = vi.fn();
     const node = new ToolNode({
@@ -217,20 +251,26 @@ describe('ToolNode audit', () => {
       observationPreview,
     });
 
-    const result = await node.run(buildState(buildCall({
-      function: { name: 'read_file', arguments: '{"path":"/x","inode":""}' },
-    })));
+    const result = await node.run(
+      buildState(
+        buildCall({
+          function: { name: 'read_file', arguments: '{"path":"/x","inode":""}' },
+        })
+      )
+    );
 
     expect(executeTool).not.toHaveBeenCalled();
     expect(result.events?.filter(event => event.type === 'tool_process')).toHaveLength(0);
-    expect(result.events).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        type: 'tool_output',
-        tool_call_id: 'call_1',
-        status: 'error',
-        error: 'read_file 参数不符合正式合同',
-      }),
-    ]));
+    expect(result.events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'tool_output',
+          tool_call_id: 'call_1',
+          status: 'error',
+          error: 'read_file 参数不符合正式合同',
+        }),
+      ])
+    );
   });
 
   it('静态图片工具在执行前按最近成功模型二次校验', async () => {
@@ -258,7 +298,10 @@ describe('ToolNode audit', () => {
         executeTool,
       },
       observationPreview,
-      modelInputCapabilityValidator: { assertCompatible },
+      modelInputCapabilityValidator: {
+        evaluate: vi.fn(() => ({ compatible: true as const })),
+        assertCompatible,
+      },
     });
 
     await node.run(state);
@@ -291,6 +334,13 @@ describe('ToolNode audit', () => {
       observationPreview,
       auditPort,
       modelInputCapabilityValidator: {
+        evaluate() {
+          return {
+            compatible: false,
+            reason: 'placement_unsupported',
+            missing_placements: ['tool_result_image'],
+          };
+        },
         assertCompatible() {
           throw new ModelInputCapabilityError(
             MODEL_INPUT_ERROR_CODES.PLACEMENT_UNSUPPORTED,

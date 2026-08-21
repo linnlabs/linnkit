@@ -399,7 +399,7 @@ describe('CheckpointSummarizationProvider', () => {
     expect(keptTool2Out?.action).toBe('keep_working_memory');
   });
 
-  it('checkpoint 会保留更早的含图工具交互整组，不拆散 tool_calls 与 tool_output', async () => {
+  it('checkpoint 会将更早的含图工具交互整组清理，不拆散 tool_calls 与 tool_output', async () => {
     const imageTool = makeToolPair('inspect_image', 'image result');
     const imageToolOutput: AiMessage = {
       id: imageTool.out.id,
@@ -440,11 +440,15 @@ describe('CheckpointSummarizationProvider', () => {
 
     expect(result.states.find(state => state.message.id === oldUser.id)?.action).toBe('skip');
     expect(result.states.find(state => state.message.id === imageTool.call.id)?.action).toBe(
-      'keep_working_memory'
+      'skip'
     );
-    expect(result.states.find(state => state.message.id === imageToolOutput.id)?.action).toBe(
-      'keep_working_memory'
-    );
+    const purgedImageOutput = result.states.find(state => state.message.id === imageToolOutput.id);
+    expect(purgedImageOutput?.action).toBe('skip');
+    expect(
+      purgedImageOutput && 'attachments' in purgedImageOutput.message
+        ? purgedImageOutput.message.attachments
+        : undefined,
+    ).toHaveLength(1);
   });
 
   it('同一组中混合 checkpoint 与普通工具时，整组按 checkpoint 组保留', async () => {

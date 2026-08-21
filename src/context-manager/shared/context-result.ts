@@ -3,6 +3,7 @@ import type {
   ContextBuildTokenEstimate,
   ContextTokenComponent,
   InternalLlmCallUsage,
+  PromptUsageMeasurementPolicy,
   RuntimeEvent,
   TokenCountConfidence,
   TokenCountSource,
@@ -33,6 +34,9 @@ export interface BuildContextResultOptions<TBuildStats> {
     source: TokenCountSource;
     confidence: TokenCountConfidence;
   };
+  inputBudgetTokens?: number;
+  toolDefinitionTokens?: number;
+  promptUsageMeasurementPolicy: PromptUsageMeasurementPolicy;
   events?: RuntimeEvent[];
   contextTrace?: ContextTrace;
   tokenEstimate?: ContextBuildTokenEstimate;
@@ -56,6 +60,9 @@ export function buildContextResult<TBuildStats>(
     coreTypes,
     recommendations,
     tokenUsageMeasurement,
+    inputBudgetTokens = totalBudget,
+    toolDefinitionTokens = 0,
+    promptUsageMeasurementPolicy,
     events = [],
     contextTrace,
     tokenEstimate,
@@ -85,9 +92,13 @@ export function buildContextResult<TBuildStats>(
     tokenUsage: {
       used: finalTokens,
       remaining: totalBudget - finalTokens,
+      messageBudget: totalBudget,
+      inputBudget: inputBudgetTokens,
+      toolDefinitionTokens,
       source: tokenUsageMeasurement.source,
       confidence: tokenUsageMeasurement.confidence,
     },
+    promptUsageMeasurementPolicy,
     processingStats,
     truncated: originalCount !== finalMessages.length,
     truncatedCount:

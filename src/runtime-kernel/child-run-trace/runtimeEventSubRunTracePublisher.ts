@@ -88,12 +88,9 @@ export class RuntimeEventSubRunTracePublisher implements SubRunTracePublisher {
       ...('tool_call_id' in envelope ? { tool_call_id: envelope.tool_call_id } : {}),
       ...('phase' in envelope ? { phase: envelope.phase } : {}),
       ...('status' in envelope ? { status: envelope.status } : {}),
-      ...('args' in envelope && envelope.args !== undefined
-        ? { args: toSerializableJsonValue(envelope.args) }
-        : {}),
-      ...('output' in envelope && envelope.output !== undefined
-        ? { output: toSerializableJsonValue(envelope.output) }
-        : {}),
+      ...('tool_calls' in envelope ? { tool_calls: [...envelope.tool_calls] } : {}),
+      ...('args' in envelope ? { args: toSerializableJsonRecord(envelope.args) } : {}),
+      ...('output' in envelope ? { output: toSerializableJsonValue(envelope.output) } : {}),
       ...('duration_ms' in envelope && envelope.duration_ms !== undefined
         ? { duration_ms: envelope.duration_ms }
         : {}),

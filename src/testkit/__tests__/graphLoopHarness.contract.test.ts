@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   createDefaultGraphExecutor,
   createGraphLoopHarness,
-  createScriptedAiEngineHarness,
+  createScriptedInferenceHarness,
   createToolContextFixture,
 } from '../index';
 import { createFinalAnswerEvent, type RoutedRuntimeEvent, RunIdSchema } from '../../contracts';
@@ -60,7 +60,7 @@ describe('src/agent/testkit graph loop harness contract', () => {
 
     const conversationId = 'conv_public_graph_loop_contract';
     const turnId = 'turn_public_graph_loop_contract';
-    const aiHarness = createScriptedAiEngineHarness([]);
+    const aiHarness = createScriptedInferenceHarness([]);
     const toolContext = createToolContextFixture({
       conversationId,
       turnId,

@@ -1,8 +1,8 @@
 import type { ToolExecutionContext } from '../tools/toolExecutionContext';
-import type { ToolCallExtraContent } from '../llm';
 import type {
   AgentSpecSystemReminderPolicy,
   AgentSpecToolObservationGovernancePolicy,
+  ContextUsageSnapshot,
   RoutedRuntimeEvent,
   RunId,
   RuntimeEvent,
@@ -75,11 +75,23 @@ export interface EngineLocalState extends Record<string, unknown> {
   chunkSeq?: number;
   signal?: AbortSignal;
   runtimeEventSink?: RuntimeEventSink;
+  runtimeFailureFactSink?: RuntimeFailureFactSink;
   summarizationCallbacks?: SummarizationCallbacks;
+  /** 最近一次成功完成的 LLM Prompt 占用；可序列化并随 checkpoint 保留。 */
+  contextUsage?: ContextUsageSnapshot;
 }
 
 /** Graph 节点发布标准事实的唯一出口；返回值是 admission 附着身份后的同一事实。 */
 export type RuntimeEventSink = (event: RuntimeEvent, source: string) => RoutedRuntimeEvent;
+
+/** 已经通过 RuntimeEventSink admission 并发布的执行终态错误事实。 */
+export type RuntimeFailureFact = Extract<RoutedRuntimeEvent, { type: 'error' }> & {
+  error_code: string;
+  retryable: boolean;
+};
+
+/** Graph 将已发布的终态错误事实交给 Host lifecycle；只观察事实，不拥有发布或结算。 */
+export type RuntimeFailureFactSink = (event: RuntimeFailureFact) => void;
 
 export const ENGINE_STATE_SCHEMA_VERSION = 1;
 
@@ -118,5 +130,4 @@ export interface StandardToolCall {
     name: string;
     arguments: string;
   };
-  extra_content?: ToolCallExtraContent;
 }

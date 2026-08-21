@@ -3,6 +3,7 @@ import type {
   RoutedRuntimeEvent,
   RuntimeEvent,
   SerializableJsonRecord,
+  ContextUsageSnapshot,
 } from '../../../contracts';
 
 // ---------------------------------------------------------------------------
@@ -185,6 +186,7 @@ export interface WriteBackContext {
   executorLocal?: ExecutorLocalState;
   executorLocalPatch?: ExecutorLocalPatch;
   contextTrace?: SerializableJsonRecord;
+  contextUsage?: ContextUsageSnapshot;
 }
 
 /**
@@ -230,6 +232,9 @@ export function buildLocalPatch(
   }
   if (ctx.contextTrace !== undefined) {
     patch.contextTrace = ctx.contextTrace;
+  }
+  if (ctx.contextUsage !== undefined) {
+    patch.contextUsage = ctx.contextUsage;
   }
 
   return patch;

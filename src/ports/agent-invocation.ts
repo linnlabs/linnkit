@@ -15,7 +15,6 @@ export interface AgentInvocationRequest {
   currentUserAttachments?: RuntimeResourceRef[];
   promptKey: string;
   model_id?: string;
-  imageGenerationModelId?: string;
   maxSteps?: number;
   enableTools?: boolean;
   availableTools?: string[];

@@ -604,7 +604,7 @@ describe('ToolNode - 单元测试', () => {
             {
               id: ToolCallIdSchema.parse('call_1'),
               type: 'function' as const,
-              function: { name: 'workspace_create_document', arguments: '{}' },
+              function: { name: 'document_create', arguments: '{}' },
             },
           ],
           toolContext: {},
@@ -628,7 +628,7 @@ describe('ToolNode - 单元测试', () => {
             },
           }),
           scope: expect.objectContaining({
-            toolName: 'workspace_create_document',
+            toolName: 'document_create',
             toolCallId: 'call_1',
           }),
         })
@@ -653,7 +653,7 @@ describe('ToolNode - 单元测试', () => {
             {
               id: ToolCallIdSchema.parse('call_3'),
               type: 'function' as const,
-              function: { name: 'workspace_create_document', arguments: '{}' },
+              function: { name: 'document_create', arguments: '{}' },
             },
           ],
           toolContext: {},
@@ -685,7 +685,7 @@ describe('ToolNode - 单元测试', () => {
             {
               id: ToolCallIdSchema.parse('call_4'),
               type: 'function' as const,
-              function: { name: 'workspace_create_document', arguments: '{}' },
+              function: { name: 'document_create', arguments: '{}' },
             },
           ],
           toolContext: {},

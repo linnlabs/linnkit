@@ -68,11 +68,6 @@ describe('AgentSpec contract', () => {
             maxLines: 1600,
           },
         },
-        providerReplay: {
-          provider: 'system_default',
-          requiresReasoningDetailsForToolReplay: true,
-          missingSidecarBehavior: 'provider_empty_replay_field',
-        },
         summarization: {
           triggerThreshold: 0.7,
           budgetPercentage: 0.12,
@@ -164,6 +159,9 @@ describe('AgentSpec contract', () => {
 
     expect(minimalResult.success).toBe(true);
     expect(policy.profileId).toBe('agent');
+    expect(policy.budget?.maxTokens).toBeUndefined();
+    expect(policy.budget?.reservedForResponse).toBeUndefined();
+    expect(policy.budget?.workingMemoryBudgetPercentage).toBe(0.7);
     expect(policy.toolHistory?.strategy).toBe('per-run');
     expect(policy.toolHistory?.retentionMode).toBe('drop');
     expect(policy.toolHistory?.keepLatestRuns).toBe(2);
@@ -172,7 +170,6 @@ describe('AgentSpec contract', () => {
       maxChars: 20_000,
       maxLines: 1_200,
     });
-    expect(policy.providerReplay).toEqual({});
     expect(policy.mustKeep?.alwaysKeepTypes).toEqual(['system_prompt', 'user_input']);
     expect(policy.contextTrace?.enabled).toBe(true);
     expect(policy.contextTrace?.maxTraceEvents).toBe(200);
@@ -229,11 +226,11 @@ describe('AgentSpec contract', () => {
     expect(result.success).toBe(false);
   });
 
-  it('rejects invalid providerReplay missing sidecar behavior values', () => {
+  it('rejects retired providerReplay fallback fields', () => {
     const result = AgentSpecContextPolicy.safeParse({
       profileId: 'agent',
       providerReplay: {
-        missingSidecarBehavior: 'silent',
+        missingSidecarBehavior: 'allow',
       },
     });
 

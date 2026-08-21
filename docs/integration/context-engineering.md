@@ -17,9 +17,9 @@
 
 <a id="context-policy-source-of-truth"></a>
 
-## 0.1 配置真相源：改预算改哪里
+## 0.1 两类真相源：模型容量与 Agent 上下文策略
 
-先回答最常见的问题：**改预算不用到处跑**。预算、摘要、工具历史、工具输出截断、must-keep、checkpoint、reasoning 保留、token 估算、system reminder 与 trace 的声明入口，统一都是 `AgentSpec.contextPolicy`（host 侧通常落在 `AgentDefinition.config.contextPolicy`），类型真相源是 `AgentSpecContextPolicy`。
+先回答最常见的问题：**模型能装多少，由 prepared model route 声明；Agent 是否主动少用，由 `AgentSpec.contextPolicy` 声明**。route 的 `context_window_tokens / max_output_tokens` 是容量真相源；摘要、工具历史、工具输出截断、must-keep、checkpoint、reasoning 保留、token 估算、system reminder、trace，以及可选容量 cap 的统一声明入口是 `AgentSpec.contextPolicy`（host 侧通常落在 `AgentDefinition.config.contextPolicy`），其类型真相源是 `AgentSpecContextPolicy`。
 
 运行时只消费合并后的 effective policy：
 
@@ -35,15 +35,17 @@ framework 默认
 
 | 你想改什么 | 改哪里 |
 |------------|--------|
-| 只改某个 agent 的总预算 | 该 agent 的 `config.contextPolicy.budget.maxTokens` |
-| 改某个 agent 的响应预留 | 该 agent 的 `config.contextPolicy.budget.reservedForResponse` |
+| 显式限制某个 agent 的总窗口 | 该 agent 的 `config.contextPolicy.budget.maxTokens` |
+| 显式限制某个 agent 的单次输出 | 该 agent 的 `config.contextPolicy.budget.reservedForResponse` |
 | 改所有 agent 的 host 默认策略 | host 的 `defaultContextPolicy` / context policy fallback |
-| 改 framework 基线默认值 | linnkit 的 context policy 默认值 / agent context builder 默认配置 |
-| 验证最终到底生效了什么 | 开 `contextPolicy.contextTrace.enabled=true`，看 `ContextTrace.effectivePolicy` |
+| 改无模型 route 接入的 framework fallback | linnkit 的 prompt budget fallback / agent context builder 默认配置 |
+| 验证最终到底生效了什么 | 看成功 Graph attempt 的 `ContextUsageSnapshot.input_budget_tokens / output_limit_tokens`；policy 合并来源再看 `ContextTrace.effectivePolicy` |
 
 `agentSpecAdapter` 会把同一个 policy 拆给几类消费点：context builder 配置、preprocessor 选项、provider registry 选项、execution 选项，以及 system reminder。**这些是运行时分发点，不是新的配置真相源**。如果发现某个字段改了但某个消费点没响应，应该补 adapter 或装配链路；不要在消费点旁边再加一份局部预算常量。
 
-边界也要说清楚：`contextPolicy.budget.maxTokens` 是 linnkit 做上下文裁剪的预算，不是 provider 返回的真实计费 token，也不会自动反查当前模型的最大上下文窗口。换模型时，host 仍要确认模型能力、provider options 与 `contextPolicy.budget` 匹配。
+边界也要说清楚：prepared model 的正式 inference route 是容量基线；`contextPolicy.budget.maxTokens` 与 `reservedForResponse` 只是 Agent 可选的显式上限，不是模型能力，也不是 provider 返回的真实计费 token。两项 policy 均未声明时，运行时直接使用 route 的 `context_window_tokens / max_output_tokens`；显式声明时分别取 `min(route, policy)`。`defineContextPolicy()` 和三层 merge 必须保留“未声明”，不能把 framework fallback 物化成 Agent cap。
+
+Tool definitions 会先从有效输入预算扣除，剩余的 `messageBudgetTokens` 才交给 Context Manager；同一个 `outputLimitTokens` 会进入 Provider request。单独使用 Context Manager 而没有模型 route 时，framework 才使用 256K 总窗口和 16K 最大输出 fallback。生产 Graph host 仍必须装配 prepared model route，不能把 fallback 当成坏 catalog 的兼容路径。
 
 相关入口：
 
@@ -103,7 +105,7 @@ linnkit 的内部消息（`AiMessage` union）最终都会按 LLM 协议的三�
 | Role | 这里有什么 |
 |------|-----------|
 | `system` | `system_prompt`、`placement: 'after-system'` 的 fence（不常变化的固定上下文），例如长期规则、当前能力目录、用户偏好等 |
-| `assistant` | LLM 自己产的 `final_answer` / `thought`（reasoning_content）/ `tool_calls`；以及配对的 `tool_output`（在物理 wire 上挂 `tool` role） |
+| `assistant` | LLM 自己产的 `final_answer` / `thought`（canonical reasoning）/ `tool_calls`；以及配对的 `tool_output`（在 Provider wire 上通常使用独立 tool role） |
 | `user` | 用户的 `user_input`、`placement: 'before-current-user'` / `'after-current-user'` 的 fence（经常变化的高频上下文）、例如用户上传的文件、当前时间等以及触发后的 `<system-reminder>` 注入 |
 
 当前轮 `llmRole: 'user'` 且 `placement` 指向当前请求附近的 fence，会先按 host 提供的 `formatter` 组装进同一条 `user_input`：
@@ -131,6 +133,11 @@ host 也可以在持久化的 `user_input.content` 中预先写入结构化块�
 这种做法适合“每一轮发生时的历史事实”（例如本地时间）。UI 如需展示原始用户文本，应由 host 在自己的事件契约中保留原文字段；linnkit 只负责回放 `user_input.content` 给模型，不理解具体标签语义。
 
 **重要不变量**：`tool_calls` 和 `tool_output` **必须成对出现**——任何一边丢了另一边就废了。这条不变量贯穿所有压缩 / 裁剪机制。
+
+附件是消息内容的一部分，不建立独立的上下文生命周期：用户图片随所属 `user_input` 同进同退，工具结果图片随完整
+`tool_calls + sibling tool_output` 工具组同进同退。摘要、working memory 与 checkpoint 都只按既有消息/工具组规则
+决定保留或退出，不根据附件种类增加永久保留窗口。活动上下文退出只影响后续模型输入，不删除 durable event、附件
+引用或资源字节。
 
 ---
 
@@ -238,8 +245,8 @@ contextPolicy: {
 
 | 字段 | 默认 | 含义 | 开放状态 |
 |------|------|------|---------|
-| `budget.maxTokens` | `232000` | 总预算上限 | ✅ AgentSpec + runtime |
-| `budget.reservedForResponse` | `2400` | 留给 LLM 输出的 token | ✅ AgentSpec + runtime |
+| `budget.maxTokens` | 未声明（继承模型 route） | Agent 显式总窗口上限 | ✅ AgentSpec + runtime |
+| `budget.reservedForResponse` | 未声明（继承模型 route） | Agent 显式输出上限，并预留同等输入空间 | ✅ AgentSpec + runtime |
 | `budget.workingMemoryBudgetPercentage` | `0.70` | 工作记忆占可用预算的比例 | ✅ AgentSpec + runtime |
 | `reasoningRetention.keepLatestThoughts` | `1` | 最近保留多少条 thought | ✅ AgentSpec + runtime |
 | `workingMemory.minToolInteractionsToKeep` | `2` | compressed 历史工具摘要的预算兜底组数 | ✅ AgentSpec + runtime |
@@ -254,6 +261,9 @@ Agent 主动调一个约定为 `context_checkpoint` 的工具。工具执行成�
 
 - **保留**：must-keep + 这个 checkpoint 工具对本身 + checkpoint 之前最近 N 对工具交互（默认 N=2，可用 `checkpoint.keepPairsBefore` 覆盖）
 - **清掉**：checkpoint 之前更旧的 tool_calls / tool_output / final_answer / thought / 旧 history_summary
+
+checkpoint 不为图片或其他附件增加例外。含附件消息若属于清理范围，会随消息或完整工具组一起退出活动上下文；
+durable history 与资源仍由 host 的正常持久化生命周期管理。
 
 linnkit 提供协议（`CHECKPOINT_MARKER_TYPE` / `CheckpointSummarizationProvider` / SystemReminder & step-reset 联动）+ 最小工具（`ContextCheckpointTool`）；工作流状态或外部持久化由接入方负责，可通过下面的 hook 接入。
 
@@ -321,6 +331,9 @@ const checkpointTool = new ContextCheckpointTool({
 ### 5.4 自动 SummarizationProvider —— 超预算被动摘要（注册 agent 可配置 ✅）
 
 当 token 总用量超过阈值，把最旧的一批消息丢给一个**专用的摘要 agent**，让它生成一段总结，替换掉这批旧消息。
+
+摘要 agent 当前只消费候选消息的文本视图。候选消息携带附件时，附件不单独进入摘要调用；摘要替换原消息后，附件随
+原消息退出活动上下文。需要再次查看原始像素时，Agent 应通过 durable locator 重新读取，而不是让图片绕过统一摘要规则。
 
 **可配置字段**：
 
@@ -428,31 +441,18 @@ tool output 的唯一尺寸治理点是执行期 `toolOutput.observationGovernan
 
 ## 8. Reasoning / Thought 保留策略（AgentSpec 已运行时接线 ✅）
 
-部分 LLM provider 会返回 `reasoning_content`（思考过程文本），有些模型在能看到之前 reasoning 历史时表现更好——所以 linnkit 把 `thought` 当作一类 AiMessage 保留。
+部分 LLM Provider 会返回可见的 reasoning 文本，有些模型在能看到之前 reasoning 历史时表现更好——所以 Linnkit 把 `thought` 当作一类 AiMessage 保留。厂商 wire 字段如何映射为 canonical reasoning 由 Host codec 负责，Context Manager 不识别这些字段。
 
 **当前可配置且已接入 runtime**：
 
 | 项 | 默认 | 开放状态 |
 |---|------|---------|
 | 工作记忆里保留的最近 thought 数量 | `reasoningRetention.keepLatestThoughts = 1` | ✅ AgentSpec + runtime |
-| Provider sidecar replay 行为（reasoning_details 缺失时怎么办）| `'allow'` / `'degrade_to_text'` / `'provider_empty_replay_field'` | ✅ `contextPolicy.providerReplay` 可覆盖；未配置时 host 仍可按模型默认注入 |
+| Provider continuation replay 要求 | `required` / `optional` / `unavailable` | ✅ 由 Host 的显式 inference route 注入，不属于 AgentSpec |
 
 默认生产运行时保留**1 条**（最新的那条 thought）。如果需要保留多轮 reasoning，可在 AgentSpec 中设置 `reasoningRetention.keepLatestThoughts`，该字段会透传到 `AgentWorkingMemoryProvider`。
 
-Provider replay 是另一件事：它不决定"保留几条 thought"，而决定"历史工具组缺少 provider sidecar 时怎么回放"。配置例子：
-
-```ts
-contextPolicy: {
-  profileId: 'agent',
-  providerReplay: {
-    provider: 'system_default',
-    requiresReasoningDetailsForToolReplay: true,
-    missingSidecarBehavior: 'provider_empty_replay_field',
-  },
-}
-```
-
-边界：如果 `providerReplay` 不配置，linnkit 不会按 `model_id` 自己猜 provider；host 仍可以通过 `resolveToolReplayProtocolPolicy` 按模型提供默认策略。单个 agent 的 `contextPolicy.providerReplay` 优先级高于 host 的模型默认策略。
+Provider replay 是另一件事：它不决定“保留几条 thought”，而决定当前 route 是否允许回放缺少 continuation 的结构化工具组。Linnkit 不按模型名猜测；Host 从 `inference_route.continuation.tool_replay` 注入。required route 缺少 continuation 时直接失败，不降级、不补空字段。AgentSpec 无权覆盖 Provider 协议能力。
 
 ---
 
@@ -462,8 +462,8 @@ contextPolicy: {
 
 | 字段 | 默认 | 含义 | 开放状态 |
 |------|------|------|---------|
-| `budget.maxTokens` | `232000` | 总预算 | ✅ AgentSpec |
-| `budget.reservedForResponse` | `2400` | 留给响应的 token | ✅ AgentSpec |
+| `budget.maxTokens` | 未声明（继承模型 route） | Agent 显式总窗口上限 | ✅ AgentSpec |
+| `budget.reservedForResponse` | 未声明（继承模型 route） | Agent 显式响应上限 | ✅ AgentSpec |
 | `budget.workingMemoryBudgetPercentage` | `0.70` | 工作记忆占可用预算的比例 | ✅ AgentSpec |
 | `tokenEstimation.encoding` | `'cl100k_base'` | 估算用的 tiktoken encoding 名 | ✅ AgentSpec + runtime |
 | `tokenEstimation.avgCharsPerToken` | `2.0` | tiktoken 不可用或未配置 encoding 时的字符/token 兜底比 | ✅ AgentSpec + runtime |
@@ -479,9 +479,9 @@ contextPolicy: {
 
 **linnkit 协议层既定事实**：
 
-- linnkit **内置一个默认 tokenizer**（实现：`TokenCalculator` + `tiktoken@^1.0.22` 硬依赖）—— 主路径走 OpenAI 编码族 + CJK 检测；非 OpenAI 模型（Claude / Gemini / DeepSeek）映射到 `cl100k_base` 近似；tiktoken 失败时退到字节比兜底（`avgCharsPerToken`）。
+- linnkit **内置一个默认 tokenizer**（实现：`TokenCalculator` + `tiktoken@^1.0.22` 硬依赖）—— 只有 Host/AgentSpec 显式声明 `tokenEstimation.encoding` 时才调用对应 tiktoken encoding；未声明或 tiktoken 不可用时使用 `avgCharsPerToken` 粗估。Linnkit 不从模型名或 Provider 名猜 encoding。
 - runtime 统一通过 `tokenizer.estimateMessage(...)` 估算 message token，预算判断会同时计入基础 message overhead、内容 token、tool call 参数 token 与 `tokenEstimation.toolCallOverhead`。如果 `encoding` 不可用，才回退到 `avgCharsPerToken`。
-- 默认 tokenizer 在未显式配置 `tokenEstimation.encoding` 时，会使用当前 `modelId` 选择 tiktoken encoding；这比纯字符比粗估更准，但可能让历史预算裁剪 / 摘要触发点发生轻微漂移。需要固定旧估算口径时，请显式配置 `tokenEstimation.encoding`，或在直接创建 `DefaultTokenizerPort` 时设置 `preferModelIdWhenEncodingMissing:false`。
+- `TokenizerPort` 的 `modelId` 参数只供 Host 自定义实现按显式 route 决策；内置 `DefaultTokenizerPort` 不解释它。需要 tiktoken 时必须声明准确 encoding，需要厂商 tokenizer 时由 Host 注入自己的 `TokenizerPort`。
 - 这个 tokenizer **仅用于 budget 决策**（"还能塞多少消息"），**不用于**计费——计费 token 数由 provider 返回的 `usage` 字段决定，host 自己消费。
 - linnkit **不发明跨 provider 统一 token 数协议**——每个 host / agent 决定自己用什么 tokenizer（默认内置 / 调三参数 / 完全替换）。
 - 摘要触发、工具历史截断、`ContextTrace.message-decision.tokens` 都走同一套 `TokenizerPort` 口径；context-manager 内部不应绕过它直接调用 `TokenCalculator`。
@@ -492,8 +492,8 @@ contextPolicy: {
 |------|---------|------------|
 | host 用 GPT-3.5/4 + 默认 `cl100k_base` | 几乎精确（OpenAI tiktoken 就是这个）| ❌ 不需要 |
 | host 用 GPT-4o + `encoding: 'o200k_base'` | 几乎精确 | ❌ 不需要 |
-| host 用 Claude / Gemini / DeepSeek + 默认 `cl100k_base` | ±10-30% 偏差 | ⚠️ 大多数场景**够用**（budget 有 `reservedForResponse` 安全垫）；如果你严格按真实计费做预算 → 需要担心 |
-| host 主要场景是中文 / CJK | `TokenCalculator` 自动按字节比兜底 → 比较准；但 tiktoken 主路径仍按 OpenAI 编码估，CJK 字符占 token 偏高 | ⚠️ 调 `avgCharsPerToken: 1.6 ~ 1.8` 提升精度 |
+| host 对非 tiktoken 模型显式使用 `cl100k_base` 近似 | ±10-30% 偏差 | ⚠️ 大多数场景**够用**（budget 有 `reservedForResponse` 安全垫）；如果你严格按真实计费做预算 → 需要担心 |
+| host 主要场景是中文 / CJK，且未声明 encoding | 字符/token 粗估 | ⚠️ 按语料调 `avgCharsPerToken`，或注入真实 tokenizer |
 | host 自动化复杂任务（步骤多、工具链长，单次 run 几十万 token）| 默认估算累积偏差可能放大 | ⚠️ 考虑注入 `TokenizerPort`（已可用） |
 | host 严格按计费 token 数 = 预算 token 数（无安全垫）| 默认估算不够 | ❌ **必须**注入 `TokenizerPort`（已可用） |
 
@@ -503,14 +503,15 @@ contextPolicy: {
 
 **何时该替换默认 tokenizer**：如果你需要**真实**的 Anthropic / Gemini tokenizer（不接受 OpenAI 编码近似），或者你接的是 linnkit 不认识的私有模型，就实现 `TokenizerPort` 注入到装配链路。
 
-#### 9.4.1 接入点 · `ContextManagerBaseOptions.tokenizer`
+#### 9.4.1 接入点 · Context Manager 与 Graph 共用同一实例
 
-`tokenizer` 注入点在 **context-manager 装配链路**（不是 `GraphExecutor`——GraphExecutor 不负责上下文构建，真正做 token budget / trimming 的是 context-manager）。常见装配入口都接受 `tokenizer` 选项：
+Context Manager 负责 messages 裁剪；Graph 还要估算 prepared Tool definitions，并在 system reminder 后测量最终 Prompt。两层必须共用同一个 `TokenizerPort` 实例，不能各自维护估算常量。
 
 | 装配入口 | 字段 | 适用场景 |
 |---------|------|---------|
 | `new AgentContextManager({ ..., tokenizer, tokenizerModelId })` | ✅ | host 直接装配 agent context manager |
 | `new AgentMessageOrchestrator({ ..., tokenizer })` | ✅ | host 装配 orchestrator（orchestrator 透传给底层 context-manager）|
+| `new GraphAgentExecutor({ ..., tokenizer })` | ✅ | prepared tools、最终 Prompt 三项归因与 fallback 容量 admission |
 
 纯聊天 / 翻译 / 摘要这类单轮能力也注册为 tools-disabled agent，不再走独立 chat profile。
 
@@ -548,7 +549,7 @@ const orchestrator = new agentOrchestration.AgentMessageOrchestrator({
 });
 ```
 
-如果你的 host 有自己的 `GraphExecutorContextBuilder`，就在创建 `AgentMessageOrchestrator` 的地方把同一个 `tokenizer` 透传进去。`GraphExecutor` 本身不构建上下文，因此不接收 tokenizer。
+如果你的 host 有自己的 `GraphExecutorContextBuilder`，应把同一个 tokenizer 同时传给 `AgentMessageOrchestrator` 与 `GraphAgentExecutor`。前者决定 messages 裁剪，后者决定 Tool definitions reserve、最终 Prompt 归因和 fallback candidate 容量；实例或模型路由不一致会造成系统性漂移。
 
 #### 9.4.3 `tokenizerModelId` 字段
 
@@ -629,6 +630,8 @@ contextPolicy: {
 - `overflowed`：trace 事件超过 `maxTraceEvents` 时为 `true`，防止观测数据反过来膨胀。
 - GraphExecutor 会把 `contextTrace` 从 context builder 透传到 context audit record；runtime-kernel 只按 `unknown` 透传，不反向依赖 context-manager 类型。
 
+`ContextTrace.remoteTokenCount` 只解释 Context Manager 构建结束时的 messages。真正提交给 provider 的最终口径由 Graph 的 `measure_prompt_usage` stage 在 system reminder 后重新测量，并同时带上 prepared tools。成功的 provider attempt 才会把严格 `ContextUsageSnapshot` 写入 tick output / checkpoint；调用失败或取消不会提交候选快照。
+
 **边界**：ContextTrace 不是 DevTools，也不是 PromptTrace 可视化；它只提供最小可观测闭环。跨 run prompt diff、图形化时间线、长期审计落库属于阶段 2。
 
 ---
@@ -640,7 +643,6 @@ contextPolicy: {
 - `budget.maxTokens` / `reservedForResponse` / `workingMemoryBudgetPercentage`
 - `toolHistory.{strategy, retentionMode, keepLatestToolPairs, keepLatestRuns, maxInteractionGroups, overflowStrategy}`
 - `toolOutput.observationGovernance.{enabled, maxChars, maxLines}`
-- `providerReplay.{provider, requiresReasoningDetailsForToolReplay, missingSidecarBehavior}`
 - `summarization.{triggerThreshold, budgetPercentage, oldestMessagesPercentage, agentId, failureBehavior}`
 - `MustKeepPolicy.{alwaysKeepTypes, alwaysKeepFenceKinds, truncationRules}`
 - `workingMemory.{maxRecentToolRuns, maxRecentToolInteractions(deprecated alias), minToolInteractionsToKeep, toolPairingSearchRange}`
@@ -649,7 +651,7 @@ contextPolicy: {
 - `tokenEstimation.{encoding, avgCharsPerToken, toolCallOverhead}`
 - `systemReminder.{enabledRuleIds, disabledRuleIds, thresholds, extraRules}`
 - `contextTrace.{enabled, includeMessageIds, includeTokenBreakdown, maxTraceEvents}`
-- `defineContextPolicy()` 可补齐 12 大分组默认值，便于外部接入方生成完整策略
+- `defineContextPolicy()` 补齐 framework 行为默认值，但保留两个容量 cap 的 sparse 声明语义
 - fence 注册（`FenceRegistry`，host 自由扩展）
 
 ### 🔴 当前不开放（未来可能开放）
@@ -677,7 +679,7 @@ contextPolicy: {
 | 改 checkpoint 工具名或保留窗口 | `contextPolicy.checkpoint` | checkpoint provider 策略命中 + GraphExecutor step-reset 行为 |
 | 控制 thought 保留数量 | `contextPolicy.reasoningRetention.keepLatestThoughts` | thought message 的 keep/drop 数量 |
 | 控制工具 observation 执行期预览阈值 | `contextPolicy.toolOutput.observationGovernance` | `metadata.observationTruncation.blobId` 是否生成 + tool node 单测 |
-| 控制 provider sidecar 缺失时的历史工具回放 | `contextPolicy.providerReplay` | `ToolReplayProtocolGuardPreprocessor` 是否降级 / 标记 |
+| 声明 Provider 工具回放要求 | Host `inference_route.continuation.tool_replay` | required route 缺 continuation 时是否 fail-closed |
 | 调整 token 估算口径 | `contextPolicy.tokenEstimation` | provider token delta 曲线变化 |
 | 自定义 transient system reminder | `contextPolicy.systemReminder` + registry | `systemReminderHitRuleIds` + final LLM input |
 | 看清最终 token 决策 | `contextPolicy.contextTrace.enabled=true` | `ContextBuildResult.contextTrace` |

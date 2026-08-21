@@ -1,18 +1,26 @@
 import { describe, expect, it } from 'vitest';
-import type { AgentAiEngine } from '../../ports';
+import type { CanonicalInferencePort } from '../../ports';
 import { defineAgent } from '../defineAgent';
 import { defineConfig } from '../defineConfig';
 import { runAgent } from '../runAgent';
 
-function createScriptedEngine(answer: string): AgentAiEngine {
+function createScriptedInference(answer: string): CanonicalInferencePort {
   return {
-    async chatCompletion() {
-      return { content: answer };
-    },
-    async chatCompletionStream(_modelId, _messages, _options, onContent, _onError, onFinish, _onThought, onUsage) {
-      onContent?.(answer);
-      onUsage?.({ prompt_tokens: 3, completion_tokens: 2, total_tokens: 5 });
-      onFinish?.('stop');
+    async *stream(request) {
+      yield { type: 'start', model_id: request.model_id, attempt_id: request.invocation.attempt_id };
+      yield { type: 'answer_delta', text: answer };
+      yield {
+        type: 'usage',
+        usage: {
+          inputTokens: 3,
+          outputTokens: 2,
+          totalTokens: 5,
+          source: 'provider-response-usage',
+          confidence: 'actual',
+          rawUsage: { prompt_tokens: 3, completion_tokens: 2, total_tokens: 5 },
+        },
+      };
+      yield { type: 'finish', reason: 'stop' };
     },
   };
 }
@@ -39,7 +47,7 @@ describe('quickstart helpers', () => {
     expect(() =>
       defineConfig({
         agents: [agent, agent],
-        llm: createScriptedEngine('ok'),
+        inference: createScriptedInference('ok'),
       }),
     ).toThrow(/duplicate agent id/);
   });
@@ -54,7 +62,7 @@ describe('quickstart helpers', () => {
 
     const result = await runAgent(agent, {
       input: 'hi',
-      llm: createScriptedEngine('hello back'),
+      inference: createScriptedInference('hello back'),
       onEvent: (event) => {
         seen.push(event.type);
       },
@@ -93,7 +101,7 @@ describe('quickstart helpers', () => {
 
     const result = await runAgent(agent, {
       input: 'hi',
-      llm: createScriptedEngine('hello back'),
+      inference: createScriptedInference('hello back'),
       maxSteps: 1,
     });
 
@@ -123,7 +131,7 @@ describe('quickstart helpers', () => {
 
     const result = await runAgent(agent, {
       input: 'hi',
-      llm: createScriptedEngine('hello back'),
+      inference: createScriptedInference('hello back'),
     });
 
     expect(result.contextTrace).toMatchObject({
@@ -149,7 +157,7 @@ describe('quickstart helpers', () => {
 
     await runAgent(agent, {
       input: 'hi',
-      llm: createScriptedEngine('hello back'),
+      inference: createScriptedInference('hello back'),
       onEvent: async (event) => {
         if (event.type !== 'final_answer_chunk') return;
         await new Promise((resolve) => setTimeout(resolve, 0));

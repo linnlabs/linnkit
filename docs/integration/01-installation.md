@@ -56,7 +56,7 @@ CLI v0 只包含三个命令：
 
 ```ts
 import { runtimeKernel, generateMessageId } from '@linnlabs/linnkit';
-import type { AgentInvocationRequest, AgentAiEngine } from '@linnlabs/linnkit/ports';
+import type { AgentInvocationRequest, CanonicalInferencePort } from '@linnlabs/linnkit/ports';
 import type { AiMessage, RuntimeEvent } from '@linnlabs/linnkit/contracts';
 
 console.log(generateMessageId());

@@ -14,6 +14,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Added explicit tool model-input delivery semantics. `required` remains the default, while `when_supported` keeps the main tool operation available to incompatible models and exposes the active-model admission decision through `ToolExecutionContext.modelInputAdmission` before tools create temporary attachment grants.
+
+### Changed
+
+- Replaced the product-shaped tool Schema context with `ToolSchemaBuildRequest`. Linnkit now forwards the generic invocation to the Host schema provider without naming or projecting Host model-purpose fields.
+- Replaced the OpenAI-shaped `AgentAiEngine` callbacks with the structured `CanonicalInferencePort`; `LlmCaller`, retry/fallback, quickstart and testkit now share the same canonical request/event stream.
+- Renamed the scripted provider fixture to `createScriptedInferenceHarness` and changed quickstart configuration from `llm` to `inference`.
+- Provider continuation replay now requires the versioned payload and full producer route identity; usage enters telemetry only through actual canonical `usage` events.
+- Prompt admission now uses the prepared model's formal inference route as its capacity baseline. Agent policy capacity fields are optional explicit caps, and `defineContextPolicy()` plus policy merging preserve their absence instead of materializing hidden limits. Only standalone integrations without a model route use the 256K context / 16K output framework fallback.
+- The effective input budget reserves the resolved output limit and prepared Tool definitions before Context Manager message trimming; the same output limit is then applied to the provider request.
+- Graph now measures the final reminder-applied messages and prepared tools through the active token route. Every successful provider attempt produces a strict `ContextUsageSnapshot` with normalized System prompt, Conversation, and Tool definitions attribution; failed attempts do not commit snapshots.
+- Policy and quota fallback candidates are rejected before provider execution when their route cannot hold the active Prompt and output limit. A successful fallback is remeasured against its own route, tokenizer calibration, and served model identity.
+- The latest successful Prompt snapshot is stored in Graph local checkpoint state so Host projections can rebuild it without replaying tokenization.
+
+### Compatibility
+
+- `ToolSchemaContext` and `AgentInvocationRequest.imageGenerationModelId` were removed. Host `ToolCatalogPort` implementations must accept `ToolSchemaBuildRequest`, validate their own invocation extensions, and derive concrete-tool Schema context outside Linnkit.
+- This is an intentional breaking Host contract change. `AgentAiEngine`, its callback stream types, `createScriptedAiEngineHarness`, and `LinnkitQuickstartConfig.llm` were removed without aliases or a dual-port bridge. Hosts must implement `CanonicalInferencePort` and migrate tests/configuration in the same upgrade.
+- The source version is bumped to `0.30.0` because contracts add `ContextUsageSnapshot`, Graph context/output types expose Prompt measurement data, model catalog entries expose narrow capacity routes, LLM fallback observers may receive the successful snapshot, and the public prompt-budget resolver now accepts sparse capacity sources.
+- Hosts that previously relied on Linnkit's implicit 232K context / 2.4K response policy defaults must provide real model-route capacities. With a default `256000 / 16384` route and no Agent caps, the provider output limit is `16384` and the pre-tool input budget is `239616`.
+- `contextPolicy.budget.reservedForResponse` must now be positive. `AgentProcessingResult.metadata` no longer duplicates context token usage; consumers must read `contextBuildResult.tokenUsage` for build-time messages and the Graph `contextUsage` snapshot for the final successful Prompt.
+
 ## [0.28.0] - 2026-08-09
 
 > Published release. This is the first npm / GitHub Release after `0.21.0`; it includes the unpublished `0.22.0`-`0.27.0` internal milestones below.

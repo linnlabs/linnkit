@@ -50,6 +50,7 @@ describe('QuickstartContextBuilder answer segment history', () => {
       request: { query: '继续', promptKey: 'context-test' },
       history,
       modelId: 'test-model',
+      toolDefinitionTokens: 0,
     });
 
     expect(result.llmMessages).toEqual([

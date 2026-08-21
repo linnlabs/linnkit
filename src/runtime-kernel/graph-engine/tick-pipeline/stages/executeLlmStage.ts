@@ -7,9 +7,16 @@ import { emitAuditEnvelope } from '../../../audit/emitAudit';
 import type { GraphExecutorOutputProcessor } from '../../executorContextBuilder';
 import type { ModelFallbackRejectedInfo } from '../../../llm';
 import { runIdFromTurnId } from '../../../../contracts';
+import type { ContextUsageSnapshot } from '../../../../contracts';
+import type { PromptUsageMeasurer } from '../../orchestration/measurePromptUsage';
+import type { ModelCatalogLike } from '../../../llm/modelCatalog';
+import { evaluateFallbackPromptCapacity } from '../../../llm/functions/evaluateFallbackPromptCapacity';
+import { estimatePromptUsageComponentWeights } from '../../functions/promptUsageComponents';
 
 export interface ExecuteLlmStageDependencies {
   llmCaller: Pick<LlmCaller, 'callWithRetries'>;
+  promptUsageMeasurer: PromptUsageMeasurer;
+  modelCatalog: Pick<ModelCatalogLike, 'getModelById'>;
 }
 
 export function createExecuteLlmStage(dependencies: ExecuteLlmStageDependencies): TickStage {
@@ -25,6 +32,10 @@ export function createExecuteLlmStage(dependencies: ExecuteLlmStageDependencies)
       'toolCallStreamingPolicies',
       'imageInputAdmissionEvidence',
       'llmOptions',
+      'promptBudget',
+      'promptUsageMeasurementPolicy',
+      'promptUsageCandidate',
+      'tokenizer',
       'signal',
       'audit',
       'conversationId',
@@ -37,12 +48,16 @@ export function createExecuteLlmStage(dependencies: ExecuteLlmStageDependencies)
       'llmResp',
       'llmCallDurationMs',
       'executorLocalPatch',
+      'contextUsage',
     ],
     async run(ctx) {
       let cloudQuotaFallbackAppliedModelId: string | undefined;
       let modelFallbackAudit: ModelFallbackAudit | undefined;
       let lastSuccessfulLlmModelId: string | undefined;
+      let contextUsage: ContextUsageSnapshot | undefined;
       const modelFallbackRejections: ModelFallbackRejectedInfo[] = [];
+      const promptBudget = ctx.promptBudget;
+      const promptUsageMeasurementPolicy = ctx.promptUsageMeasurementPolicy;
 
       const streamEventHandler: ((event: AnyAgentEvent) => void) | undefined =
         ctx.input.stream && ctx.eventHandler
@@ -67,8 +82,9 @@ export function createExecuteLlmStage(dependencies: ExecuteLlmStageDependencies)
             onCloudQuotaFallbackApplied(fallbackModelId) {
               cloudQuotaFallbackAppliedModelId = readNonEmptyString(fallbackModelId);
             },
-            onLlmAttemptSucceeded(activeModelId) {
+            onLlmAttemptSucceeded(activeModelId, attemptContextUsage) {
               lastSuccessfulLlmModelId = readNonEmptyString(activeModelId);
+              contextUsage = attemptContextUsage;
             },
             onModelFallbackApplied(info) {
               modelFallbackAudit = info;
@@ -81,6 +97,52 @@ export function createExecuteLlmStage(dependencies: ExecuteLlmStageDependencies)
             imageInputAdmissionEvidence: ctx.imageInputAdmissionEvidence,
             additionalModelInputRequirement: ctx.toolModelInputRequirement,
             toolCallStreamingPolicies: ctx.toolCallStreamingPolicies,
+            ...(promptBudget && promptUsageMeasurementPolicy
+              ? {
+                  measurePromptUsage: async (activeModelId, messages) => {
+                    if (activeModelId === ctx.modelId && ctx.promptUsageCandidate) {
+                      return ctx.promptUsageCandidate;
+                    }
+                    const imageInputTokens = ctx.imageInputAdmissionEvidence?.attachments.reduce(
+                      (total, attachment) => total + attachment.estimatedTokens,
+                      0,
+                    ) ?? 0;
+                    return dependencies.promptUsageMeasurer({
+                      budgetModelId: ctx.modelId,
+                      servedModelId: activeModelId,
+                      messages,
+                      llmOptions: ctx.llmOptions,
+                      promptBudget,
+                      measurementPolicy: promptUsageMeasurementPolicy,
+                      imageInputTokens,
+                      signal: ctx.signal,
+                    });
+                  },
+                  evaluateFallbackPromptCapacity: candidateModelId => {
+                    const route = dependencies.modelCatalog.getModelById(candidateModelId)?.inference_route;
+                    const imageInputTokens = ctx.imageInputAdmissionEvidence?.attachments.reduce(
+                      (total, attachment) => total + attachment.estimatedTokens,
+                      0,
+                    ) ?? 0;
+                    const weights = estimatePromptUsageComponentWeights({
+                      messages: ctx.llmMessages,
+                      tools: ctx.llmOptions.tools,
+                      toolChoice: ctx.llmOptions.tool_choice,
+                      tokenizer: ctx.tokenizer,
+                      modelId: candidateModelId,
+                      imageInputTokens,
+                    });
+                    return evaluateFallbackPromptCapacity({
+                      contextWindowTokens: route?.context_window_tokens,
+                      maxOutputTokens: route?.max_output_tokens,
+                      requiredOutputLimitTokens: promptBudget.outputLimitTokens,
+                      estimatedPromptTokens: weights.systemPromptTokens
+                        + weights.conversationTokens
+                        + weights.toolDefinitionTokens,
+                    });
+                  },
+                }
+              : {}),
           }
         );
       } catch (error) {
@@ -127,6 +189,7 @@ export function createExecuteLlmStage(dependencies: ExecuteLlmStageDependencies)
         llmResp,
         llmCallDurationMs,
         executorLocalPatch: lastSuccessfulLlmModelId ? { lastSuccessfulLlmModelId } : undefined,
+        contextUsage,
       };
     },
   });

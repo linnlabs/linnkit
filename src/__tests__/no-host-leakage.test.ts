@@ -53,6 +53,8 @@ const hostProductLiterals = [
   'recentRejections',
   'intentKey',
   'behaviorSummary',
+  'imageGenerationModelId',
+  'ToolSchemaContext',
 ];
 
 function collectSourceFiles(target: string): string[] {
@@ -97,16 +99,24 @@ function isTypeScriptFile(filePath: string): boolean {
     && !filePath.endsWith('.integration.test.ts');
 }
 
-function findLiteralViolations(targets: string[], literals: string[]): string[] {
+function findLiteralViolations(
+  targets: string[],
+  literals: string[],
+  options: { readonly caseInsensitive?: boolean } = {},
+): string[] {
   const violations: string[] = [];
 
   for (const target of targets) {
     for (const file of collectSourceFiles(target)) {
       const content = fs.readFileSync(file, 'utf8');
+      const searchableContent = options.caseInsensitive ? content.toLowerCase() : content;
       const relativeFile = path.relative(repoRoot, file);
 
       for (const literal of literals) {
-        if (content.includes(literal)) {
+        const searchableLiteral = options.caseInsensitive
+          ? literal.toLowerCase()
+          : literal;
+        if (searchableContent.includes(searchableLiteral)) {
           violations.push(`${relativeFile} contains ${literal}`);
         }
       }
@@ -129,6 +139,7 @@ describe('linnkit no host leakage', () => {
     expect(findLiteralViolations(
       linnkitProductionTargets,
       hostProductLiterals,
+      { caseInsensitive: true },
     )).toEqual([]);
   });
 });

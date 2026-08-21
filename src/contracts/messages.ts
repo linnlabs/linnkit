@@ -8,22 +8,7 @@ import {
 } from './identity';
 import { FinalAnswerCompletionReason } from './final-answer';
 import { SerializableJsonValue } from './json';
-
-export const ProviderReasoningDetails = z.array(z.unknown());
-export type ProviderReasoningDetails = z.infer<typeof ProviderReasoningDetails>;
-
-export const ToolCallExtraContent = z
-  .object({
-    google: z
-      .object({
-        thought_signature: z.string().optional(),
-      })
-      .passthrough()
-      .optional(),
-  })
-  .passthrough();
-
-export type ToolCallExtraContent = z.infer<typeof ToolCallExtraContent>;
+import { AssistantReplayParts, ProviderContinuations } from './provider-continuation';
 
 export const ToolCallWire = z
   .object({
@@ -33,9 +18,8 @@ export const ToolCallWire = z
       name: z.string(),
       arguments: z.string(),
     }),
-    extra_content: ToolCallExtraContent.optional(),
   })
-  .passthrough();
+  .strict();
 
 export type ToolCallWire = z.infer<typeof ToolCallWire>;
 
@@ -52,7 +36,8 @@ export type HistorySummaryMeta = z.infer<typeof HistorySummaryMeta>;
 
 export const ToolCallsMeta = z.object({
   tool_calls: z.array(ToolCallWire),
-  reasoning_details: ProviderReasoningDetails.optional(),
+  provider_continuations: ProviderContinuations.optional(),
+  assistant_replay_parts: AssistantReplayParts.optional(),
   completion_reason: FinalAnswerCompletionReason.optional(),
 });
 
@@ -103,7 +88,8 @@ export const PersistentMetadata = z
     replacedMessageIds: z.array(HistoryMessageReferenceIdSchema).optional(),
     summarySeq: z.number().int().nonnegative().optional(),
     tool_calls: z.array(ToolCallWire).optional(),
-    reasoning_details: ProviderReasoningDetails.optional(),
+    provider_continuations: ProviderContinuations.optional(),
+    assistant_replay_parts: AssistantReplayParts.optional(),
     tool_name: z.string().optional(),
     args: z.record(z.unknown()).optional(),
     tool_call_id: ToolCallIdSchema.optional(),
@@ -195,19 +181,48 @@ function hasOwnAttachments(value: unknown): value is Record<string, unknown> {
 export const AiMessage = z
   .unknown()
   .superRefine((value, ctx) => {
-    if (!hasOwnAttachments(value)) return;
-    const validPlacement =
-      (value['role'] === 'user' && value['type'] === 'user_input') ||
-      (value['role'] === 'tool' && value['type'] === 'tool_output');
-    if (!validPlacement) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['attachments'],
-        message: 'attachments are only allowed on user_input and tool_output messages',
-      });
+    if (hasOwnAttachments(value)) {
+      const validPlacement =
+        (value['role'] === 'user' && value['type'] === 'user_input') ||
+        (value['role'] === 'tool' && value['type'] === 'tool_output');
+      if (!validPlacement) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['attachments'],
+          message: 'attachments are only allowed on user_input and tool_output messages',
+        });
+      }
+    }
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      const metadata = Reflect.get(value, 'metadata');
+      if (
+        metadata
+        && typeof metadata === 'object'
+        && !Array.isArray(metadata)
+        && Object.prototype.hasOwnProperty.call(metadata, 'reasoning_details')
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['metadata', 'reasoning_details'],
+          message: 'reasoning_details is retired; use provider_continuations with producer identity',
+        });
+      }
     }
   })
-  .pipe(AiMessageShape);
+  .pipe(AiMessageShape)
+  .superRefine((message, ctx) => {
+    if (
+      message.role === 'assistant'
+      && message.metadata?.provider_continuations?.length
+      && !message.metadata.assistant_replay_parts?.length
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['metadata', 'assistant_replay_parts'],
+        message: 'provider_continuations require ordered assistant_replay_parts',
+      });
+    }
+  });
 
 export type AiMessage = z.infer<typeof AiMessage>;
 

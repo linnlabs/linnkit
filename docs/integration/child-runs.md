@@ -84,6 +84,8 @@ const outcome = await supervisor.waitForTerminal(handle.runId);
 - child `user_input` 是 incoming fact，不是 graph 生成结果，因此进入 child EventBus / EventStore 和初始 history，但不重复加入 `ChildRunInvokeResult.events` 或 transcript 的 graph event 段。深度门禁与 pre-abort 检查都必须先于任务 admission：调用前已经取消时直接返回 cancelled result，不创建图节点，也不发布 `user_input`；只有真正开始执行的 child 才接纳任务事实。执行开始后的取消继续保留已经接纳的事实与 checkpoint 恢复结果。
 - child 与 parent 共用 `conversationId` 不代表共用正文。child 原始事实持久化用于审计和上下文恢复，Conversation 主时间线只恢复 foreground/conversation；父工具卡只从 parent `subrun_trace` 展示 child 过程。
 - parent `subrun_trace` 始终是 ephemeral live presentation。重启后的卡片历史由 Host 对已 admission trace 建立的紧凑 read model 提供；Linnkit 不依赖宿主数据库，也不提供持久化开关。
+- Linnkit 的实时答案协议始终是 chunk 创建正文、完整答案负责 durable 封口。Host 的紧凑历史可以只保存完整答案快照，但必须在自己的历史读取边界把它规范化为一次性 chunk 与原封口，再进入 Host 的正式 presentation admission；不得为历史重载而放宽 Linnkit 实时合同，也不得让完整答案直接创建第二条正文链。
+- child 工具 decision 投影为一条携带 canonical `tool_calls[]` 的 trace，保持一个 child fact 对应一个 `source_event_id`。decision 只是 durable replay 输入，不表示工具开始；真实开始的 `tool_process` 必须携带 owner admission 后的 args，terminal `tool_output` 必须携带结构化 output。已退役的 decision 标量字段不属于当前合同。
 - EventStore 的默认 `readEvents()` 必须保持无损事实读取，供审计与 child 恢复使用；foreground Agent 构建历史时必须显式请求 `lane=foreground / visibility=conversation` 的 routing scope。缺少 routing identity 的 payload 不属于当前 Runtime 合同，读取主链必须拒绝，不能根据存储关系恢复或猜测身份。
 - 同步 child-run 的失败统一走 Result：普通失败返回 `{ success:false, error }`，取消返回 `{ success:false, cancelled:true, error }`。执行开始后，传给 Graph/provider 的受控 `AbortSignal.aborted` 是取消判定权威；provider 即使把取消包装成普通 Error，也不得把 child lifecycle 写成 failed。错误名称只作为标准 AbortError 的补充识别。
 - 同步 child-run 不支持 `wait_user`。一旦路由到交互节点或产生 `requires_user_interaction`，必须返回明确失败并保留该事实事件，交互应上提给 foreground run；禁止把 child run 伪装为 completed，或让多个 child 共用正文 interaction。
@@ -94,6 +96,8 @@ const outcome = await supervisor.waitForTerminal(handle.runId);
 - child provider 在取消或失败前已经产生 thought 时，streaming adapter 必须发布同 `thought_message_id` 的完成事实；parent trace 原样投影该封口。UI 只能消费 trace，不能根据父工具结束或页面重载自行结束 thought timer。
 - terminal waiter 不缓存 child lifecycle 快照。同步 child 调用方先等待 invoker settlement，再使用 `list / peek / waitForTerminal` 从 RunRegistryStore 读取最终进度；detached child 则由 Supervisor 等 executor settlement 后唤醒 waiter。
 - 所有会启动可见 child 的工具结果都必须用 `data.subrun_ids: string[]` 声明权威 child 清单。单 child 也使用单元素数组，不另设 `subrun_id` 结果别名。
+- Renderer 必须把 live 首条 `subrun_trace` 形成的 summary 身份与父工具 presentation 原子提交；terminal result 与 summary 同时存在时必须逐项一致。卡片不得从 raw result、数组下标或“父调用下只有一个 bucket”猜 child 身份。
+- 历史 detail 读取必须同时携带消息所属 `conversation_id`、`parent_tool_call_id` 与 `subrun_id`。消息所属会话由 render host 在挂载边界固定，不能由叶子卡片在展开时读取全局 active conversation。
 
 ### 5.1 Host runtime scope
 
@@ -125,3 +129,4 @@ Linnkit 只定义 child-run 原语和端口，不替 Host 选择全局实例。H
 - detached 集成测：外部取消后 executor settlement 前 waiter 不返回、资源不释放；settlement 后 outcome 与 RunRegistryStore 的最终进度一致。
 - Host 集成测：同时创建两套 runtime scope 并并发执行 child，分别从两套 EventStore、RunSupervisor 与 Audit 读取结果；任何一侧都不得出现另一侧的 run 或事实。
 - 递归集成测：root 注入的 child invoker 在派生 child ToolContext 中保持同一实例，内层工具继续使用同一 runtime scope。
+- Renderer 集成测：真实父工具投影在首条 child trace 后原子获得 `subrunId`；父 virtual row 只渲染轻量进度，完整 child messages 经独立正式 admission 后在 Host detail 表面展示。测试必须锁定 decision batch 无可见 queued 步骤、process 后 loading、output terminal、reload 缺 process 时仍从 decision 恢复 args、紧凑历史缺 answer chunk 时从 durable 完整答案恢复正文、live 完整答案缺 chunk 时继续拒绝，以及 detail 请求总是携带 `conversation_id + parent_tool_call_id + subrun_id`。

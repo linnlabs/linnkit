@@ -4,6 +4,7 @@ import { SerializableJsonRecord, SerializableJsonValue, toSerializableJsonValue 
 import { RuntimeResourceRefs } from './resource-ref';
 import { Status, ToolCallPhase } from './runtime-status';
 import { FinalAnswerCompletionReason } from './final-answer';
+import { AssistantReplayParts, ProviderContinuations } from './provider-continuation';
 import {
   AnswerSegmentIdSchema,
   ControlTargetReferenceIdSchema,
@@ -19,6 +20,7 @@ import {
   TurnIdSchema,
 } from './identity';
 import { SubRunTracePayload, validateSubRunTracePayloadSemantics } from './sub-run-trace-payload';
+import { ContextUsageSnapshot } from './token-usage';
 
 export const RuntimeRunLane = z.enum(['foreground', 'auxiliary', 'child']);
 export type RuntimeRunLane = z.infer<typeof RuntimeRunLane>;
@@ -71,20 +73,17 @@ export const BaseEvent = z.object({
 
 export { Status, ToolCallPhase } from './runtime-status';
 
-export const ProviderReasoningDetailsPayload = z.array(SerializableJsonValue);
-export type ProviderReasoningDetailsPayload = z.infer<typeof ProviderReasoningDetailsPayload>;
-
 export const ToolCallDecisionPayload = z
   .object({
     args: SerializableJsonRecord.optional(),
     tool_calls: z.array(SerializableJsonValue).optional(),
     /**
-     * 不透明 provider reasoning replay blocks。
+     * 已绑定 producer route identity 的 Provider continuation。
      *
-     * RuntimeEvent 层的标准位置是 assistant 产出事件携带 reasoning_details；
-     * context-manager 会把它回放到 AiMessage.metadata.reasoning_details。
+     * 聚合 continuation 只用于事实查询；回放权威顺序由 assistant_replay_parts 持有。
      */
-    reasoning_details: ProviderReasoningDetailsPayload.optional(),
+    provider_continuations: ProviderContinuations.optional(),
+    assistant_replay_parts: AssistantReplayParts.optional(),
   })
   .strict();
 
@@ -167,7 +166,8 @@ const RuntimeEventShape = z.discriminatedUnion('type', [
     is_complete: z.boolean().default(true),
     /** 封口原因由事实创建者确定；读取方不得根据相邻事件推断。 */
     completion_reason: FinalAnswerCompletionReason,
-    reasoning_details: ProviderReasoningDetailsPayload.optional(),
+    provider_continuations: ProviderContinuations.optional(),
+    assistant_replay_parts: AssistantReplayParts.optional(),
     meta: SerializableJsonRecord.optional(),
   }),
   BaseEvent.extend({
@@ -212,6 +212,7 @@ const RuntimeEventShape = z.discriminatedUnion('type', [
     duration_ms: z.number().nonnegative(),
     user_message_id: RuntimeEventIdSchema.optional(),
     benchmark: SerializableJsonRecord.optional(),
+    context_usage: ContextUsageSnapshot.optional(),
   }),
 ]);
 
@@ -219,18 +220,63 @@ export const RuntimeEvent = z
   .unknown()
   .superRefine((value, ctx) => {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return;
-    if (!Object.prototype.hasOwnProperty.call(value, 'attachments')) return;
     const type = Reflect.get(value, 'type');
-    if (type !== 'user_input' && type !== 'tool_output') {
+    if (
+      Object.prototype.hasOwnProperty.call(value, 'attachments')
+      && type !== 'user_input'
+      && type !== 'tool_output'
+    ) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['attachments'],
         message: 'attachments are only allowed on user_input and tool_output events',
       });
     }
+    if (Object.prototype.hasOwnProperty.call(value, 'reasoning_details')) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['reasoning_details'],
+        message: 'reasoning_details is retired; use provider_continuations with producer identity',
+      });
+    }
+    const payload = Reflect.get(value, 'payload');
+    if (
+      payload
+      && typeof payload === 'object'
+      && !Array.isArray(payload)
+      && Object.prototype.hasOwnProperty.call(payload, 'reasoning_details')
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['payload', 'reasoning_details'],
+        message: 'reasoning_details is retired; use provider_continuations with producer identity',
+      });
+    }
   })
   .pipe(RuntimeEventShape)
   .superRefine((event, ctx) => {
+    if (
+      event.type === 'final_answer'
+      && event.provider_continuations?.length
+      && !event.assistant_replay_parts?.length
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['assistant_replay_parts'],
+        message: 'provider_continuations require ordered assistant_replay_parts',
+      });
+    }
+    if (
+      event.type === 'tool_call_decision'
+      && event.payload?.provider_continuations?.length
+      && !event.payload.assistant_replay_parts?.length
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['payload', 'assistant_replay_parts'],
+        message: 'provider_continuations require ordered assistant_replay_parts',
+      });
+    }
     if (event.type === 'tool_output') {
       if (event.status === 'success' && event.data === undefined) {
         ctx.addIssue({

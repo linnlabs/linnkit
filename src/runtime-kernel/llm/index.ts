@@ -1,13 +1,17 @@
 export { LlmCaller } from './caller';
+export {
+  advanceCanonicalInferenceStreamState,
+  consumeCanonicalInferenceStream,
+  INITIAL_CANONICAL_INFERENCE_STREAM_STATE,
+} from './canonical-inference';
+export type {
+  CanonicalInferenceStreamState,
+  CanonicalInferenceTerminal,
+} from './canonical-inference';
 export { DefaultTokenizerPort, createDefaultTokenizerPort } from './defaultTokenizerPort';
 export { ModelResolver } from './modelResolver';
 export { defaultPolicyEngine } from './policies/defaultPolicyEngine';
 export { LLMPolicyEngine } from './policies/policyEngine';
-export {
-  appendStreamingProviderReasoningDetails,
-  compactProviderReasoningDetails,
-  compactReasoningDetailsInValue,
-} from './reasoning-details';
 export type { DefaultTokenizerPortConfig } from './defaultTokenizerPort';
 export type {
   LlmFallbackObserver,
@@ -21,16 +25,17 @@ export type {
   LlmCallOptions,
   LlmRequestMessage,
   LlmRetryConfig,
-  LlmResponseContent,
-  ProviderReasoningDetails,
+  ProviderContinuation,
   ToolCall,
-  ToolCallChunk,
-  ToolCallExtraContent,
 } from './caller.types';
 export type { ModelCatalogEntry, ModelCatalogLike } from './modelCatalog';
 export { createFixedChatModelCatalog } from './modelCatalog';
 export type { ReasoningEffort, ModelReasoningConfig } from './functions/reasoningEffort';
-export { resolveEffectiveEffort, isValidReasoningEffort, REASONING_EFFORTS } from './functions/reasoningEffort';
+export {
+  resolveEffectiveEffort,
+  isValidReasoningEffort,
+  REASONING_EFFORTS,
+} from './functions/reasoningEffort';
 export {
   assertModelInputCompatibility,
   createModelInputCompatibilityError,
@@ -53,10 +58,7 @@ export type {
   ModelInputPlacement,
   ModelInputRequirement,
 } from './input-capabilities';
-export {
-  LLM_IMAGE_INPUT_ERROR_CODES,
-  LlmImageInputError,
-} from './input-materialization';
+export { LLM_IMAGE_INPUT_ERROR_CODES, LlmImageInputError } from './input-materialization';
 export type {
   LlmImageInputErrorCode,
   LlmImageInputErrorMetadata,
@@ -66,6 +68,4 @@ export type {
   LLMPolicy,
   LLMPolicyErrorDecision,
   LLMPolicyMatchContext,
-  LLMPolicyRequestContext,
-  LLMPolicyResponseContext,
 } from './policies/types';

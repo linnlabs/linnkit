@@ -1,14 +1,16 @@
 import type { ToolObservationPreviewMeta } from './ui-types';
 import type { ToolExecutionContext } from './toolExecutionContext';
-import type { ToolSchemaContext } from './toolSchemaContext';
+import type { AgentInvocationRequest } from '../../ports';
 import type {
-  OpenAIToolSchema,
+  FunctionToolSchema,
   ToolCallStreamingPolicy,
   ToolArgs,
   ToolParameterSchema,
 } from './toolContracts';
 import type { ToolIdempotencyPolicy } from './idempotency/toolIdempotency';
 import type { ModelInputRequirement } from '../llm/input-capabilities';
+import type { ModelInputCompatibility } from '../llm/input-capabilities';
+import type { ToolModelInputDelivery } from './model-input';
 import type { RuntimeResourceRef } from '../../contracts';
 
 export interface ToolRuntimeDefinition {
@@ -23,6 +25,8 @@ export interface ToolRuntimeDefinition {
   idempotency?: ToolIdempotencyPolicy;
   /** 静态声明该工具成功结果可能要求的模型输入能力。 */
   modelInputRequirement?: ModelInputRequirement;
+  /** 未声明时保持既有 required 语义。 */
+  modelInputDelivery?: ToolModelInputDelivery;
   /**
    * 按本次规范化参数解析执行前的模型输入要求。
    *
@@ -50,6 +54,11 @@ export interface ToolExecutionResult {
 }
 
 export interface ToolModelInputCapabilityValidatorPort {
+  evaluate(input: {
+    readonly activeModelId: string;
+    readonly requirement: ModelInputRequirement;
+  }): ModelInputCompatibility;
+
   assertCompatible(input: {
     readonly activeModelId: string;
     readonly requirement: ModelInputRequirement;
@@ -59,6 +68,17 @@ export interface ToolModelInputCapabilityValidatorPort {
 export type ObservationPreviewMeta = ToolObservationPreviewMeta;
 
 export type ObservationPreviewContext = ToolExecutionContext;
+
+/**
+ * Host 按本次 Agent 调用构建工具 Schema 的最小输入。
+ *
+ * Linnkit 只规定调用时机并转交通用 invocation；Host 如何验证扩展字段并
+ * 派生 concrete tools 的窄动态 Schema 上下文，属于 Host 工具注册表职责。
+ */
+export interface ToolSchemaBuildRequest {
+  readonly toolNames?: readonly string[];
+  readonly invocation: AgentInvocationRequest;
+}
 
 export type ObservationPreviewResult =
   | { truncated: false; preview: string }
@@ -73,7 +93,7 @@ export type ObservationPreviewResult =
     };
 
 export interface ToolCatalogPort {
-  getToolSchemas(toolNames?: string[], baseContext?: ToolSchemaContext): OpenAIToolSchema[];
+  getToolSchemas(input: ToolSchemaBuildRequest): FunctionToolSchema[];
   getToolDefinition(toolName: string): ToolRuntimeDefinition | undefined;
 }
 

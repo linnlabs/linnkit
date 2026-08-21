@@ -54,6 +54,10 @@ export function generateTraceId(): string {
   return randomIdentity('trace');
 }
 
+export function generateInferenceAttemptId(): string {
+  return randomIdentity('inference-attempt');
+}
+
 export function generateThoughtMessageId(): string {
   return randomIdentity('thought');
 }

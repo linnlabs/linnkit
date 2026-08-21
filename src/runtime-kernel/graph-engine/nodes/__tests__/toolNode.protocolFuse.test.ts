@@ -15,7 +15,7 @@ describe('toolNode.protocolFuse', () => {
     const result = checkProtocolFuse({
       local,
       exec: { errorKind: 'protocol', error: 'missing required field' },
-      toolName: 'workspace_create_document',
+      toolName: 'document_create',
       toolCallId: ToolCallIdSchema.parse('call_3'),
       rawArguments: '{}',
       parsedArguments: {},
@@ -26,7 +26,7 @@ describe('toolNode.protocolFuse', () => {
       nextCount: 3,
       shouldFuse: false,
       protocolErrorAudit: {
-        toolName: 'workspace_create_document',
+        toolName: 'document_create',
         toolCallId: 'call_3',
         rawArguments: '{}',
         parsedArguments: {},

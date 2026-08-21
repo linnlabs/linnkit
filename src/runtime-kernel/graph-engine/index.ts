@@ -9,6 +9,9 @@ export { summarizeCheckpoint } from './checkpointer/base';
 export { MemoryEventStore } from './event-store/memoryEventStore';
 export { createMonotonicEventStoreIdFactory, requireEventStoreId } from './event-store/base';
 export { createHostToolCallBootstrap } from './functions/createHostToolCallBootstrap';
+export { resolveEffectivePromptBudget } from './functions/resolveEffectivePromptBudget';
+export { readCheckpointContextUsage } from './functions/engineStateSnapshot';
+export { isRuntimeFailureFact } from './functions/runtimeFailureFact';
 export { ENGINE_STATE_SCHEMA_VERSION } from './types';
 
 export type { GraphAgentExecutorDependencies } from './executor';
@@ -33,9 +36,15 @@ export type {
   ExecutorLocalState,
   GraphNode,
   RuntimeEventSink,
+  RuntimeFailureFact,
+  RuntimeFailureFactSink,
 } from './types';
 export type {
   HostToolCallBootstrap,
   HostToolCallBootstrapInput,
   HostToolCallBootstrapLocalPatch,
 } from './functions/createHostToolCallBootstrap';
+export type {
+  EffectivePromptBudget,
+  ResolveEffectivePromptBudgetInput,
+} from './functions/resolveEffectivePromptBudget';

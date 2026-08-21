@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { AiMessage } from '../../../../../contracts';
+import type { AiMessage, ProviderContinuation } from '../../../../../contracts';
 import { ToolHistoryCompressorPreprocessor } from '../toolHistoryCompressor';
 import { ToolCallIdSchema } from '../../../../../contracts';
 
@@ -14,9 +14,8 @@ function createToolCallsMessage(opts: {
     toolCallId: string;
     toolName: string;
     args: Record<string, unknown>;
-    extraContent?: Record<string, unknown>;
   }>;
-  reasoningDetails?: unknown[];
+  providerContinuations?: ProviderContinuation[];
 }): AiMessage {
   const toolCalls = opts.toolCalls ?? [
     {
@@ -33,7 +32,9 @@ function createToolCallsMessage(opts: {
     content: '',
     timestamp: opts.timestamp,
     metadata: {
-      ...(opts.reasoningDetails ? { reasoning_details: opts.reasoningDetails } : {}),
+      ...(opts.providerContinuations
+        ? { provider_continuations: opts.providerContinuations }
+        : {}),
       tool_calls: toolCalls.map(toolCall => ({
         id: ToolCallIdSchema.parse(toolCall.toolCallId),
         type: 'function',
@@ -41,7 +42,6 @@ function createToolCallsMessage(opts: {
           name: toolCall.toolName,
           arguments: JSON.stringify(toolCall.args),
         },
-        ...(toolCall.extraContent ? { extra_content: toolCall.extraContent } : {}),
       })),
     },
   };
@@ -407,12 +407,20 @@ describe('ToolHistoryCompressorPreprocessor', () => {
       retentionMode: 'compress',
       keepLatestToolPairs: 1,
     });
-    const oldReasoning = [
-      { provider: 'deepseek', type: 'reasoning_content', reasoning_content: 'Old reason.' },
-    ];
-    const keptReasoning = [
-      { provider: 'deepseek', type: 'reasoning_content', reasoning_content: 'Kept reason.' },
-    ];
+    const continuation = (reasoning: string): ProviderContinuation[] => [{
+      schema_version: 2,
+      producer: {
+        model_id: 'deepseek-reasoner',
+        endpoint_id: 'deepseek',
+        api_surface: 'openai_chat_completions',
+        capability_id: 'test:chat-codec',
+        endpoint_model_id: 'deepseek-reasoner',
+      },
+      kind: 'reasoning_content',
+      payload: { provider: 'deepseek', type: 'reasoning_content', reasoning_content: reasoning },
+    }];
+    const oldContinuations = continuation('Old reason.');
+    const keptContinuations = continuation('Kept reason.');
 
     const messages: AiMessage[] = [
       createUserInput('u_old', 1000, '旧问题'),
@@ -422,7 +430,7 @@ describe('ToolHistoryCompressorPreprocessor', () => {
         toolCallId: 'tc_old',
         toolName: 'workspace_read',
         args: { path: 'old.md' },
-        reasoningDetails: oldReasoning,
+        providerContinuations: oldContinuations,
       }),
       createToolOutputMessage({
         id: 't_out_old',
@@ -439,13 +447,9 @@ describe('ToolHistoryCompressorPreprocessor', () => {
             toolCallId: 'tc_kept',
             toolName: 'workspace_read',
             args: { path: 'kept.md' },
-            extraContent: {
-              google: { thought_signature: '<sig>' },
-              deepseek: { replay_marker: 'opaque' },
-            },
           },
         ],
-        reasoningDetails: keptReasoning,
+        providerContinuations: keptContinuations,
       }),
       createToolOutputMessage({
         id: 't_out_kept',
@@ -463,12 +467,13 @@ describe('ToolHistoryCompressorPreprocessor', () => {
       message => message.metadata?.isCompressedToolHistory === true
     );
 
-    expect(kept?.metadata?.reasoning_details).toEqual(keptReasoning);
-    expect(kept?.metadata?.tool_calls?.[0]?.extra_content).toEqual({
-      google: { thought_signature: '<sig>' },
-      deepseek: { replay_marker: 'opaque' },
+    expect(kept?.metadata?.provider_continuations).toEqual(keptContinuations);
+    expect(kept?.metadata?.tool_calls?.[0]).toEqual({
+      id: 'tc_kept',
+      type: 'function',
+      function: { name: 'workspace_read', arguments: '{"path":"kept.md"}' },
     });
-    expect(compressed?.metadata?.reasoning_details).toBeUndefined();
+    expect(compressed?.metadata?.provider_continuations).toBeUndefined();
     expect(compressed?.metadata?.tool_calls).toBeUndefined();
   });
 });

@@ -10,6 +10,7 @@ import {
 import type {
   AgentSpecTokenEstimationPolicy,
   AiMessage,
+  PromptUsageMeasurementPolicy,
   TokenRoute,
   TokenUsageCalibrationSample,
 } from '../../contracts';
@@ -161,6 +162,19 @@ export abstract class ContextManagerBase<
 
   protected getTokenRoute(): TokenRoute | undefined {
     return this.tokenRoute ?? this.tokenCalibrationState.route;
+  }
+
+  protected getPromptUsageMeasurementPolicy(): PromptUsageMeasurementPolicy {
+    const tokenRoute = this.getTokenRoute();
+    return {
+      ...(tokenRoute ? { token_route: tokenRoute } : {}),
+      remote_count_enabled: this.remoteCountPolicy?.enabled === true,
+      remote_count_failure_behavior:
+        this.remoteCountPolicy?.failureBehavior ?? 'use-local-estimate',
+      ...(this.tokenCalibrationState.coefficient !== undefined
+        ? { calibration_coefficient: this.tokenCalibrationState.coefficient }
+        : {}),
+    };
   }
 
   protected estimateLocalTokens(messages: readonly AiMessage[]): number {

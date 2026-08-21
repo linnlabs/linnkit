@@ -1,36 +1,35 @@
 import { describe, expect, it } from 'vitest';
 
-import type { AiMessage } from '../../../../../contracts';
-import { formatAgentLlmMessages } from '../../../../shared';
-import { ToolReplayProtocolGuardPreprocessor } from '../toolReplayProtocolGuard';
+import type { AiMessage, ProviderContinuation } from '../../../../../contracts';
 import { ToolCallIdSchema } from '../../../../../contracts';
+import { ToolReplayProtocolGuardPreprocessor } from '../toolReplayProtocolGuard';
 
-const deepseekPolicy = {
+const requiredPolicy = {
   provider: 'deepseek',
-  requiresReasoningDetailsForToolReplay: true,
-  missingSidecarBehavior: 'degrade_to_text' as const,
+  requiresProviderContinuationForToolReplay: true,
 };
 
-const deepseekEmptyFallbackPolicy = {
-  provider: 'deepseek',
-  requiresReasoningDetailsForToolReplay: true,
-  missingSidecarBehavior: 'provider_empty_replay_field' as const,
+const continuation: ProviderContinuation = {
+  schema_version: 2,
+  producer: {
+    model_id: 'deepseek-reasoner',
+    endpoint_id: 'deepseek',
+    api_surface: 'openai_chat_completions',
+    capability_id: 'test:chat-codec',
+    endpoint_model_id: 'deepseek-reasoner',
+  },
+  kind: 'reasoning_content',
+  payload: { type: 'reasoning_content', reasoning_content: 'Need README.' },
 };
 
 function userMessage(id: string, timestamp: number): AiMessage {
-  return {
-    id,
-    role: 'user',
-    type: 'user_input',
-    content: id,
-    timestamp,
-  };
+  return { id, role: 'user', type: 'user_input', content: id, timestamp };
 }
 
 function toolCallsMessage(opts: {
   id: string;
   timestamp: number;
-  reasoningDetails?: unknown[];
+  providerContinuations?: ProviderContinuation[];
 }): AiMessage {
   return {
     id: opts.id,
@@ -39,17 +38,24 @@ function toolCallsMessage(opts: {
     content: '',
     timestamp: opts.timestamp,
     metadata: {
-      ...(opts.reasoningDetails ? { reasoning_details: opts.reasoningDetails } : {}),
-      tool_calls: [
-        {
-          id: ToolCallIdSchema.parse(`${opts.id}_call`),
-          type: 'function',
-          function: {
-            name: 'workspace_read',
-            arguments: JSON.stringify({ path: 'README.md' }),
-          },
+      ...(opts.providerContinuations
+        ? {
+            provider_continuations: opts.providerContinuations,
+            assistant_replay_parts: [{
+              type: 'tool_call' as const,
+              tool_call_id: `${opts.id}_call`,
+              provider_continuations: opts.providerContinuations,
+            }],
+          }
+        : {}),
+      tool_calls: [{
+        id: ToolCallIdSchema.parse(`${opts.id}_call`),
+        type: 'function',
+        function: {
+          name: 'workspace_read',
+          arguments: JSON.stringify({ path: 'README.md' }),
         },
-      ],
+      }],
     },
   };
 }
@@ -70,100 +76,54 @@ function toolOutputMessage(toolCallSourceId: string, timestamp: number): AiMessa
 }
 
 describe('ToolReplayProtocolGuardPreprocessor', () => {
-  it('降级历史轮次中缺少 required reasoning_details 的完整工具组', async () => {
-    const preprocessor = new ToolReplayProtocolGuardPreprocessor({ policy: deepseekPolicy });
-    const result = await preprocessor.process(
-      [
-        userMessage('user_old', 1000),
-        toolCallsMessage({ id: 'assistant_missing_sidecar', timestamp: 1100 }),
-        toolOutputMessage('assistant_missing_sidecar', 1200),
-        userMessage('user_followup', 2000),
-      ],
-      { debugMode: false }
-    );
+  it('required route 拒绝缺少 provider continuation 的完整工具组', async () => {
+    const preprocessor = new ToolReplayProtocolGuardPreprocessor({ policy: requiredPolicy });
+    const processing = preprocessor.process([
+      userMessage('user_old', 1000),
+      toolCallsMessage({ id: 'assistant_missing_continuation', timestamp: 1100 }),
+      toolOutputMessage('assistant_missing_continuation', 1200),
+      userMessage('user_followup', 2000),
+    ], { debugMode: false });
 
-    expect(
-      formatAgentLlmMessages(result.messages).some(
-        message => message.role === 'assistant' && 'tool_calls' in message
-      )
-    ).toBe(false);
-    expect(formatAgentLlmMessages(result.messages).some(message => message.role === 'tool')).toBe(
-      false
+    await expect(processing).rejects.toThrow(
+      /要求工具回放携带有序 provider continuation.*assistant_missing_continuation_call/,
     );
-    expect(result.messages.some(message => message.metadata?.isDegradedToolReplay === true)).toBe(
-      true
-    );
-    expect(result.appliedStrategies).toContain('tool_replay_protocol_guard');
   });
 
-  it('保留带真实 reasoning_details 的历史工具组', async () => {
-    const reasoningDetails = [
-      { provider: 'deepseek', type: 'reasoning_content', reasoning_content: 'Need README.' },
+  it('required route 保留带完整 producer identity 的工具组', async () => {
+    const messages = [
+      userMessage('user_old', 1000),
+      toolCallsMessage({
+        id: 'assistant_with_continuation',
+        timestamp: 1100,
+        providerContinuations: [continuation],
+      }),
+      toolOutputMessage('assistant_with_continuation', 1200),
+      userMessage('user_followup', 2000),
     ];
-    const preprocessor = new ToolReplayProtocolGuardPreprocessor({ policy: deepseekPolicy });
-    const result = await preprocessor.process(
-      [
-        userMessage('user_old', 1000),
-        toolCallsMessage({ id: 'assistant_with_sidecar', timestamp: 1100, reasoningDetails }),
-        toolOutputMessage('assistant_with_sidecar', 1200),
-        userMessage('user_followup', 2000),
-      ],
-      { debugMode: false }
-    );
-    const assistant = formatAgentLlmMessages(result.messages).find(message => {
-      return message.role === 'assistant' && 'tool_calls' in message;
-    });
+    const preprocessor = new ToolReplayProtocolGuardPreprocessor({ policy: requiredPolicy });
 
-    expect(assistant?.reasoning_details).toEqual(reasoningDetails);
-    expect(result.appliedStrategies).not.toContain('tool_replay_protocol_guard');
+    const result = await preprocessor.process(messages, { debugMode: false });
+
+    expect(result.messages).toEqual(messages);
+    expect(result.appliedStrategies).toEqual([]);
   });
 
-  it('不降级当前轮次工具组，避免掩盖新链路丢 sidecar 的根因', async () => {
-    const preprocessor = new ToolReplayProtocolGuardPreprocessor({ policy: deepseekPolicy });
-    const result = await preprocessor.process(
-      [
-        userMessage('user_current', 1000),
-        toolCallsMessage({ id: 'assistant_current_missing_sidecar', timestamp: 1100 }),
-        toolOutputMessage('assistant_current_missing_sidecar', 1200),
-      ],
-      { debugMode: false }
-    );
+  it('当前轮次也拒绝缺失 continuation，避免掩盖生产链路缺陷', async () => {
+    const preprocessor = new ToolReplayProtocolGuardPreprocessor({ policy: requiredPolicy });
+    const processing = preprocessor.process([
+      userMessage('user_current', 1000),
+      toolCallsMessage({ id: 'assistant_current_missing', timestamp: 1100 }),
+      toolOutputMessage('assistant_current_missing', 1200),
+    ], { debugMode: false });
 
-    expect(
-      formatAgentLlmMessages(result.messages).some(
-        message => message.role === 'assistant' && 'tool_calls' in message
-      )
-    ).toBe(true);
-    expect(result.messages.some(message => message.metadata?.isDegradedToolReplay === true)).toBe(
-      false
-    );
+    await expect(processing).rejects.toThrow(/assistant_current_missing_call/);
   });
 
-  it('可按 host 策略保留结构化工具回放，并标记由 provider 补空 replay 字段', async () => {
-    const preprocessor = new ToolReplayProtocolGuardPreprocessor({
-      policy: deepseekEmptyFallbackPolicy,
-    });
-    const result = await preprocessor.process(
-      [
-        userMessage('user_old', 1000),
-        toolCallsMessage({ id: 'assistant_missing_sidecar', timestamp: 1100 }),
-        toolOutputMessage('assistant_missing_sidecar', 1200),
-        userMessage('user_followup', 2000),
-      ],
-      { debugMode: false }
-    );
-
-    const llmMessages = formatAgentLlmMessages(result.messages);
-    const assistant = llmMessages.find(
-      message => message.role === 'assistant' && 'tool_calls' in message
-    );
-
-    expect(assistant).toBeDefined();
-    expect(assistant?.provider_empty_replay_field).toBe(true);
-    expect(llmMessages.some(message => message.role === 'tool')).toBe(true);
-    expect(result.messages.some(message => message.metadata?.isDegradedToolReplay === true)).toBe(
-      false
-    );
-    expect(result.appliedStrategies).toContain('tool_replay_protocol_guard');
+  it('optional route 不执行 continuation 守卫', () => {
+    const preprocessor = new ToolReplayProtocolGuardPreprocessor();
+    expect(preprocessor.shouldSkip([
+      toolCallsMessage({ id: 'assistant_optional', timestamp: 1000 }),
+    ], { debugMode: false })).toBe(true);
   });
 });

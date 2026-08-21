@@ -77,7 +77,7 @@ export class ModelResolver implements ModelResolverLike {
    * 选择一个可用的“策略切模备用聊天模型”：
    * - 必须具备 chat 能力
    * - 必须已解析到 api_key（否则必然失败）
-   * - 尽量避开 openrouter（减少被路由到受限上游的概率）
+   * - Host 可通过 fallbackModelPreferredOrder 显式声明顺序；Linnkit 不解释 URL 或 Provider 名称
    */
   pickFallbackChatModel(
     excludedModelIds: Set<string>,
@@ -101,10 +101,6 @@ export class ModelResolver implements ModelResolverLike {
       if (found) return found.id;
     }
 
-    const nonOpenRouter = enabled.find((model) => {
-      const apiBase = getString(model, 'api_base') ?? '';
-      return !apiBase.includes('openrouter.ai');
-    });
-    return (nonOpenRouter || enabled[0]).id;
+    return enabled[0].id;
   }
 }

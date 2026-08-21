@@ -29,21 +29,28 @@ const agent = {
   tools: [],
 };
 
-const llm = {
-  async chatCompletion() {
-    return { content: ${JSON.stringify(answer)} };
-  },
-  async chatCompletionStream(_modelId, _messages, _options, onContent, _onError, onFinish, _onThought, onUsage) {
-    onContent?.(${JSON.stringify(answer)});
-    onUsage?.({ prompt_tokens: 4, completion_tokens: 3, total_tokens: 7 });
-    onFinish?.('stop');
+const inference = {
+  async *stream(request) {
+    yield { type: 'start', model_id: request.model_id, attempt_id: request.invocation.attempt_id };
+    yield { type: 'answer_delta', text: ${JSON.stringify(answer)} };
+    yield {
+      type: 'usage',
+      usage: {
+        inputTokens: 4,
+        outputTokens: 3,
+        totalTokens: 7,
+        source: 'provider-response-usage',
+        confidence: 'actual',
+      },
+    };
+    yield { type: 'finish', reason: 'stop' };
   },
 };
 
 export default {
   agents: [agent],
   defaultModelId: 'scripted',
-  llm,
+  inference,
 };
 `;
 }
@@ -69,6 +76,12 @@ describe('linnkit cli', () => {
       throw new Error('generated quickstart package.json must define dependencies.');
     }
     expect(generatedPackageJson.dependencies['@linnlabs/linnkit']).toBe('^0.16.0');
+    expect(generatedPackageJson.dependencies['ai']).toBe('^7.0.65');
+    expect(generatedPackageJson.dependencies['@ai-sdk/openai']).toBe('^4.0.41');
+    const adapter = await readFile(join(cwd, 'demo', 'adapters', 'ai-sdk-openai.mjs'), 'utf8');
+    expect(adapter).toContain('createProviderRegistry');
+    expect(adapter).toContain('maxRetries: 0');
+    expect(adapter).not.toContain('createServerSentEventFrameParser');
     await expect(runInitCommand({ cwd, name: 'demo' })).rejects.toThrow(/not empty/);
   });
 
@@ -89,7 +102,7 @@ describe('linnkit cli', () => {
 
     expect(exitCode).toBe(0);
     expect(stdout).toContain('✓ config linnkit.config.mjs');
-    expect(stdout).toContain('✓ llm adapter shape');
+    expect(stdout).toContain('✓ canonical inference port');
     expect(stdout).toContain('✓ npmjs public registry');
   });
 
