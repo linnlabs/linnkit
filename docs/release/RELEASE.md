@@ -1,6 +1,6 @@
 # linnkit Release Runbook
 
-本文只回答一个问题：**现在怎么发布 Linnkit core 和可选 AI SDK adapter**。不要在这里写版本流水账、事故复盘、长篇 release notes 或历史清单。
+本文只回答两个问题：**现在怎么发布 Linnkit core，以及怎么维护当前只公开源码的可选 AI SDK adapter**。不要在这里写版本流水账、事故复盘、长篇 release notes 或历史清单。
 
 ## 1. 文档职责
 
@@ -14,16 +14,16 @@
 
 ## 2. 发布边界
 
-linnkit 有三个位置，职责不同：
+Linnkit core 与 Adapter 涉及四类位置，职责不同：
 
 | 位置 | 职责 | 发版时怎么处理 |
 |---|---|---|
 | linnya 私有仓 `packages/linnkit`、`packages/linnkit-provider-ai-sdk` | 日常开发镜像，跟随 linnya 一起提交和推送。 | 不从这里打 npm release tag，也不从 linnya workflow 发布 npm。 |
-| GitHub 公开仓 [`linnlabs/linnkit`](https://github.com/linnlabs/linnkit) | core 位于仓库根，Adapter 位于 `packages/provider-ai-sdk`；保存公开源码、release tag 与 GitHub Release。 | `v*` 发布 core；`provider-ai-sdk-v*` 发布 Adapter。 |
+| GitHub 公开仓 [`linnlabs/linnkit`](https://github.com/linnlabs/linnkit) | core 位于仓库根，Adapter 位于 `packages/provider-ai-sdk`；保存公开源码、release tag 与 GitHub Release。 | `v*` 发布 core；Adapter 当前只同步源码，不打 release tag。 |
 | npm 包 [`@linnlabs/linnkit`](https://www.npmjs.com/package/@linnlabs/linnkit) | 外部消费者安装的正式包。 | 由公开仓 GitHub Actions 通过 npm Trusted Publishing 发布。 |
-| npm 包 `@linnlabs/linnkit-provider-ai-sdk` | Host 可选安装的 AI SDK language adapter。 | 独立版本、独立 tag、独立 Trusted Publisher，不进入 Linnkit core 依赖。 |
+| 公开源码 package `@linnlabs/linnkit-provider-ai-sdk` | Host 可参考或复用的 AI SDK language adapter，源码位于公开仓 `packages/provider-ai-sdk`。 | 当前不发布 npmjs；独立 manifest、测试和 tarball smoke 用于守住 package 边界，不进入 Linnkit core 依赖。 |
 
-也就是说：源码只公开到 `github.com/linnlabs/linnkit`；两个 npm package 各自发布。linnya 私有仓里的镜像只随 linnya 自己的 git 流程走。
+也就是说：core 同时发布到 GitHub 和 npmjs；Adapter 当前只公开 GitHub 源码。linnya 私有仓里的镜像只随 linnya 自己的 git 流程走。未来只有出现明确外部安装需求并经 owner 决策后，才启用 Adapter 的 npm 发布。
 
 ## 3. 发版前检查
 
@@ -48,7 +48,6 @@ pnpm --filter @linnlabs/linnkit-provider-ai-sdk pack-smoke
 ```bash
 git status --short
 npm view @linnlabs/linnkit version dist-tags.latest versions --json --registry=https://registry.npmjs.org/
-npm view @linnlabs/linnkit-provider-ai-sdk version dist-tags.latest versions --json --registry=https://registry.npmjs.org/
 ```
 
 必须满足：
@@ -70,41 +69,37 @@ npm view @linnlabs/linnkit-provider-ai-sdk version dist-tags.latest versions --j
    - **回写画像（防文档漂移 · 2026-06-22 治理纪律）**：同步 `docs/framework/README.md §7` 阶段台账与 `docs/99-research-notes/topic-agent-framework-comparison-2026.md` 的版本/能力画像，使其与本次 `CHANGELOG.md` 一致。**CHANGELOG 是版本权威源；画像类文档每次发版后必须对齐**，否则会像 0.8→0.21 期间那样把旧短板继续传播。
 4. 跑完第 3 节的本地检查。
 5. 提交并推送公开仓 `main`。
-6. 只为实际发布的 package 打自己的 tag 并推送：
+6. 为 core 打 tag 并推送：
 
 ```bash
 git tag vX.Y.Z
 git push origin main
 git push origin vX.Y.Z
-
-git tag provider-ai-sdk-vX.Y.Z
-git push origin provider-ai-sdk-vX.Y.Z
 ```
 
-7. core 观察 `Release` workflow；Adapter 观察 `Release Provider AI SDK Adapter` workflow。
+7. 观察 core 的 `Release` workflow。禁止仅因 Adapter 源码有更新就推送 `provider-ai-sdk-v*` tag。
 8. 发布成功后验证 npm：
 
 ```bash
 npm view @linnlabs/linnkit@X.Y.Z version --registry=https://registry.npmjs.org/
 npm view @linnlabs/linnkit version dist-tags.latest --registry=https://registry.npmjs.org/
-npm view @linnlabs/linnkit-provider-ai-sdk version dist-tags.latest --registry=https://registry.npmjs.org/
 ```
 
 ## 5. Trusted Publishing 前置条件
 
 公开仓 `.github/workflows/release.yml` 使用 npm Trusted Publishing / GitHub OIDC，不使用长期 npm token。
 
-npm package settings 必须分别配置 Trusted Publisher：
+npm package settings 必须为 core 配置 Trusted Publisher：
 
 | 字段 | 值 |
 |---|---|
 | Publisher type | GitHub Actions |
 | Organization / User | `linnlabs` |
 | Repository | `linnkit` |
-| Workflow filename | core 使用 `release.yml`；Adapter 使用 `release-provider-ai-sdk.yml` |
-| Package | 分别为 `@linnlabs/linnkit`、`@linnlabs/linnkit-provider-ai-sdk` |
+| Workflow filename | `release.yml` |
+| Package | `@linnlabs/linnkit` |
 
-`@linnlabs/linnkit-provider-ai-sdk@0.1.0` 是新 package，npm 在 package 尚不存在时不能预先配置 Trusted Publisher。首次发布只能做一次 bootstrap：先让源码进入公开仓 `main`，由 maintainer 在本机登录 npm，然后在公开仓 `packages/provider-ai-sdk` 执行 `npm publish --access public --provenance=false`。发布成功后立即配置上述 Trusted Publisher；再推 `provider-ai-sdk-v0.1.0`，工作流会把已存在版本视为幂等完成并创建 GitHub Release。后续版本一律走 OIDC，禁止继续本地发包。
+Adapter 的 `release-provider-ai-sdk.yml` 是未来分发准备，当前不得触发。如果以后 owner 明确决定发布 `@linnlabs/linnkit-provider-ai-sdk`，应先重新完成外部安装需求、版本和 Quickstart 关系评审。npm 在新 package 尚不存在时不能预先配置 Trusted Publisher，因此首版只能由 maintainer 从公开 `main` 做一次无 provenance bootstrap；创建 package 后立即配置 `release-provider-ai-sdk.yml` 的 Trusted Publisher，后续版本一律走 OIDC。这个未来流程不是当前 core 发版的前置条件。
 
 注意：
 
@@ -151,4 +146,5 @@ npm publish --access public --provenance
 - `package.shell.test.ts`、`package.runtime-import.test.ts`、`package.events-browser-safe.test.ts` 是发布包边界的守门测试，不能因为“只是文档/打包麻烦”跳过。
 - `packages/provider-ai-sdk` 必须继续拥有自己的 manifest、构建、Vitest 配置、conformance、packed runtime smoke、LICENSE 和 CHANGELOG；禁止反向依赖公开仓根脚本或 Host 私有路径。
 - Adapter 可以依赖 Linnkit 公开 `/ports`、`/contracts`，Linnkit core 禁止反向依赖 Adapter 或任何 `@ai-sdk/*` package。
+- 未经新的 owner 决策，禁止推送 `provider-ai-sdk-v*` tag 或把 Quickstart 改成依赖尚未发布的 Adapter。
 - 公开 API 和版本兼容性写进 `CHANGELOG.md`；内部原因和长叙事写进 `RELEASE-HISTORY.md`；本文只在流程变化时更新。
