@@ -1,7 +1,6 @@
 {
   "name": "@linnlabs/linnkit",
   "version": "0.30.0",
-  "packageManager": "pnpm@10.20.0",
   "type": "module",
   "description": "A fine-grained context engineering framework for Agent applications — control every token sent to the model, with clear run lifecycle, audit records, and testable protocol boundaries.",
   "license": "MIT",

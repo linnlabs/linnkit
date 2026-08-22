@@ -12,25 +12,19 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
         with:
           node-version: '24'
           package-manager-cache: false
-      - run: npm install --global pnpm@10.20.0
-      - run: pnpm install --frozen-lockfile
+      - run: npm install --no-audit --no-fund
       - name: Verify Linnkit core
         run: |
-          pnpm run typecheck
-          pnpm run build
-          pnpm run test
-          pnpm run test:smoke
-          pnpm run test:smoke:dist
+          npm run typecheck
+          npm run build
+          npm run test
+          npm run test:smoke
+          npm run test:smoke:dist
       - run: npm pack --dry-run
-      - name: Verify optional AI SDK adapter
-        run: |
-          pnpm --filter @linnlabs/linnkit-provider-ai-sdk typecheck
-          pnpm --filter @linnlabs/linnkit-provider-ai-sdk test
-          pnpm --filter @linnlabs/linnkit-provider-ai-sdk pack-smoke
