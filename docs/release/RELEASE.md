@@ -1,6 +1,6 @@
 # linnkit Release Runbook
 
-本文只回答两个问题：**现在怎么发布 Linnkit core，以及怎么维护当前只公开源码的可选 AI SDK adapter**。不要在这里写版本流水账、事故复盘、长篇 release notes 或历史清单。
+本文只回答一个问题：**现在怎么发布 Linnkit core**。不要在这里写版本流水账、事故复盘、长篇 release notes 或历史清单。
 
 ## 1. 文档职责
 
@@ -14,33 +14,29 @@
 
 ## 2. 发布边界
 
-Linnkit core 与 Adapter 涉及四类位置，职责不同：
+Linnkit core 有三个位置，职责不同：
 
 | 位置 | 职责 | 发版时怎么处理 |
 |---|---|---|
-| linnya 私有仓 `packages/linnkit`、`packages/linnkit-provider-ai-sdk` | 日常开发镜像，跟随 linnya 一起提交和推送。 | 不从这里打 npm release tag，也不从 linnya workflow 发布 npm。 |
-| GitHub 公开仓 [`linnlabs/linnkit`](https://github.com/linnlabs/linnkit) | core 位于仓库根，Adapter 位于 `packages/provider-ai-sdk`；保存公开源码、release tag 与 GitHub Release。 | `v*` 发布 core；Adapter 当前只同步源码，不打 release tag。 |
+| linnya 私有仓 `packages/linnkit` | 日常开发镜像，跟随宿主应用一起提交和推送。 | 不从这里打 npm release tag，也不从宿主应用 workflow 发布 npm。 |
+| GitHub 公开仓 [`linnlabs/linnkit`](https://github.com/linnlabs/linnkit) | core 的公开源码、release tag 与 GitHub Release。 | `v*` 发布 core。 |
 | npm 包 [`@linnlabs/linnkit`](https://www.npmjs.com/package/@linnlabs/linnkit) | 外部消费者安装的正式包。 | 由公开仓 GitHub Actions 通过 npm Trusted Publishing 发布。 |
-| 公开源码 package `@linnlabs/linnkit-provider-ai-sdk` | Host 可参考或复用的 AI SDK language adapter，源码位于公开仓 `packages/provider-ai-sdk`。 | 当前不发布 npmjs；独立 manifest、测试和 tarball smoke 用于守住 package 边界，不进入 Linnkit core 依赖。 |
 
-也就是说：core 同时发布到 GitHub 和 npmjs；Adapter 当前只公开 GitHub 源码。linnya 私有仓里的镜像只随 linnya 自己的 git 流程走。未来只有出现明确外部安装需求并经 owner 决策后，才启用 Adapter 的 npm 发布。
+也就是说：core 同时发布到 GitHub 和 npmjs；宿主应用里的开发镜像只随宿主自己的 git 流程走。Provider adapter 不属于 Linnkit core 的公开源码或发布流程。
 
 ## 3. 发版前检查
 
 在公开仓根目录执行：
 
 ```bash
-pnpm install --frozen-lockfile
-pnpm run typecheck
-pnpm run build:clean
-pnpm run build
-pnpm run test
-pnpm run test:smoke
-pnpm run test:smoke:dist
-pnpm run publish:dry-run
-pnpm --filter @linnlabs/linnkit-provider-ai-sdk typecheck
-pnpm --filter @linnlabs/linnkit-provider-ai-sdk test
-pnpm --filter @linnlabs/linnkit-provider-ai-sdk pack-smoke
+npm install --no-audit --no-fund
+npm run typecheck
+npm run build:clean
+npm run build
+npm run test
+npm run test:smoke
+npm run test:smoke:dist
+npm run publish:dry-run
 ```
 
 然后检查：
@@ -61,7 +57,7 @@ npm view @linnlabs/linnkit version dist-tags.latest versions --json --registry=h
 ## 4. 常规发布步骤
 
 1. 在 linnya 私有仓完成开发、测试、提交和推送。
-2. 把 `packages/linnkit` 同步到公开仓根目录，把 `packages/linnkit-provider-ai-sdk` 同步到公开仓 `packages/provider-ai-sdk`；不得复制 `dist`、`node_modules`，也不得覆盖公开仓的 `.git`、`.github`、`.gitignore`、`pnpm-workspace.yaml` 和 lockfile。
+2. 把 `packages/linnkit` 同步到公开仓根目录；不得复制 `dist`、`node_modules`，也不得覆盖公开仓的 `.git`、`.github` 和 `.gitignore`。
 3. 在公开仓补齐或确认：
    - `package.json#version`
    - `CHANGELOG.md`
@@ -77,7 +73,7 @@ git push origin main
 git push origin vX.Y.Z
 ```
 
-7. 观察 core 的 `Release` workflow。禁止仅因 Adapter 源码有更新就推送 `provider-ai-sdk-v*` tag。
+7. 观察 core 的 `Release` workflow。
 8. 发布成功后验证 npm：
 
 ```bash
@@ -99,8 +95,6 @@ npm package settings 必须为 core 配置 Trusted Publisher：
 | Workflow filename | `release.yml` |
 | Package | `@linnlabs/linnkit` |
 
-Adapter 的 `release-provider-ai-sdk.yml` 是未来分发准备，当前不得触发。如果以后 owner 明确决定发布 `@linnlabs/linnkit-provider-ai-sdk`，应先重新完成外部安装需求、版本和 Quickstart 关系评审。npm 在新 package 尚不存在时不能预先配置 Trusted Publisher，因此首版只能由 maintainer 从公开 `main` 做一次无 provenance bootstrap；创建 package 后立即配置 `release-provider-ai-sdk.yml` 的 Trusted Publisher，后续版本一律走 OIDC。这个未来流程不是当前 core 发版的前置条件。
-
 注意：
 
 - `npm whoami` 不能验证 OIDC 发布权限，因为 OIDC token 只在 `npm publish` 时由 npm 颁发。
@@ -112,7 +106,7 @@ Adapter 的 `release-provider-ai-sdk.yml` 是未来分发准备，当前不得�
 | 现象 | 通常原因 | 处理 |
 |---|---|---|
 | `npm publish` 报 `E404` / `you do not have permission` / `could not be found` | npm Trusted Publisher 未配置，或 org/repo/workflow 文件名不匹配。 | 去 npm package settings 修 Trusted Publisher。不要改成 token 发布。 |
-| workflow 报 tag version mismatch | tag 前缀或版本与对应 package manifest 不一致。 | core 使用 `vX.Y.Z`；Adapter 使用 `provider-ai-sdk-vX.Y.Z`，修正后重打。 |
+| workflow 报 tag version mismatch | `vX.Y.Z` 与 `package.json#version` 不一致。 | 修正版本或删除错误 tag 后重打。 |
 | `npm publish` 报版本已存在 | npm 不允许覆盖已发布版本。 | 如果 npm 上的同版本就是这次产物，可视为幂等完成；否则 bump 新版本。 |
 | tarball 缺 CLI bin | `package.json#files` 没包含 `bin`，或 `bin/linnkit.cjs` 不存在。 | 修 manifest / bin wrapper，重新 dry-run。 |
 | 外部 import 报 `Missing tiktoken_bg.wasm` 或类似资源缺失 | 第三方依赖被 tsup inline，资源没进包。 | 确认依赖同时在 `package.json#dependencies` / `peerDependencies` 和 `tsup.config.ts#external`，并跑 dist smoke。 |
@@ -144,7 +138,5 @@ npm publish --access public --provenance
 
 - `package.json#files` 必须继续排除 `src`、`docs/framework`、`docs/release`、`docs/99-research-notes` 和开发手册。
 - `package.shell.test.ts`、`package.runtime-import.test.ts`、`package.events-browser-safe.test.ts` 是发布包边界的守门测试，不能因为“只是文档/打包麻烦”跳过。
-- `packages/provider-ai-sdk` 必须继续拥有自己的 manifest、构建、Vitest 配置、conformance、packed runtime smoke、LICENSE 和 CHANGELOG；禁止反向依赖公开仓根脚本或 Host 私有路径。
-- Adapter 可以依赖 Linnkit 公开 `/ports`、`/contracts`，Linnkit core 禁止反向依赖 Adapter 或任何 `@ai-sdk/*` package。
-- 未经新的 owner 决策，禁止推送 `provider-ai-sdk-v*` tag 或把 Quickstart 改成依赖尚未发布的 Adapter。
+- Linnkit core 禁止依赖 Provider adapter 或任何 `@ai-sdk/*` package；Host 只通过公开 ports/contracts 接入自己的实现。
 - 公开 API 和版本兼容性写进 `CHANGELOG.md`；内部原因和长叙事写进 `RELEASE-HISTORY.md`；本文只在流程变化时更新。
