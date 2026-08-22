@@ -16,7 +16,7 @@
 
 > 你装的这个包负责"agent 怎么跑、上下文怎么治理"，不负责"用哪个 LLM 提供商、工具集长什么样、消息怎么落库、SSE 怎么推、产品里有哪些 agent"。这些通通是你（host）要自己写的。
 
-这个边界是工程约束，不只是文档口号：Linnkit 核心不得 import Provider SDK，不解析厂商 request/response/SSE/usage 字段，也不按厂商名、模型名、base URL 或错误文本选择 codec。Host 必须实现 `CanonicalInferencePort`：可以自己维护显式 Provider registry，也可以参考或复用公开源码中的可选 [`@linnlabs/linnkit-provider-ai-sdk`](https://github.com/linnlabs/linnkit/tree/main/packages/provider-ai-sdk)。该 Adapter 当前随公开仓维护，不承诺 npmjs 可安装；无论 Host 如何实现，Linnkit 始终只消费 canonical port，继续拥有 Agent loop、上下文、工具执行、调用预算与 durable replay。
+这个边界是工程约束，不只是文档口号：Linnkit 核心不得 import Provider SDK，不解析厂商 request/response/SSE/usage 字段，也不按厂商名、模型名、base URL 或错误文本选择 codec。Host 必须实现 `CanonicalInferencePort`，并自行选择、实现和维护 Provider adapter。无论 Host 如何适配厂商协议，Linnkit 始终只消费 canonical port，继续拥有 Agent loop、上下文、工具执行、调用预算与 durable replay。
 
 ## 2. 你必须自己写的（接入面）
 
@@ -25,7 +25,7 @@
 
 | 你必须自己写的                                 | linnkit 给的接入合同（type/symbol）                                                                             | 从哪里 import                          |
 | --------------------------------------- | ------------------------------------------------------------------------------------------------------- | ----------------------------------- |
-| 1. LLM provider 适配器                     | `CanonicalInferencePort`；可选使用 `@linnlabs/linnkit-provider-ai-sdk`                                               | `@linnlabs/linnkit/ports`           |
+| 1. LLM provider 适配器                     | `CanonicalInferencePort`                                                                                           | `@linnlabs/linnkit/ports`           |
 | 2. 工具集                                  | `BaseTool` / `ToolRuntimePort`                                                                          | `@linnlabs/linnkit/runtime-kernel`  |
 | 3. 上下文围栏（fence）注册 + 注入适配                | `FenceRegistry` / `FenceDescriptor` / `FenceInjection` / `MustKeepPolicy` / `FenceLifetimePreprocessor` | `@linnlabs/linnkit/context-manager` |
 | 4. 持久化适配器                               | `Checkpointer` / `EventStore` / `RunRegistryStore`                                                      | `@linnlabs/linnkit/runtime-kernel`  |

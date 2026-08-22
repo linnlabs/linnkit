@@ -11,7 +11,7 @@ linnkit is an open-source project licensed under MIT. Contributions of all kinds
 **Requirements**
 
 - Node.js `>=22`
-- pnpm `10.20.0`（由根 `packageManager` 固定）
+- npm `>=10`
 
 **Getting started**
 
@@ -21,11 +21,10 @@ git clone https://github.com/linnlabs/linnkit.git
 cd linnkit
 
 # Install dependencies
-corepack enable
-pnpm install --frozen-lockfile
+npm install --no-audit --no-fund
 
 # Verify the setup
-pnpm run test:smoke
+npm run test:smoke
 ```
 
 ---
@@ -34,23 +33,18 @@ pnpm run test:smoke
 
 | Command | What it runs |
 |---------|-------------|
-| `pnpm run test:smoke` | Linnkit package shell smoke test — verifies exports and sub-entrypoints resolve correctly |
-| `pnpm run test:smoke:dist` | Linnkit runtime import + browser-safe events seam test against the built dist |
-| `pnpm run test` | Linnkit core test suite |
-| `pnpm run typecheck` | Linnkit core TypeScript type check (no emit) |
-| `pnpm run build` | Build Linnkit core dist (required before `test:smoke:dist`) |
-| `pnpm --filter @linnlabs/linnkit-provider-ai-sdk test` | AI SDK adapter unit and Provider conformance suite |
-| `pnpm --filter @linnlabs/linnkit-provider-ai-sdk pack-smoke` | Build and verify the adapter's packed CJS/ESM runtime |
+| `npm run test:smoke` | Linnkit package shell smoke test — verifies exports and sub-entrypoints resolve correctly |
+| `npm run test:smoke:dist` | Linnkit runtime import + browser-safe events seam test against the built dist |
+| `npm run test` | Linnkit core test suite |
+| `npm run typecheck` | Linnkit core TypeScript type check (no emit) |
+| `npm run build` | Build Linnkit core dist (required before `test:smoke:dist`) |
 
 Before opening a PR, run locally:
 
 ```bash
-pnpm run typecheck
-pnpm run build
-pnpm run test
-pnpm --filter @linnlabs/linnkit-provider-ai-sdk typecheck
-pnpm --filter @linnlabs/linnkit-provider-ai-sdk test
-pnpm --filter @linnlabs/linnkit-provider-ai-sdk pack-smoke
+npm run typecheck
+npm run build
+npm run test
 ```
 
 All three must pass.
@@ -61,14 +55,13 @@ All three must pass.
 
 **Checklist before marking PR ready for review**
 
-- [ ] Linnkit core 的 `pnpm run typecheck`、`build`、`test` 全部通过
-- [ ] Adapter 的 `typecheck`、`test`、`pack-smoke` 全部通过
+- [ ] Linnkit core 的 `npm run typecheck`、`build`、`test` 全部通过
 - [ ] New public exports are documented in the relevant `docs/integration/` guide
 - [ ] If you modified a public sub-entrypoint, check the snapshot test in `src/runtime-kernel/__tests__/__snapshots__/` and `src/testkit/__tests__/__snapshots__/` — update snapshots intentionally, not blindly
 
 **Scope guidance**
 
-- linnkit core is intentionally thin — it does not include built-in LLM providers, RAG, memory systems, or UI. Optional Provider integrations belong in a separate package such as `packages/provider-ai-sdk`; they cannot add Provider semantics or dependencies to the core.
+- linnkit core is intentionally thin — it does not include built-in LLM providers, RAG, memory systems, or UI. Provider integrations belong in Host repositories and cannot add Provider semantics or dependencies to the core.
 - Bug fixes and protocol-level improvements are always welcome.
 - Larger features or API surface changes: open an issue first to discuss design intent.
 

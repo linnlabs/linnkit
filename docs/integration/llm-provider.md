@@ -18,7 +18,7 @@
 
 Host 拥有：
 
-- Linnya model ID 到显式 Provider route 的解析；
+- Host model ID 到显式 Provider route 的解析；
 - 每次 attempt 的 credential、base URL 和 headers；
 - Provider SDK 的 message/tool/options 映射；
 - Provider 事件、raw usage、continuation 和错误的安全投影。
@@ -66,15 +66,15 @@ Linnkit 只验证 continuation 外层 schema、身份和顺序，然后原样转
 Context 和持久化层只保存 `RuntimeResourceRef`。Host 的 `LlmInputMaterializerPort` 在每个真实 attempt 的 route 确定后物化 bytes，并校验 workspace scope、完整性、MIME、尺寸、预算和 placement。
 
 `user_image` 与 `tool_result_image` 是 canonical history 中两个独立的图片来源，不能互相改写角色。产品只需声明统一的
-`image_input` 模型能力；Linnya 的视觉开关会同时允许这两个来源。Host codec 仍必须按各自原生角色编码，尤其不能因为
+`image_input` 模型能力；Host 的统一视觉开关可以同时允许这两个来源。Host codec 仍必须按各自原生角色编码，尤其不能因为
 Provider package 只方便编码 user 图片，就把工具结果图片伪装成 user message。Fallback 到新 route 后必须重新校验和
 物化，不复用上一 attempt 的 bytes。非视觉模型仍可执行图片生成工具并向用户展示结果，只是不产生下一轮模型附件。
 Host 的固定 route profile 必须声明第三方 codec 实际支持的图片来源；只有同时原生支持两种来源的 profile 才能承载
 产品的统一 `image_input` 能力。Chat-only profile 可以编码用户图片，不等于能够声明完整视觉能力。
 
-## 6. Vercel AI SDK 可选 adapter 与 Host 实现约束
+## 6. Host Provider adapter 实现约束
 
-通用 AI SDK 实现见公开源码中的 [`@linnlabs/linnkit-provider-ai-sdk`](https://github.com/linnlabs/linnkit/tree/main/packages/provider-ai-sdk)。它当前不是 npmjs 安装承诺。Linnkit 只看到 canonical port；可选 adapter 拥有 AI SDK Core、Provider packages 和 factory conformance，Host 仍拥有产品目录、route、credential 与 audit。核心约束是：
+Host 可以使用 Vercel AI SDK、厂商 SDK 或其他第三方实现 Provider adapter。Linnkit 只看到 canonical port；adapter 拥有 Provider SDK、factory 和协议 conformance，Host 仍拥有产品目录、route、credential 与 audit。核心约束是：
 
 - Adapter 只维护一个类型安全的 Provider factory registry，Host 业务代码和 Linnkit 不直接 import 具体 language package；
 - “一个 registry”不表示“一个 npm 包”：OpenAI、Anthropic、Google、DeepSeek、MiniMax 等正式协议各注册对应第三方 package factory，通用 OpenAI-compatible 只服务确实属于该兼容合同的 endpoint；
@@ -86,7 +86,7 @@ Host 的固定 route profile 必须声明第三方 codec 实际支持的图片�
 - Provider error 只由 adapter 投影稳定 code/retryable/kind，response body 不进入 canonical stream 或日志。
 - `contracts`、`ports`、`context-manager`、`runtime-kernel` 与通用 `shared` 由 boundary guard 约束：不能 import Provider SDK，不能出现厂商 wire 字段或按厂商/模型家族名称分支；CLI quickstart 和 Host conformance fixture 不属于核心实现。
 
-每个正式 factory 必须暴露 package 名称与版本，统一参加 adapter package conformance。升级 AI SDK Core 或任一 Provider package 后，至少重跑真实 SDK request codec、SSE/event、工具增量、usage provenance、continuation round-trip、认证、零重试与 packed CJS/ESM 门禁。SDK 负责厂商 wire 适配，不接管 Linnkit 的上下文管理、工具循环、调用预算、fallback 或持久化。
+每个正式 factory 必须暴露 package 名称与版本，统一参加 Host adapter conformance。升级 SDK Core 或任一 Provider package 后，至少重跑真实 SDK request codec、SSE/event、工具增量、usage provenance、continuation round-trip、认证、零重试与制品门禁。SDK 负责厂商 wire 适配，不接管 Linnkit 的上下文管理、工具循环、调用预算、fallback 或持久化。
 
 ## 7. 测试门禁
 
