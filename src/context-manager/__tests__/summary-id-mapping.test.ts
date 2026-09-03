@@ -25,7 +25,6 @@ describe('摘要ID字段映射测试', () => {
       content: '[历史对话摘要]\\n\\n摘要内容',
       original_message_count: 10,
       compression_ratio: 0.8,
-      generated_by: 'AgentSummarizationProvider',
       included_old_summary: false,
       // 🔥 新架构：精确 ID 列表 + 序列号
       replaced_message_ids: [
@@ -82,7 +81,6 @@ describe('摘要ID字段映射测试', () => {
       content: '[历史对话摘要]\\n\\n摘要内容',
       original_message_count: 5,
       compression_ratio: 0.7,
-      generated_by: 'SummarizationProvider',
       included_old_summary: true,
       // 🔥 新架构：精确 ID 列表 + 序列号
       replaced_message_ids: ['msg-100', 'msg-101', 'msg-102', 'msg-103', 'msg-104'],

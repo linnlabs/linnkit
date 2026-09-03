@@ -13,7 +13,6 @@ describe('context-manager Batch 4 public surface', () => {
     expect(contextManager).not.toHaveProperty('chatOrchestration');
     expect(contextManager).not.toHaveProperty('chatContracts');
     expect(contextManager).not.toHaveProperty('chatContext');
-    expect(contextManager.CHECKPOINT_MARKER_TYPE).toBe('context_checkpoint');
   });
 
   it('exposes runtime assembly concrete defaults through runtime-kernel graph namespace', () => {

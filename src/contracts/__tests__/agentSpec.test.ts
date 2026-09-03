@@ -68,12 +68,13 @@ describe('AgentSpec contract', () => {
             maxLines: 1600,
           },
         },
-        summarization: {
-          triggerThreshold: 0.7,
-          budgetPercentage: 0.12,
-          oldestMessagesPercentage: 0.75,
-          agentId: 'history_compression',
-          failureBehavior: 'continue-if-within-budget',
+        compaction: {
+          enabled: true,
+          triggerRatio: 0.8,
+          targetRatio: 0.5,
+          keepLatestToolGroups: 2,
+          maxOutputTokens: 8192,
+          maxCompactionsPerRun: 12,
         },
         mustKeep: {
           alwaysKeepTypes: ['system_prompt', 'user_input', 'tool_output'],
@@ -91,13 +92,6 @@ describe('AgentSpec contract', () => {
           minToolInteractionsToKeep: 2,
           toolPairingSearchRange: 12,
         },
-        checkpoint: {
-          keepPairsBefore: 4,
-          triggerToolName: 'phase_checkpoint',
-        },
-        reasoningRetention: {
-          keepLatestThoughts: 3,
-        },
         tokenEstimation: {
           encoding: 'cl100k_base',
           avgCharsPerToken: 2,
@@ -108,7 +102,6 @@ describe('AgentSpec contract', () => {
           thresholds: {
             toolCallStreak: 10,
             periodicReflectionPeriod: 30,
-            budgetWarningRatio: 0.9,
             lastStepsHintThreshold: 2,
           },
           extraRules: [
@@ -170,9 +163,38 @@ describe('AgentSpec contract', () => {
       maxChars: 20_000,
       maxLines: 1_200,
     });
+    expect(policy.compaction?.enabled).toBe(true);
     expect(policy.mustKeep?.alwaysKeepTypes).toEqual(['system_prompt', 'user_input']);
     expect(policy.contextTrace?.enabled).toBe(true);
     expect(policy.contextTrace?.maxTraceEvents).toBe(200);
+  });
+
+  it('允许显式关闭自动上下文压缩，但省略时默认开启', () => {
+    expect(defineContextPolicy().compaction?.enabled).toBe(true);
+    expect(defineContextPolicy({ compaction: { enabled: false } }).compaction?.enabled).toBe(false);
+  });
+
+  it('拒绝不能达到目标占比的压缩阈值', () => {
+    expect(AgentSpecContextPolicy.safeParse({
+      profileId: 'agent',
+      compaction: { triggerRatio: 0.8, targetRatio: 0.8 },
+    }).success).toBe(false);
+    expect(AgentSpecContextPolicy.safeParse({
+      profileId: 'agent',
+      compaction: { triggerRatio: 0.8, targetRatio: 0.9 },
+    }).success).toBe(false);
+    expect(AgentSpecContextPolicy.safeParse({
+      profileId: 'agent',
+      compaction: { triggerRatio: 0.4 },
+    }).success).toBe(false);
+    expect(AgentSpecContextPolicy.safeParse({
+      profileId: 'agent',
+      compaction: { targetRatio: 0.9 },
+    }).success).toBe(false);
+    expect(AgentSpecContextPolicy.safeParse({
+      profileId: 'agent',
+      compaction: { triggerRatio: 1 },
+    }).success).toBe(false);
   });
 
   it('rejects invalid toolHistory strategy values', () => {
@@ -322,13 +344,11 @@ describe('AgentSpec contract', () => {
     expect(result.success).toBe(false);
   });
 
-  it('rejects non-string summarization agentId values', () => {
+  it('rejects retired summarization policy fields', () => {
     const result = AgentSpecContextPolicy.safeParse({
       profileId: 'agent',
       summarization: {
-        agentId: {
-          prompt: 'do not inline prompt text',
-        },
+        enabled: true,
       },
     });
 

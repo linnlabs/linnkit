@@ -8,21 +8,24 @@
 
 agent 生态有几个名字相同语义不同的概念，第一次踩坑后才会意识到。先记住这几条。
 
-## 1. "Checkpoint" 的两种含义
+## 1. `Checkpoint` 只表示执行状态快照
 
-| 维度 | **Engine-state Checkpoint**（linnkit 拥有）| **应用层 Context Checkpoint**（你产品自有）|
+上下文压缩曾经也使用 Checkpoint 这个名字，容易与 Graph 状态恢复混淆。当前术语已经收口：
+
+| 维度 | **Engine-state Checkpoint** | **Automatic Context Compaction** |
 |---|---|---|
-| 接口 | `Checkpointer` port（`@linnlabs/linnkit/runtime-kernel`）| 不是 linnkit 接口；通常是你定义的一个 LLM tool |
-| 存什么 | `EngineState`：`nodeId / pendingToolCalls / executorLocal.stepCount / local` | LLM 主动写的"阶段总结摘要" |
-| 谁触发 | `GraphExecutor` 在循环内自动 save / load | LLM 模型自己在判断对话过长时主动调用工具 |
-| 解决什么 | 执行控制：中断恢复、为长 run / 异步 run 铺路 | 上下文工程：压缩 LLM context window、保留语义 |
-| 落到哪 | 你提供的 `Checkpointer` 适配器（SQLite/Redis/文件…）| 通常是个 RuntimeEvent，落你自己的 `EventStore` |
-| linnkit 知不知道？ | 知道（公开 port）| **不知道**（产品自有）|
+| 接口 | `Checkpointer` port（`@linnlabs/linnkit/runtime-kernel`） | `AgentSpec.contextPolicy.compaction` + Context Manager / Graph 内部合同；不是 LLM tool |
+| 存什么 | `EngineState`：`nodeId / pendingToolCalls / local` | 唯一 durable `history_summary` 事实及其 `replacedMessageIds` |
+| 谁触发 | `GraphExecutor` 在循环内自动 save / load | Graph 根据最终 Prompt 占用自动触发，使用本 run 已锁定的当前模型 |
+| 解决什么 | 执行控制：中断恢复、为长 run / 异步 run 铺路 | 上下文工程：替换旧的模型可见历史，同时保留 durable 原始事件 |
+| 落到哪 | 你提供的 `Checkpointer` 适配器（SQLite/Redis/文件……） | Host 的 RuntimeEvent 持久化链；成功提交后进入后续 context build |
+| 是否影响步数预算 | 否 | 否；压缩不重置 Graph step |
 
 接入时**绝对不要**把这两件事混到一起：
 
 - 实现 `Checkpointer` adapter 时，**只**要能 save/load `EngineState` 就够了。不要试图在里面塞"摘要 / 对话压缩"语义。
-- 想做"对话太长时压缩上下文"，那是另一条产品功能：定义你自己的 LLM 工具、它的输出走你的 `EventStore`、由你自己的 context-manager pipeline 在下一轮上下文构建时识别 marker 并裁剪。
+- 想调整"对话太长时如何压缩"，配置 `contextPolicy.compaction`，并遵守 Context Manager 纯计划 / Graph 执行与提交的单一主链；不要定义上下文 checkpoint 工具、marker、专用摘要 Agent 或第二套设置。
+- 旧 `context_checkpoint` 工具、step reset 与相关字段已直接删除，不提供兼容读取。当前完整合同见 [`context-engineering.md`](./context-engineering.md)。
 
 ## 2. "Event" 的三层
 

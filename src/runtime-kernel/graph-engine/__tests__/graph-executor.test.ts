@@ -6,6 +6,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { GraphExecutor } from '../engine';
 import type { Checkpointer } from '../checkpointer/base';
+import { MemoryCheckpointer } from '../checkpointer/memoryCheckpointer';
 import type { EngineState, GraphNode, NodeResult } from '../types';
 import { createThoughtEvent, routeRuntimeEvent, RunIdSchema } from '../../../contracts';
 import { EventBus, EventSequencer, RuntimeEventPublisher } from '../../execution';
@@ -320,21 +321,17 @@ describe('GraphExecutor - 核心单元测试', () => {
 
       vi.mocked(mockCheckpointer.load).mockResolvedValue({
         nodeId: 'loop',
-        local: {},
+        local: {
+          conversationId: 'conv_budget_loop',
+          turnId: 'turn_budget_loop',
+          runtimeEventSink: createRuntimeEventSink(),
+        },
       });
 
       const result = await executor.runUntilYield('conv_1');
 
       expect(result.stepCount).toBe(10);
-      // 中文备注：
-      // - 当前 `maxSteps` 语义统计的是“节点切换次数”，不是“原节点 run 次数”；
-      // - 在最后一步，GraphExecutor 会先应用 `force_final_answer` 收尾策略，
-      //   将 nodeId 从 `loop` 强制切到 `llm`；
-      // - 因此这里应验证：
-      //   1) 总步数仍达到 10；
-      //   2) 原 loop 节点在前 9 步被执行；
-      //   3) 第 10 步用于收尾切换，而不是继续跑 loop。
-      expect(loopNode.run).toHaveBeenCalledTimes(9);
+      expect(loopNode.run).toHaveBeenCalledTimes(10);
     });
 
     it('应该支持自定义 maxSteps', async () => {
@@ -353,12 +350,62 @@ describe('GraphExecutor - 核心单元测试', () => {
 
       vi.mocked(mockCheckpointer.load).mockResolvedValue({
         nodeId: 'loop',
-        local: {},
+        local: {
+          conversationId: 'conv_custom_budget',
+          turnId: 'turn_custom_budget',
+          runtimeEventSink: createRuntimeEventSink(),
+        },
       });
 
       const result = await customExecutor.runUntilYield('conv_1');
 
       expect(result.stepCount).toBe(3);
+    });
+
+    it('共享 executor 应按 session 覆盖步数预算并据此上报 lifecycle', async () => {
+      const emit = vi.fn();
+      const sessionExecutor = new GraphExecutor(new MemoryCheckpointer(), {
+        maxSteps: 10,
+        telemetryPort: { emit },
+      });
+      const loopNode: GraphNode = {
+        id: 'loop',
+        run: vi.fn().mockResolvedValue({
+          kind: 'route',
+          nextNodeId: 'loop',
+          events: [],
+        }),
+      };
+      sessionExecutor.registerNode(loopNode);
+
+      const result = await sessionExecutor.startSession(
+        'run_session_budget',
+        {
+          conversationId: 'conv_session_budget',
+          turnId: 'turn_session_budget',
+          runtimeEventSink: createRuntimeEventSink(),
+        },
+        'loop',
+        { maxSteps: 3 },
+      );
+
+      expect(result.stepCount).toBe(3);
+      expect(loopNode.run).toHaveBeenCalledTimes(3);
+      expect(result.events).toEqual([
+        expect.objectContaining({
+          type: 'error',
+          error_code: 'engine.budget_exhausted',
+          details: { maxSteps: 3, stepCount: 3 },
+        }),
+      ]);
+      const terminalLifecycle = emit.mock.calls
+        .map(call => call[0])
+        .find(event => event.kind === 'run_lifecycle' && event.phase === 'completed');
+      expect(terminalLifecycle).toMatchObject({
+        stepsUsed: 3,
+        maxSteps: 3,
+        terminalReason: 'step_budget_exhausted',
+      });
     });
 
     it('maxSteps 预算真正耗尽时应发出 ENGINE_BUDGET_EXHAUSTED error event', async () => {
@@ -594,6 +641,11 @@ describe('GraphExecutor - 核心单元测试', () => {
         run: vi.fn(async (state: EngineState) => {
           expect(state.local?.conversationId).toBe('conversation-1');
           expect(state.local?.newEvents).toEqual([{ type: 'tool_output' }]);
+          expect(state.local?.executorLocal).toMatchObject({
+            maxSteps: 3,
+            stepCount: 1,
+            remainingSteps: 2,
+          });
           return { kind: 'yield', events: [] } satisfies NodeResult;
         }),
       });
@@ -602,6 +654,7 @@ describe('GraphExecutor - 核心单元测试', () => {
         sessionExecutor.resumeSession('run-hitl', {
           expectedRevision: 4,
           localPatch: { newEvents: [{ type: 'tool_output' }] },
+          maxSteps: 3,
         })
       ).resolves.toMatchObject({ checkpoint: { nodeId: 'llm' } });
 
@@ -611,6 +664,75 @@ describe('GraphExecutor - 核心单元测试', () => {
           localPatch: { newEvents: [{ type: 'tool_output' }] },
         })
       ).rejects.toThrow('revision conflict');
+    });
+
+    it('wait-user resume 保留同一 run 的上下文压缩进度，并采用本 execution 的新策略', async () => {
+      const checkpointer = new MemoryCheckpointer();
+      const sessionExecutor = new GraphExecutor(checkpointer, { maxSteps: 10 });
+      const initialExecutorLocal = {
+        stepCount: 0,
+        finalStepPolicy: 'final_answer' as const,
+        finalStepForcedTools: ['old-tool'],
+        runLockedModelId: 'old-model',
+        contextCompaction: {
+          attemptCount: 3,
+          committedCount: 2,
+          lastCommittedFingerprint: 'compaction-before-wait',
+        },
+      };
+
+      sessionExecutor.registerNode({
+        id: 'wait_user',
+        run: async () => ({ kind: 'pause', events: [] }),
+      });
+      sessionExecutor.registerNode({
+        id: 'llm',
+        run: async (state: EngineState) => {
+          expect(state.local?.executorLocal).toMatchObject({
+            finalStepPolicy: 'force_tools',
+            finalStepForcedTools: ['new-tool'],
+            systemReminderPolicy: {
+              enabledRuleIds: ['last_steps'],
+            },
+            contextCompaction: {
+              attemptCount: 3,
+              committedCount: 2,
+              lastCommittedFingerprint: 'compaction-before-wait',
+            },
+          });
+          expect(state.local?.executorLocal).not.toHaveProperty('runLockedModelId');
+          return { kind: 'yield', events: [] } satisfies NodeResult;
+        },
+      });
+
+      const started = await sessionExecutor.startSession('run-context-compaction-resume', {
+        conversationId: 'conversation-1',
+        executorLocal: initialExecutorLocal,
+      }, 'wait_user');
+      expect(started.checkpoint.local?.executorLocal?.contextCompaction).toEqual(
+        initialExecutorLocal.contextCompaction,
+      );
+
+      const resumed = await sessionExecutor.resumeSession('run-context-compaction-resume', {
+        expectedRevision: started.checkpoint.revision ?? 0,
+        localPatch: {
+          executorLocal: {
+            stepCount: 0,
+            finalStepPolicy: 'force_tools',
+            finalStepForcedTools: ['new-tool'],
+            systemReminderPolicy: {
+              enabledRuleIds: ['last_steps'],
+            },
+          },
+        },
+      });
+
+      expect(resumed.checkpoint.local?.executorLocal).toMatchObject({
+        finalStepPolicy: 'force_tools',
+        finalStepForcedTools: ['new-tool'],
+        contextCompaction: initialExecutorLocal.contextCompaction,
+      });
+      expect(resumed.checkpoint.local?.executorLocal).not.toHaveProperty('runLockedModelId');
     });
 
     it('进入 llm 节点时应显式标记首次调用与续跑调用', async () => {
@@ -977,6 +1099,11 @@ describe('GraphExecutor - 核心单元测试', () => {
         runId: 'checkpoint_lifecycle',
         turnId: 'turn_lifecycle',
       });
+      expect(lifecycle[1]).toMatchObject({
+        stepsUsed: 1,
+        maxSteps: 10,
+        terminalReason: 'completed',
+      });
     });
 
     it('run_lifecycle 使用运行时真实 runId，而不是生成临时 runId', async () => {
@@ -1028,6 +1155,11 @@ describe('GraphExecutor - 核心单元测试', () => {
 
       const lifecycle = emit.mock.calls.map(c => c[0]).filter(e => e.kind === 'run_lifecycle');
       expect(lifecycle.map(e => e.phase)).toEqual(['spawned', 'failed']);
+      expect(lifecycle[1]).toMatchObject({
+        stepsUsed: 1,
+        maxSteps: 10,
+        terminalReason: 'failed',
+      });
     });
 
     it('AbortSignal 命中：phase=cancelled', async () => {
@@ -1048,6 +1180,11 @@ describe('GraphExecutor - 核心单元测试', () => {
 
       const lifecycle = emit.mock.calls.map(c => c[0]).filter(e => e.kind === 'run_lifecycle');
       expect(lifecycle.map(e => e.phase)).toEqual(['spawned', 'cancelled']);
+      expect(lifecycle[1]).toMatchObject({
+        stepsUsed: 1,
+        maxSteps: 10,
+        terminalReason: 'cancelled',
+      });
     });
 
     it('checkpointer.load 抛错：仍 emit spawned + failed（finally 兜底）', async () => {
@@ -1059,6 +1196,78 @@ describe('GraphExecutor - 核心单元测试', () => {
 
       const lifecycle = emit.mock.calls.map(c => c[0]).filter(e => e.kind === 'run_lifecycle');
       expect(lifecycle.map(e => e.phase)).toEqual(['spawned', 'failed']);
+      expect(lifecycle[1]).toMatchObject({
+        stepsUsed: 0,
+        maxSteps: 10,
+        terminalReason: 'failed',
+      });
+    });
+
+    it('步数预算真实耗尽时记录 step_budget_exhausted，而不是普通完成', async () => {
+      const emit = vi.fn();
+      const exec = new GraphExecutor(mockCheckpointer, {
+        maxSteps: 2,
+        telemetryPort: { emit },
+      });
+      exec.registerNode({
+        id: 'loop',
+        run: vi.fn().mockResolvedValue({ kind: 'route', nextNodeId: 'loop', events: [] }),
+      });
+      exec.registerNode({
+        id: 'llm',
+        run: vi.fn().mockResolvedValue({ kind: 'route', nextNodeId: 'llm', events: [] }),
+      });
+      vi.mocked(mockCheckpointer.load).mockResolvedValue({
+        nodeId: 'loop',
+        local: {
+          conversationId: 'conv_budget_telemetry',
+          turnId: 'turn_budget_telemetry',
+          runtimeEventSink: createRuntimeEventSink(),
+        },
+      });
+
+      await exec.runUntilYield('run_budget_telemetry');
+
+      const lifecycle = emit.mock.calls.map(c => c[0]).filter(e => e.kind === 'run_lifecycle');
+      expect(lifecycle[1]).toMatchObject({
+        phase: 'completed',
+        stepsUsed: 2,
+        maxSteps: 2,
+        terminalReason: 'step_budget_exhausted',
+      });
+    });
+
+    it('LLM 在预算边界前成功收尾时记录 step_budget_forced_completion', async () => {
+      const emit = vi.fn();
+      const exec = new GraphExecutor(mockCheckpointer, {
+        maxSteps: 3,
+        telemetryPort: { emit },
+      });
+      exec.registerNode({
+        id: 'start',
+        run: vi.fn().mockResolvedValue({ kind: 'route', nextNodeId: 'llm', events: [] }),
+      });
+      exec.registerNode({
+        id: 'llm',
+        run: vi.fn((state: EngineState) => {
+          expect(state.local?.executorLocal?.phase).toBe('force_final_answer');
+          return Promise.resolve({ kind: 'yield', events: [] } satisfies NodeResult);
+        }),
+      });
+      vi.mocked(mockCheckpointer.load).mockResolvedValue({
+        nodeId: 'start',
+        local: {},
+      });
+
+      await exec.runUntilYield('run_forced_completion');
+
+      const lifecycle = emit.mock.calls.map(c => c[0]).filter(e => e.kind === 'run_lifecycle');
+      expect(lifecycle[1]).toMatchObject({
+        phase: 'completed',
+        stepsUsed: 2,
+        maxSteps: 3,
+        terminalReason: 'step_budget_forced_completion',
+      });
     });
   });
 });

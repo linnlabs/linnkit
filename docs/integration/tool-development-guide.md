@@ -16,7 +16,7 @@ linnkit 在协议层守住"工具调用的边界"——`ToolRuntimePort` + `Base
 
 > **用最少的 token 传递最多的信息。**
 
-linnkit 在协议层提供细粒度上下文工程能力（12 大分组 `contextPolicy` + `mustKeep` + fence + ContextTrace），但**这些只能管"已经进入上下文的消息怎么调度"**——**工具返回了什么、参数里塞了什么**，则是工具作者的工作。一个工具如果在 `parameters` 里塞 10 个可选字段、在返回值里嵌套四层 JSON，会让 LLM 上下文窗口被这一个工具吃掉 30%。这违背 linnkit 的产品特色：**对每一个发给 AI 的 token 进行精细化管理**。
+linnkit 在协议层提供细粒度上下文工程能力（10 大分组 `contextPolicy` + `mustKeep` + fence + ContextTrace），但**这些只能管"已经进入上下文的消息怎么调度"**——**工具返回了什么、参数里塞了什么**，则是工具作者的工作。一个工具如果在 `parameters` 里塞 10 个可选字段、在返回值里嵌套四层 JSON，会让 LLM 上下文窗口被这一个工具吃掉 30%。这违背 linnkit 的产品特色：**对每一个发给 AI 的 token 进行精细化管理**。
 
 派生原则：
 
@@ -174,6 +174,11 @@ Returns top-K documents ranked by relevance, each with id / title / snippet.`;
 | 批量场景部分失败 | 整体 `success`，但 `data` 中给出每条 `{ status, message }`，`observation` 简短摘要 | 抛错让整个批次失败 |
 | 增强步骤降级（主操作成功，附加步骤失败）| 整体 `success`，在 `data.warnings` / `observation` 标注降级 | 抛错让主操作的产出丢失 |
 | LLM 产出坏掉的 `tool_call.arguments`（流式 JSON 损坏）| 不属于工具错误——runtime / LLM 调用层处理为协议错误 | 在 `run` 里返回"成功但 data.error=..." |
+
+工具 owner 若存在需要被 UI、审计或自动化稳定识别的业务失败，可以在 Host 的
+`ToolExecutionResult.errorCode` 中提供非空稳定码。Linnkit 只将它原样投影为
+`tool_output.error_code`，不解释具体产品语义；自然语言 `error/observation` 仍用于模型继续决策。
+禁止下游解析错误文案来恢复错误码，也不要给没有明确消费者的普通异常随意造码。
 
 ### 3.1 不允许"伪装成功的失败"
 
@@ -366,6 +371,8 @@ async run(args, context) {
 3. **第 3 段**：`WaitUserNode` 发出 `requires_user_interaction` 事件，run 进入 `awaiting_user` 状态。
 4. **第 4 段**：用户提交回复后，runtime 用**同一条** `tool_output` 事件继续——`metadata.interaction` 字段承载用户的 `approved / modified / submitted / skipped` 状态。
 
+`metadata.interaction` 是持久化和 UI 的结构化事实，不会自动变成模型可见指令。Host 创建 terminal `tool_output` 时必须同时提供自包含的 observation：尤其 `approved` 要明确说明用户已经批准、原等待条件已经满足；不能只给模型裸的 `{ "action": "approve" }`。领域响应（例如问卷答案、修改后的计划）仍由对应交互 owner 组织 observation，Host 不得用通用文案覆盖。
+
 **reload / replay 的关键**：交互卡片的初始内容**必须**能从 `tool_call.arguments` 直接重建——不要把"首次工具输出快照"当成唯一事实来源。
 
 ### 7.2 最终产物工具（`terminateRun` / `finalAnswer`）
@@ -395,6 +402,8 @@ const result: StructuredToolResult<{ report: string }> = {
 
 这条规则很重要：不要在 ToolNode 里写 `if toolName === ...` 的产品特判；需要特殊展示信息时，由工具自己把 meta 放进返回值。
 
+`observationPreviewMeta` 是 ToolNode 消费的执行期输入，不属于 Conversation 的业务工具结果。持久化消息只保留 `data`、`observation` 与通用的 `observationTruncation` 身份；Renderer 若需要业务展示事实，必须从工具 owner 的 strict `data` 合同读取，不能依赖 preview meta。
+
 ### 7.4 让模型读取工具产出的图片
 
 工具不能直接返回 durable attachment，更不能返回本地路径、bytes、base64、hash 或 data URL。工具只在 `StructuredToolResult.modelInput.attachments` 中返回有序 asset selection；selection 只包含调用内 ID、稳定 asset URI 和可选展示标签。
@@ -402,6 +411,11 @@ const result: StructuredToolResult<{ report: string }> = {
 host 必须通过 `ToolModelInputResolverPort` 把 selection 解析为当前 conversation/project 有权引用的 durable 图片身份，并通过 `ToolModelInputCapabilityValidatorPort` 按最近一次成功 LLM attempt 的真实模型做执行期校验。任一 selection 的 scope 或完整性失败时，整个工具结果失败，不产生半组附件。
 
 静态只会产生图片的工具应在 definition 上声明 `tool_result_image` requirement，让 schema admission 和 fallback 提前排除不兼容模型。既能读文本又能读图片的动态工具不能把图片 requirement 写成静态要求；只有实际返回图片 selection 时，ToolNode 才执行 resolver 与二次能力门禁。
+
+模型的 `image_input` 语义能力与 route placement 必须逐项相交。`user_image=true` 只能证明用户附件可编码，不能替代
+`tool_result_image`；反过来也一样。产品不得为了让动态图片工具继续运行而把工具结果改写成 user message。动态图片结果
+若属于主操作的必要输入，缺少 `tool_result_image` 时返回结构化 placement error；若只是可选增强，则使用下述
+`when_supported` 合同。
 
 如果工具的主操作不依赖模型读取图片，而图片只是成功后的增强反馈，应同时声明
 `modelInputDelivery='when_supported'`。这类工具对不兼容模型仍然可见并可执行；ToolNode 根据最近一次
@@ -513,7 +527,7 @@ const toolRuntime = new QuickstartMemoryToolRuntime([
 - [`tools.md`](./tools.md) — `ToolRuntimePort` / `ObservationPreviewPort` 等**协议接入面**
 - [`agent-registration-guide.md`](./agent-registration-guide.md) — 把工具集装进 `AgentSpec` / 注册到 host agent registry
 - [`tool-history.md`](./tool-history.md) — `toolHistoryCompressor` 的 `per-pair` / `per-run` / `none` 三策略配置
-- [`context-engineering.md`](./context-engineering.md) — 12 大分组 `contextPolicy` 总览，含 `toolOutput.observationGovernance`
+- [`context-engineering.md`](./context-engineering.md) — 10 大分组 `contextPolicy` 总览，含 `toolOutput.observationGovernance`
 - [`audit.md`](./audit.md) — tool retry / tool deny 等审计决策
 - [`testing.md`](./testing.md) — testkit 提供的 26 条 strict invariants（含工具相关的 C10）
 - [`../../src/runtime-kernel/tools/README.md`](../../src/runtime-kernel/tools/README.md) — runtime-kernel Tool 合同与幂等 owner

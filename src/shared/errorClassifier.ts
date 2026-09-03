@@ -23,6 +23,8 @@ export const ENGINE_ERROR_CODES = {
   LLM_AUTH_FAILED: 'llm.auth_failed',
   LLM_INVALID_REQUEST: 'llm.invalid_request',
   LLM_RESOURCE_NOT_FOUND: 'llm.resource_not_found',
+  LLM_OUTPUT_LIMIT_REACHED: 'llm.output_limit_reached',
+  LLM_CONTENT_FILTERED: 'llm.content_filtered',
   // 已声明但 emit 端未接通(见 15 号 Q-M15):工具运行时尚未实现超时机制,目前不会被 wire 上观察到
   TOOL_TIMEOUT: 'tool.timeout',
   // 已接通(见 15 号 Q-M15):toolNode.protocolFuse 抛出的 `ToolProtocolFuseError` 会携带 errorCode

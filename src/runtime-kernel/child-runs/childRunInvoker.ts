@@ -22,7 +22,11 @@ import type { ChildRunParentContext } from './types';
 import { generateRunId, generateRuntimeEventId, generateTurnId } from '../../contracts';
 import { Logger } from '../../shared/logger';
 import type { ModelResolverLike } from '../llm/modelResolver';
-import type { GraphNode, RuntimeEventSink } from '../graph-engine/types';
+import type {
+  GraphNode,
+  RuntimeEventCommitPort,
+  RuntimeEventSink,
+} from '../graph-engine/types';
 import type {
   AgentSpecContextPolicy,
   AgentSpecSystemReminderPolicy,
@@ -74,6 +78,8 @@ export interface ChildRunInvokeConfig {
   abortSignal?: AbortSignal;
   /** 由 child lifecycle 装配的唯一 RuntimeEvent admission 入口。 */
   runtimeEventSink: RuntimeEventSink;
+  /** 由 child lifecycle 装配，用于在 fan-out 前持久化单个 durable fact。 */
+  runtimeEventCommitPort?: RuntimeEventCommitPort;
   seedHistoryEvents?: RuntimeEvent[];
   maxSteps?: number;
   modelId?: string;
@@ -142,6 +148,7 @@ export class ChildRunInvoker {
       runId,
       parentRunId,
       runtimeEventSink,
+      runtimeEventCommitPort,
       seedHistoryEvents,
       maxSteps = 8,
       modelId,
@@ -240,6 +247,9 @@ export class ChildRunInvoker {
       maxSteps,
       enableTools: true,
       availableTools: agentConfig.availableTools ? [...agentConfig.availableTools] : undefined,
+      ...(parentToolContext.childRunContextInjections
+        ? { fences: [...parentToolContext.childRunContextInjections] }
+        : {}),
     };
 
     const systemPrompt = agentConfig.systemPromptBuilder
@@ -282,14 +292,6 @@ export class ChildRunInvoker {
       executorLocalPolicy.systemReminderPolicy = systemReminderPolicy;
     }
 
-    const contextCheckpointToolName = agentConfig.contextPolicy?.checkpoint?.triggerToolName;
-    if (
-      typeof contextCheckpointToolName === 'string' &&
-      contextCheckpointToolName.trim().length > 0
-    ) {
-      executorLocalPolicy.contextCheckpointToolName = contextCheckpointToolName.trim();
-    }
-
     const seedHistory: RuntimeEvent[] = [
       ...(Array.isArray(seedHistoryEvents) ? seedHistoryEvents : []),
       admittedChildUserInput,
@@ -318,6 +320,7 @@ export class ChildRunInvoker {
         ? { executorLocal: executorLocalPolicy }
         : {}),
       runtimeEventSink,
+      ...(runtimeEventCommitPort ? { runtimeEventCommitPort } : {}),
       systemPrompt,
     };
 

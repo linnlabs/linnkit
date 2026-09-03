@@ -2,10 +2,9 @@ import type {
   MessageProcessingState,
   ProviderContext,
 } from './providers/base';
-import type { InternalLlmCallUsage } from '../../contracts';
 import { isContextProviderError } from './providers/base';
 import type { ContextProviderRegistry } from './providers/registry';
-import type { AiMessage, RuntimeEvent } from '../../contracts';
+import type { AiMessage } from '../../contracts';
 import type { TokenUsageCalibrationTrace } from '../../contracts';
 import type { ContextTraceCollector } from './context-trace';
 
@@ -16,7 +15,6 @@ export interface ContextPipelineStats<TPhase extends PropertyKey> {
     original: number;
     afterCoreContext: number;
     afterWorkingMemory: number;
-    afterSummarization: number;
   };
 }
 
@@ -44,8 +42,6 @@ export interface RunContextPipelineResult {
   finalMessages: AiMessage[];
   finalTokens: number;
   strategiesApplied: string[];
-  events: RuntimeEvent[];
-  internalLlmCalls: InternalLlmCallUsage[];
   states: MessageProcessingState[];
 }
 
@@ -77,8 +73,6 @@ export async function runContextPipeline<
   const providers = providerRegistry.getAllProviders();
   let availableBudget = totalBudget;
   const allStrategiesApplied: string[] = [];
-  const allEvents: RuntimeEvent[] = [];
-  const allInternalLlmCalls: InternalLlmCallUsage[] = [];
 
   debug?.('🎯 [ContextPipeline] 开始 Provider 链式处理', {
     totalProviders: providers.length,
@@ -110,18 +104,6 @@ export async function runContextPipeline<
       const result = await provider.provide(states, availableBudget, providerContext);
 
       states = result.states;
-
-      if (result.events && result.events.length > 0) {
-        allEvents.push(...result.events);
-        debug?.('📦 收集到事件', {
-          provider: provider.name,
-          eventCount: result.events.length,
-          eventTypes: result.events.map(event => event.type),
-        });
-      }
-      if (result.internalLlmCalls && result.internalLlmCalls.length > 0) {
-        allInternalLlmCalls.push(...result.internalLlmCalls);
-      }
 
       availableBudget -= result.tokensUsed;
       allStrategiesApplied.push(...result.strategiesApplied);
@@ -162,7 +144,6 @@ export async function runContextPipeline<
 
   buildStats.messageStats.afterCoreContext = states.filter(state => state.action === 'keep_core').length;
   buildStats.messageStats.afterWorkingMemory = states.filter(state => state.action.startsWith('keep_')).length;
-  buildStats.messageStats.afterSummarization = states.filter(state => state.action !== 'skip').length;
 
   const finalMessages = generateFinalMessages(states);
   const finalTokens = finalMessages.reduce((total, message) => total + estimateTokens(message).tokens, 0);
@@ -172,8 +153,6 @@ export async function runContextPipeline<
     finalMessages,
     finalTokens,
     strategiesApplied: [...new Set(allStrategiesApplied)],
-    events: allEvents,
-    internalLlmCalls: allInternalLlmCalls,
     states,
   };
 }

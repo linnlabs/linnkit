@@ -76,4 +76,32 @@ describe('AgentCoreContextProvider MustKeepPolicy', () => {
 
     expect(result.states.find(state => state.message.id === 'ctx-1')?.action).toBe('keep_core');
   });
+
+  it('始终保留有效历史中 summarySeq 最新的摘要，不让旧摘要进入 core', async () => {
+    const messages: AiMessage[] = [
+      {
+        id: 'summary-old',
+        role: 'system',
+        type: 'history_summary',
+        content: 'old',
+        timestamp: 1,
+        metadata: { summarySeq: 1, replacedMessageIds: ['source-old'] },
+      },
+      {
+        id: 'summary-latest',
+        role: 'system',
+        type: 'history_summary',
+        content: 'latest',
+        timestamp: 2,
+        metadata: { summarySeq: 2, replacedMessageIds: ['source-latest'] },
+      },
+      { id: 'user-1', role: 'user', type: 'user_input', content: 'current', timestamp: 3 },
+    ];
+    const provider = new AgentCoreContextProvider();
+
+    const result = await provider.provide(messages.map(createState), 0, createContext(messages));
+
+    expect(result.states.find(state => state.message.id === 'summary-old')?.action).toBe('skip');
+    expect(result.states.find(state => state.message.id === 'summary-latest')?.action).toBe('keep_core');
+  });
 });

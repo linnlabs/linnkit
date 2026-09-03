@@ -6,6 +6,25 @@ import type { EngineState } from '../../types';
 import { createRuntimeEventAdmissionSink } from './runtimeEventAdmissionFixture';
 import { RunIdSchema, ToolCallIdSchema } from '../../../../contracts';
 
+const contextUsage = {
+  basis: 'last_completed_llm_prompt' as const,
+  budget_model_id: 'primary-model',
+  served_model_id: 'primary-model',
+  used_tokens: 900,
+  components: {
+    system_prompt_tokens: 200,
+    conversation_tokens: 600,
+    tool_definition_tokens: 100,
+  },
+  component_attribution: 'normalized_local_estimate' as const,
+  input_budget_tokens: 1_000,
+  remaining_tokens: 100,
+  output_limit_tokens: 200,
+  source: 'test-fixture' as const,
+  confidence: 'estimate' as const,
+  measured_at: 1,
+};
+
 const identity: RuntimeEventRoutingIdentity = {
   run_id: RunIdSchema.parse('run_test'),
   lane: 'foreground',
@@ -45,6 +64,20 @@ function createReasoner(tick: LlmNodeReasoner['tick']): {
 }
 
 describe('LlmNode orchestration', () => {
+  it('把宿主注入的 RuntimeEvent 提交端口原样透传给单步推理', async () => {
+    const runtimeEventCommitPort = vi.fn(async () => undefined);
+    const { reasoner, tick } = createReasoner(async input => {
+      expect(input.runtimeEventCommitPort).toBe(runtimeEventCommitPort);
+      return { decision: { kind: 'yield' } };
+    });
+    const node = new LlmNode({ reasoner });
+
+    await node.run(createState({ runtimeEventCommitPort }));
+
+    expect(tick).toHaveBeenCalledOnce();
+    expect(runtimeEventCommitPort).not.toHaveBeenCalled();
+  });
+
   it('缺少合法 request 时直接 yield，不启动 reasoner', async () => {
     const { reasoner, tick } = createReasoner(async () => ({
       decision: { kind: 'yield' },
@@ -77,6 +110,44 @@ describe('LlmNode orchestration', () => {
 
     expect(result).toEqual({ kind: 'route', nextNodeId: 'tool', events: [] });
     expect(state.local?.pendingToolCalls).toEqual(toolCalls);
+  });
+
+  it('每次成功的模型调用都发布临时上下文快照，且不把它写入下一轮模型 history', async () => {
+    const published: RuntimeEvent[] = [];
+    const toolCalls = [
+      {
+        id: ToolCallIdSchema.parse('call_context_usage'),
+        type: 'function' as const,
+        function: { name: 'workspace_read', arguments: '{"path":"README.md"}' },
+      },
+    ];
+    const { reasoner } = createReasoner(async () => ({
+      decision: { kind: 'tool_calls', toolCalls },
+      contextUsage,
+    }));
+    const node = new LlmNode({ reasoner });
+    const admissionSink = createRuntimeEventAdmissionSink('conv_test', identity.run_id);
+    const state = createState({
+      runtimeEventSink: (event, source) => {
+        const routed = admissionSink(event, source);
+        published.push(routed);
+        return routed;
+      },
+    });
+
+    const result = await node.run(state);
+
+    expect(result).toMatchObject({ kind: 'route', nextNodeId: 'tool' });
+    expect(published).toHaveLength(1);
+    expect(published[0]).toMatchObject({
+      type: 'context_usage_snapshot',
+      ephemeral: true,
+      context_usage: contextUsage,
+      run_id: 'run_test',
+    });
+    expect(result.events).toEqual(published);
+    expect(state.local?.contextUsage).toEqual(contextUsage);
+    expect(state.local?.history).toEqual([]);
   });
 
   it('最终答案在 llm 节点结束，不再路由到独立 AnswerNode', async () => {

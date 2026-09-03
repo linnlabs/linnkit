@@ -3,6 +3,7 @@ import type { ToolExecutionContext } from '../tools/toolExecutionContext';
 import type {
   EngineLocalState,
   ExecutorLocalState,
+  RuntimeEventCommitPort,
   RuntimeEventSink,
   RuntimeFailureFactSink,
 } from './types';
@@ -47,6 +48,10 @@ function isRuntimeEventSink(value: unknown): value is RuntimeEventSink {
   return typeof value === 'function';
 }
 
+function isRuntimeEventCommitPort(value: unknown): value is RuntimeEventCommitPort {
+  return typeof value === 'function';
+}
+
 function isRuntimeFailureFactSink(value: unknown): value is RuntimeFailureFactSink {
   return typeof value === 'function';
 }
@@ -58,6 +63,7 @@ export interface GraphAgentLocalView {
   toolContext?: ToolExecutionContext;
   history: RuntimeEvent[];
   runtimeEventSink: RuntimeEventSink;
+  runtimeEventCommitPort?: RuntimeEventCommitPort;
   runtimeFailureFactSink?: RuntimeFailureFactSink;
   executorLocal?: ExecutorLocalState;
   answerId?: string;
@@ -84,6 +90,9 @@ export function readGraphAgentLocal(local: EngineLocalState | undefined): GraphA
     toolContext: isToolExecutionContext(source.toolContext) ? source.toolContext : undefined,
     history: isRuntimeEventArray(source.history) ? source.history : [],
     runtimeEventSink: requireRuntimeEventSink(source),
+    runtimeEventCommitPort: isRuntimeEventCommitPort(source.runtimeEventCommitPort)
+      ? source.runtimeEventCommitPort
+      : undefined,
     runtimeFailureFactSink: isRuntimeFailureFactSink(source.runtimeFailureFactSink)
       ? source.runtimeFailureFactSink
       : undefined,

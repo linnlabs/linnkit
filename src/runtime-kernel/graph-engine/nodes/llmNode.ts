@@ -10,7 +10,12 @@ import {
   type LlmNodeAction,
 } from './llmNode.state';
 import { LlmNodeEventBridge, type TickEvent } from './llmNode.eventBridge';
-import { parseRuntimeEvents, type RuntimeEvent } from '../../../contracts';
+import {
+  createContextUsageSnapshotEvent,
+  generateRuntimeEventId,
+  parseRuntimeEvents,
+  type RuntimeEvent,
+} from '../../../contracts';
 import { requireRuntimeIdentity } from '../tick-pipeline/helpers';
 
 const logger = new Logger('LlmNode');
@@ -51,6 +56,7 @@ export class LlmNode implements GraphNode {
       toolContext,
       summarizationCallbacks,
       runtimeEventSink,
+      runtimeEventCommitPort,
       runtimeFailureFactSink,
       signal,
       history,
@@ -119,6 +125,7 @@ export class LlmNode implements GraphNode {
           forceFinalAnswer,
           executorLocal,
           summarizationCallbacks,
+          runtimeEventCommitPort,
         },
         bridge.handle
       );
@@ -166,7 +173,26 @@ export class LlmNode implements GraphNode {
     });
     state.local = { ...(state.local || {}), ...patch };
 
-    const combinedEvents = [...nodeState.streamRuntimeEvents];
+    /**
+     * context usage 是本次成功 Provider attempt 的实时执行事实。它必须经过同一个 admission
+     * sink 取得 run routing 与 execution_seq，但不进入 Graph history；否则 ephemeral 展示事件
+     * 会随 checkpoint 膨胀，并在下一轮 Context 过滤前形成无意义的第二份运行状态。
+     */
+    const contextUsageEvent = contextUsage
+      ? runtimeEventSink(
+          createContextUsageSnapshotEvent(
+            generateRuntimeEventId(),
+            conversationId,
+            turnId,
+            contextUsage,
+          ),
+          'LlmNode.context_usage_snapshot',
+        )
+      : undefined;
+    const combinedEvents = [
+      ...nodeState.streamRuntimeEvents,
+      ...(contextUsageEvent ? [contextUsageEvent] : []),
+    ];
 
     logger.info('[LlmNode] 历史事件已更新', {
       previousCount: history.length,

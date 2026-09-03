@@ -134,6 +134,7 @@ const RuntimeEventShape = z.discriminatedUnion('type', [
     observation: z.string().refine(value => value.trim().length > 0, 'observation must not be blank'),
     data: SerializableJsonValue.optional(),
     error: z.string().optional(),
+    error_code: z.string().trim().min(1).optional(),
     duration_ms: z.number().optional(),
     attachments: RuntimeResourceRefs.optional(),
   }),
@@ -206,12 +207,18 @@ const RuntimeEventShape = z.discriminatedUnion('type', [
     meta: SerializableJsonValue.optional(),
   }),
   BaseEvent.extend({
+    type: z.literal('context_usage_snapshot'),
+    /** 运行中的最新成功 Prompt 快照只服务实时展示；最终值由 execution metrics 持久化。 */
+    ephemeral: z.literal(true),
+    user_message_id: RuntimeEventIdSchema.optional(),
+    context_usage: ContextUsageSnapshot,
+  }),
+  BaseEvent.extend({
     type: z.literal('run_execution_metrics'),
     execution_id: ExecutionIdSchema,
     outcome: RunExecutionOutcome,
     duration_ms: z.number().nonnegative(),
     user_message_id: RuntimeEventIdSchema.optional(),
-    benchmark: SerializableJsonRecord.optional(),
     context_usage: ContextUsageSnapshot.optional(),
   }),
 ]);
@@ -225,11 +232,12 @@ export const RuntimeEvent = z
       Object.prototype.hasOwnProperty.call(value, 'attachments')
       && type !== 'user_input'
       && type !== 'tool_output'
+      && type !== 'subrun_trace'
     ) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['attachments'],
-        message: 'attachments are only allowed on user_input and tool_output events',
+        message: 'attachments are only allowed on user_input, tool_output and admitted subrun_trace events',
       });
     }
     if (Object.prototype.hasOwnProperty.call(value, 'reasoning_details')) {
@@ -290,6 +298,13 @@ export const RuntimeEvent = z
           code: z.ZodIssueCode.custom,
           path: ['error'],
           message: 'successful tool_output must not contain error',
+        });
+      }
+      if (event.status === 'success' && event.error_code !== undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['error_code'],
+          message: 'successful tool_output must not contain error_code',
         });
       }
       if (event.status === 'error' && (!event.error || event.error.trim().length === 0)) {
@@ -354,7 +369,12 @@ export type ToolProcessEvent = Extract<RuntimeEvent, { type: 'tool_process' }>;
 export type ToolOutputEvent = Extract<RuntimeEvent, { type: 'tool_output' }>;
 export type ToolOutputEventResult =
   | { readonly status: 'success'; readonly observation: string; readonly data: unknown }
-  | { readonly status: 'error'; readonly observation: string; readonly error: string };
+  | {
+      readonly status: 'error';
+      readonly observation: string;
+      readonly error: string;
+      readonly error_code?: string;
+    };
 export type SubRunTraceEvent = Extract<RuntimeEvent, { type: 'subrun_trace' }>;
 export type RequiresUserInteractionEvent = Extract<
   RuntimeEvent,
@@ -367,6 +387,10 @@ export type FinalAnswerResetEvent = Extract<RuntimeEvent, { type: 'final_answer_
 export type HistorySummaryEvent = Extract<RuntimeEvent, { type: 'history_summary' }>;
 export type ErrorEvent = Extract<RuntimeEvent, { type: 'error' }>;
 export type ControlEvent = Extract<RuntimeEvent, { type: 'control' }>;
+export type ContextUsageSnapshotEvent = Extract<
+  RuntimeEvent,
+  { type: 'context_usage_snapshot' }
+>;
 export type RunExecutionMetricsEvent = Extract<RuntimeEvent, { type: 'run_execution_metrics' }>;
 
 export const validateRuntimeEvent = (event: unknown) => RuntimeEvent.safeParse(event);
@@ -576,7 +600,7 @@ export const createToolOutputEvent = (
   result: ToolOutputEventResult,
   options: RuntimeEventCreatorOptions<
     ToolOutputEvent,
-    'tool_name' | 'tool_call_id' | 'status' | 'observation' | 'data' | 'error'
+    'tool_name' | 'tool_call_id' | 'status' | 'observation' | 'data' | 'error' | 'error_code'
   > = {}
 ): ToolOutputEvent => {
   const event = {
@@ -593,7 +617,10 @@ export const createToolOutputEvent = (
     observation: result.observation,
     ...(result.status === 'success'
       ? { data: toSerializableJsonValue(result.data) }
-      : { error: result.error }),
+      : {
+          error: result.error,
+          ...(result.error_code === undefined ? {} : { error_code: result.error_code }),
+        }),
   };
   const parsed = RuntimeEvent.parse(event);
   if (parsed.type !== 'tool_output') {
@@ -723,6 +750,24 @@ export const createErrorEvent = (
   timestamp: options.timestamp ?? Date.now(),
   version: 1,
   error,
+});
+
+export const createContextUsageSnapshotEvent = (
+  id: string,
+  conversationId: string,
+  turnId: string,
+  contextUsage: ContextUsageSnapshotEvent['context_usage'],
+  options: RuntimeEventCreatorOptions<ContextUsageSnapshotEvent, 'context_usage'> = {}
+): ContextUsageSnapshotEvent => ({
+  ...options,
+  type: 'context_usage_snapshot',
+  id,
+  conversation_id: conversationId,
+  turn_id: turnId,
+  timestamp: options.timestamp ?? Date.now(),
+  version: 1,
+  ephemeral: true,
+  context_usage: contextUsage,
 });
 
 export const createRunExecutionMetricsEvent = (

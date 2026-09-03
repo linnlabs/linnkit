@@ -73,19 +73,6 @@ export const CanonicalLlmUsage = z.object({
 });
 export type CanonicalLlmUsage = z.infer<typeof CanonicalLlmUsage>;
 
-/**
- * context pipeline 内部 LLM 调用的用量旁路。
- *
- * 中文备注：该 DTO 是 context-manager 与 runtime-kernel 的共享合同；
- * 它只用于审计、telemetry 和账本，不应进入 AiMessage / RuntimeEvent。
- */
-export const InternalLlmCallUsage = z.object({
-  purpose: z.string().min(1),
-  modelId: z.string().min(1),
-  canonicalUsage: CanonicalLlmUsage,
-});
-export type InternalLlmCallUsage = z.infer<typeof InternalLlmCallUsage>;
-
 const contextUsageTokenCount = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 const contextUsageSafeInteger = z.number().int()
   .min(Number.MIN_SAFE_INTEGER)

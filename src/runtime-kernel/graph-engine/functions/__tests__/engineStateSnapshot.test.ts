@@ -21,6 +21,7 @@ describe('engineStateSnapshot.sanitizeCheckpointLocal', () => {
       ],
       memory: { volatile: true },
       runtimeEventSink: () => undefined,
+      runtimeEventCommitPort: async () => undefined,
       runtimeFailureFactSink: () => undefined,
       signal,
       summarizationCallbacks: { onSummarizationStart: () => undefined },
@@ -43,6 +44,7 @@ describe('engineStateSnapshot.sanitizeCheckpointLocal', () => {
     });
     expect(sanitized).not.toHaveProperty('memory');
     expect(sanitized).not.toHaveProperty('runtimeEventSink');
+    expect(sanitized).not.toHaveProperty('runtimeEventCommitPort');
     expect(sanitized).not.toHaveProperty('runtimeFailureFactSink');
     expect(sanitized).not.toHaveProperty('signal');
     expect(sanitized).not.toHaveProperty('summarizationCallbacks');

@@ -1,7 +1,7 @@
 import type { MessageProcessingState } from '../base';
 import {
   buildToolInteractionGroupsFromStates,
-} from '../../../utils/toolInteractionGroup';
+} from '../../../../../shared/toolInteractionGroup';
 import type { ToolPairMatcher } from './ToolPairMatcher';
 import type { ReplacementSourceTagger } from './ReplacementSourceTagger';
 import { keepToolGroup } from './ToolGroupKeeper';

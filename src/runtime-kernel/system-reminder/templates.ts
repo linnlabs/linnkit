@@ -1,13 +1,12 @@
 import {
   countToolCallsInCurrentRequest,
-  readContextCheckpointToolName,
   readNonEmptyStrings,
   toDisplayStep,
 } from './helpers';
-import type { SystemReminderContentTemplate, SystemReminderContext } from './types';
+import type { SystemReminderContentTemplate } from './types';
 
 export const maxStepsForceFinalAnswerTemplate: SystemReminderContentTemplate = () => [
-  '你已达到最大步数限制：本轮工具已被禁用。',
+  '你已进入步数预算收尾阶段：本轮工具已被禁用。',
   '你必须立刻给出最终答案，不要再尝试调用任何工具。',
   '若信息不完整，请明确说明关键假设和缺口，并给出当前最好的可用回答。',
 ].join('\n');
@@ -32,8 +31,8 @@ export const lastStepsHintTemplate: SystemReminderContentTemplate = (ctx) => {
     const toolsText = forcedTools.length > 0 ? forcedTools.join(', ') : '(未配置 forcedTools)';
     return [
       `步数提醒：你当前处于第 ${displayStepCount}/${displayMaxSteps} 步，还剩 ${displayRemainingSteps} 步。`,
-      `当剩余 1 步时：你必须立刻调用工具：${toolsText}（系统将只保留这些工具）。`,
-      '最后 1 步将用于执行工具，因此不要在最后一步才尝试再调用其他工具。',
+      `进入收尾阶段时，你必须立刻调用工具：${toolsText}（系统将只保留这些工具）。`,
+      'Runtime 会为最终 ToolNode 预留执行节点；不要在收尾阶段调用其他工具。',
     ].join('\n');
   }
 
@@ -64,21 +63,6 @@ export const periodicProgressReflectionTemplate: SystemReminderContentTemplate =
   ].join('\n');
 };
 
-export const contextBudgetWarningTemplate: SystemReminderContentTemplate = (ctx) => {
-  const stepCount = ctx.executorLocal?.stepCount ?? 0;
-  const maxSteps = ctx.executorLocal?.maxSteps ?? 0;
-  const displayStep = toDisplayStep(stepCount);
-  const displayMax = toDisplayStep(maxSteps);
-  const checkpointToolName = readContextCheckpointToolName(ctx);
-  return [
-    `上下文预算告警：你已执行了 ${displayStep}/${displayMax} 步，上下文空间即将耗尽。`,
-    '你必须立即执行以下操作以避免上下文溢出：',
-    '1. 先整理关键进展、约束、已完成事项、未解决问题和下一步。',
-    `2. 调用 ${checkpointToolName} 工具，写入足够接续的阶段摘要。`,
-    '3. 清理后请基于摘要和最近工具交互继续推进，避免依赖即将被裁剪的历史细节。',
-  ].join('\n');
-};
-
 function readHostReminderText(args: Record<string, unknown> | undefined): string {
   const body = args?.body;
   if (typeof body === 'string' && body.trim().length > 0) {
@@ -103,6 +87,5 @@ export const BUILTIN_SYSTEM_REMINDER_TEMPLATES: Record<string, SystemReminderCon
   lastStepsHint: lastStepsHintTemplate,
   toolCallStreak: toolCallStreakTemplate,
   periodicProgressReflection: periodicProgressReflectionTemplate,
-  contextBudgetWarning: contextBudgetWarningTemplate,
   hostReminderText: hostReminderTextTemplate,
 };

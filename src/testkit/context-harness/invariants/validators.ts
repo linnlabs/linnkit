@@ -277,7 +277,7 @@ export const validateC11MustKeepTypesKept: ContextPolicyInvariantValidator = (co
   if (!context.trace || !context.originalMessages || context.trace.overflowed || !context.trace.includeMessageIds) {
     return [];
   }
-  const mustKeepTypes = new Set(context.expectedPolicy?.mustKeep?.alwaysKeepTypes ?? []);
+  const mustKeepTypes = new Set<string>(context.expectedPolicy?.mustKeep?.alwaysKeepTypes ?? []);
   if (mustKeepTypes.size === 0) {
     return [];
   }

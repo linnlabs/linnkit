@@ -86,6 +86,8 @@ export const ObservationEventSchema = BaseAgentEvent.extend({
   observation: NonBlankText,
   data: z.unknown().optional(),
   error: NonBlankText.optional(),
+  /** 失败时由工具 owner 提供的稳定业务错误码。 */
+  error_code: NonBlankIdentifier.optional(),
   success: z.boolean(),
   duration_ms: z.number().finite().nonnegative().optional(),
   attachments: RuntimeResourceRefs.optional(),
@@ -154,6 +156,9 @@ export const AgentEventSchema = z.discriminatedUnion('type', [
   }
   if (!event.success && !event.error) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['error'], message: 'failed observation requires error' });
+  }
+  if (event.success && event.error_code !== undefined) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['error_code'], message: 'successful observation must not contain error_code' });
   }
 });
 

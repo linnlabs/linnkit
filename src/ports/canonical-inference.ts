@@ -67,11 +67,27 @@ export type CanonicalToolChoice =
   | 'none'
   | { readonly type: 'tool'; readonly name: string };
 
+export type CanonicalInferenceCacheAnchor =
+  | 'end_of_system_prompt'
+  | 'end_of_history_summary';
+
+export interface CanonicalInferenceCachePolicy {
+  /**
+   * Linnkit 只声明稳定前缀在 canonical messages 中的结束位置。
+   * Provider adapter 可以投影为原生断点；不支持显式断点时必须忽略，不能改变请求语义。
+   */
+  readonly breakpoints: readonly {
+    readonly anchor: CanonicalInferenceCacheAnchor;
+    readonly message_index: number;
+  }[];
+}
+
 export interface CanonicalInferenceRequest {
   readonly model_id: string;
   readonly messages: readonly CanonicalInferenceMessage[];
   readonly tools: readonly CanonicalInferenceTool[];
   readonly tool_choice: CanonicalToolChoice;
+  readonly cache_policy?: CanonicalInferenceCachePolicy;
   readonly sampling: {
     readonly temperature?: number;
     readonly top_p?: number;

@@ -28,13 +28,17 @@ describe('buildContextStage telemetry', () => {
       build: vi.fn(
         async (): Promise<GraphExecutorContextBuildOutput> => ({
           llmMessages: [{ role: 'user', content: 'hello' }],
-          summaryEvents: [],
           promptBudget: {
             effectiveWindowTokens: 32_000,
             outputLimitTokens: 4_000,
             inputBudgetTokens: 28_000,
             toolDefinitionTokens: 1_500,
             messageBudgetTokens: 26_500,
+          },
+          cachePolicy: {
+            breakpoints: [
+              { anchor: 'end_of_system_prompt', message_index: 0 },
+            ],
           },
         })
       ),
@@ -57,6 +61,11 @@ describe('buildContextStage telemetry', () => {
     expect(ctx.llmOptions).toMatchObject({
       reasoning_effort: 'high',
       max_tokens: 4_000,
+      cache_policy: {
+        breakpoints: [
+          { anchor: 'end_of_system_prompt', message_index: 0 },
+        ],
+      },
     });
   });
 
@@ -65,7 +74,6 @@ describe('buildContextStage telemetry', () => {
       build: vi.fn(
         async (): Promise<GraphExecutorContextBuildOutput> => ({
           llmMessages: [{ role: 'user', content: 'hello' }],
-          summaryEvents: [],
           imageInputAdmissionEvidence: {
             inputBudget: 100,
             nonImageEstimatedTokens: 10,
@@ -109,7 +117,6 @@ describe('buildContextStage telemetry', () => {
       build: vi.fn(
         async (): Promise<GraphExecutorContextBuildOutput> => ({
           llmMessages: [{ role: 'user', content: 'hello' }],
-          summaryEvents: [],
           tokenEstimate: {
             route: {
               capabilityId: 'openrouter',
@@ -243,73 +250,4 @@ describe('buildContextStage telemetry', () => {
     });
   });
 
-  it('context builder 暴露内部 LLM usage 时发出带阶段标记的 llm_call telemetry', async () => {
-    const telemetry = createTelemetrySpy();
-    const canonicalUsage = {
-      inputTokens: 80,
-      outputTokens: 12,
-      totalTokens: 92,
-      source: 'provider-response-usage' as const,
-      confidence: 'actual' as const,
-    };
-    const contextBuilder: GraphExecutorContextBuilder = {
-      build: vi.fn(
-        async (): Promise<GraphExecutorContextBuildOutput> => ({
-          llmMessages: [{ role: 'user', content: 'hello' }],
-          summaryEvents: [],
-          internalLlmCalls: [
-            {
-              purpose: 'summarization',
-              modelId: 'summary-model',
-              canonicalUsage,
-            },
-          ],
-        })
-      ),
-    };
-    const ctx = createTestTickPipelineContext({
-      context: {
-        telemetry,
-        modelId: 'main-model',
-        conversationId: 'conv_internal_llm',
-        turnId: 'turn_internal_llm',
-        input: {
-          request: {
-            query: '继续执行',
-            promptKey: 'default',
-            model_id: 'main-model',
-          },
-          history: [],
-          toolContext: {
-            runId: RunIdSchema.parse('run_internal_llm'),
-            parentRunId: RunIdSchema.parse('parent_internal_llm'),
-          },
-        },
-      },
-    });
-
-    await runTickPipeline(ctx, [createBuildContextStage({ contextBuilder })]);
-
-    expect(telemetry.emitMock).toHaveBeenCalledWith({
-      kind: 'llm_call',
-      modelId: 'summary-model',
-      stream: false,
-      durationMs: 0,
-      usage: {
-        promptTokens: 80,
-        completionTokens: 12,
-        totalTokens: 92,
-        canonicalUsage,
-      },
-      canonicalUsage,
-      phase: 'context-internal',
-      purpose: 'summarization',
-      scope: {
-        conversationId: 'conv_internal_llm',
-        runId: 'run_internal_llm',
-        parentRunId: 'parent_internal_llm',
-        turnId: 'turn_internal_llm',
-      },
-    });
-  });
 });

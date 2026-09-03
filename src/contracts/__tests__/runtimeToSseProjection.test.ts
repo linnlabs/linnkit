@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { SSEEvent } from '../index';
 import {
   RuntimeEvent,
+  createContextUsageSnapshotEvent,
   createErrorEvent,
   createFinalAnswerChunkEvent,
   createFinalAnswerEvent,
@@ -95,6 +96,7 @@ describe('runtimeEventToSSEEvent', () => {
         ...canonical,
         type: 'summarization_end',
         id: 'summarization-end-1',
+        summary_id: 'history-summary-1',
         original_message_count: 8,
         compressed_message_count: 1,
         compression_ratio: 0.5,
@@ -146,6 +148,16 @@ describe('runtimeEventToSSEEvent', () => {
           tool_call_id: ToolCallIdSchema.parse('child_call'),
           status: 'success',
           output: { child: true },
+          attachments: [{
+            id: 'child-image-attachment',
+            kind: 'image',
+            resourceId: 'child-image-asset',
+            mediaType: 'image/png',
+            byteLength: 128,
+            width: 16,
+            height: 8,
+            sha256: 'a'.repeat(64),
+          }],
         }
       ),
       {
@@ -198,6 +210,29 @@ describe('runtimeEventToSSEEvent', () => {
         error_code: 'engine.unknown',
         retryable: false,
       }),
+      createContextUsageSnapshotEvent(
+        'context_usage_evt',
+        'conv_1',
+        'turn_1',
+        {
+          basis: 'last_completed_llm_prompt',
+          budget_model_id: 'primary-model',
+          used_tokens: 850,
+          components: {
+            system_prompt_tokens: 200,
+            conversation_tokens: 550,
+            tool_definition_tokens: 100,
+          },
+          component_attribution: 'normalized_local_estimate',
+          input_budget_tokens: 1_000,
+          remaining_tokens: 150,
+          output_limit_tokens: 200,
+          source: 'local-estimate',
+          confidence: 'estimate',
+          measured_at: 1_220,
+        },
+        { user_message_id: 'user_1' },
+      ),
       createRunExecutionMetricsEvent('metrics_evt', 'conv_1', 'turn_1', {
         execution_id: 'execution_1',
         outcome: 'completed',
@@ -235,8 +270,43 @@ describe('runtimeEventToSSEEvent', () => {
       'final_answer_reset',
       'history_summary',
       'error',
+      'context_usage_snapshot',
       'run_execution_metrics',
     ]);
+  });
+
+  it('context usage snapshot 保持 ephemeral 并原样通过严格 SSE admission', () => {
+    const runtimeEvent = createContextUsageSnapshotEvent(
+      'context_usage_live',
+      'conv_1',
+      'turn_1',
+      {
+        basis: 'last_completed_llm_prompt',
+        budget_model_id: 'primary-model',
+        used_tokens: 900,
+        components: {
+          system_prompt_tokens: 200,
+          conversation_tokens: 600,
+          tool_definition_tokens: 100,
+        },
+        component_attribution: 'normalized_local_estimate',
+        input_budget_tokens: 1_000,
+        remaining_tokens: 100,
+        output_limit_tokens: 200,
+        source: 'provider-preflight-count',
+        confidence: 'provider-estimate',
+        measured_at: 1_230,
+      },
+      { user_message_id: 'user_1' },
+    );
+
+    expect(runtimeEvent.ephemeral).toBe(true);
+    expect(expectValidSSE(runtimeEvent)).toMatchObject({
+      type: 'context_usage_snapshot',
+      user_message_id: 'user_1',
+      context_usage: runtimeEvent.context_usage,
+    });
+    expect(RuntimeEvent.safeParse({ ...runtimeEvent, ephemeral: false }).success).toBe(false);
   });
 
   it('run execution metrics 的 context usage 原样通过严格 SSE admission', () => {

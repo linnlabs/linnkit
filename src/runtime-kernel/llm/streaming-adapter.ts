@@ -20,6 +20,7 @@ import type { LlmCallOptions, ToolCall } from './caller.types';
 import { consumeCanonicalInferenceStream } from './canonical-inference';
 import { buildCanonicalInferenceRequest } from './canonical-inference/functions/buildCanonicalInferenceRequest';
 import { createLlmAgentErrorEvent } from './functions/createLlmAgentErrorEvent';
+import { LlmIncompleteOutputError } from './definitions/llmIncompleteOutputError';
 import { ThoughtStreamSegmenter } from './streaming/thoughtStreamSegmenter';
 import { ErrorClassifier, type ErrorClassification } from '../../shared/errorClassifier';
 import { Logger } from '../../shared/logger';
@@ -279,6 +280,9 @@ export async function callLlmStream(params: CallLlmStreamParams): Promise<LlmCal
     );
     if (terminal.type === 'failure') {
       throw new CanonicalInferenceFailureError(terminal, signal?.reason);
+    }
+    if (terminal.reason === 'length' || terminal.reason === 'content_filter') {
+      throw new LlmIncompleteOutputError(terminal.reason);
     }
   } catch (error) {
     const normalized = error instanceof Error ? error : new Error(String(error));

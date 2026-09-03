@@ -414,8 +414,8 @@ describe('AgentWorkingMemoryProvider tool limits', () => {
     expect(kept).toEqual(expect.arrayContaining(['a_tc_2', 't_out_2']));
   });
 
-  it('keeps only the configured number of latest thought messages', async () => {
-    const provider = new AgentWorkingMemoryProvider({ MAX_THOUGHTS_TO_KEEP: 2 });
+  it('does not admit UI thought projections into working memory', async () => {
+    const provider = new AgentWorkingMemoryProvider();
     const states = buildStates([
       makeTextMessage('thought_1', 'assistant', 'thought', '第一段思考'),
       makeTextMessage('thought_2', 'assistant', 'thought', '第二段思考'),
@@ -424,14 +424,12 @@ describe('AgentWorkingMemoryProvider tool limits', () => {
     ]);
 
     const result = await provider.provide(states, 100000, makeProviderContext());
-    const keptThoughts = result.states
-      .filter(state => state.action === 'keep_working_memory' && state.message.type === 'thought')
+    const kept = result.states
+      .filter(state => state.action === 'keep_working_memory')
       .map(state => state.message.id);
 
-    expect(keptThoughts).toEqual(['thought_2', 'thought_3']);
-    expect(
-      result.strategiesApplied.filter(strategy => strategy === 'thought_processing')
-    ).toHaveLength(2);
+    expect(kept).toEqual(['assistant_text']);
+    expect(result.strategiesApplied).toEqual(['text_conversation']);
   });
 
   it('keeps configured minimum tool groups even when working-memory budget is exhausted', async () => {

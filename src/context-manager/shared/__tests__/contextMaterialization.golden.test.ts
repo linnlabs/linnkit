@@ -25,18 +25,15 @@ function createStats(original: number): AgentContextBuildStats {
     phaseTiming: {
       [AgentBuildPhase.CORE_CONTEXT]: 0,
       [AgentBuildPhase.WORKING_MEMORY]: 0,
-      [AgentBuildPhase.SUMMARIZATION]: 0,
     },
     phaseTokenUsage: {
       [AgentBuildPhase.CORE_CONTEXT]: { used: 0, percentage: 0 },
       [AgentBuildPhase.WORKING_MEMORY]: { used: 0, percentage: 0 },
-      [AgentBuildPhase.SUMMARIZATION]: { used: 0, percentage: 0 },
     },
     messageStats: {
       original,
       afterCoreContext: 0,
       afterWorkingMemory: 0,
-      afterSummarization: 0,
     },
     priorityStats: {
       p1ToolInteractions: 0,
@@ -50,7 +47,6 @@ function createStats(original: number): AgentContextBuildStats {
       unpairedToolCalls: 0,
       toolPairingSuccessRate: 0,
     },
-    summarizationTriggered: false,
     documentTruncated: false,
     totalTime: 0,
   };

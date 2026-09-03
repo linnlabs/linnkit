@@ -8,7 +8,7 @@ import { ToolCallIdSchema } from '../../../contracts';
 const request: AgentInvocationRequest = {
   query: 'hello',
   promptKey: 'default',
-  availableTools: ['context_checkpoint', 'phase_checkpoint'],
+  availableTools: ['search'],
 };
 
 function baseEvent(
@@ -48,6 +48,33 @@ function toolDecision(id: string): RuntimeEvent {
 }
 
 describe('applySystemReminders', () => {
+  it('普通 Reminder 只追加到最后一条消息，并保留工具协议字段', () => {
+    const messages = [
+      { role: 'system' as const, content: 'root' },
+      {
+        role: 'tool' as const,
+        tool_call_id: 'call-1',
+        content: 'result',
+      },
+    ];
+
+    const result = applySystemReminders({
+      llmMessages: messages,
+      ctx: { request, history: [] },
+      rules: [{ id: 'ordinary', when: () => true, build: () => 'ordinary reminder' }],
+    });
+
+    expect(result).toEqual([
+      { role: 'system', content: 'root' },
+      {
+        role: 'tool',
+        tool_call_id: 'call-1',
+        content: 'result\n\n<system-reminder>\n- ordinary reminder\n</system-reminder>',
+      },
+    ]);
+    expect(messages[1]?.content).toBe('result');
+  });
+
   it('按 systemReminder.enabledRuleIds 只启用指定规则', () => {
     const injected: string[][] = [];
     const result = applySystemReminders({
@@ -69,7 +96,7 @@ describe('applySystemReminders', () => {
       onInjected: ({ ruleIds }) => injected.push(ruleIds),
     });
 
-    expect(JSON.stringify(result)).not.toContain('最大步数限制');
+    expect(JSON.stringify(result)).not.toContain('步数预算收尾阶段');
     expect(JSON.stringify(result)).not.toContain('<system-reminder>');
     expect(injected).toEqual([]);
   });
@@ -127,29 +154,5 @@ describe('applySystemReminders', () => {
     });
 
     expect(JSON.stringify(result)).toContain('自定义提醒：memory');
-  });
-
-  it('上下文预算提醒使用通用 checkpoint 文案', () => {
-    const result = applySystemReminders({
-      llmMessages: [{ role: 'user', content: '继续' }],
-      ctx: {
-        request,
-        history: [],
-        executorLocal: {
-          stepCount: 18,
-          maxSteps: 20,
-          remainingSteps: 2,
-          contextCheckpointToolName: 'phase_checkpoint',
-          systemReminderPolicy: {
-            enabledRuleIds: ['context_budget_warning'],
-            thresholds: { budgetWarningRatio: 0.9 },
-          },
-        },
-      },
-    });
-
-    expect(JSON.stringify(result)).toContain('调用 phase_checkpoint 工具');
-    expect(JSON.stringify(result)).not.toContain('TaskState');
-    expect(JSON.stringify(result)).not.toContain('Workspace 文件');
   });
 });

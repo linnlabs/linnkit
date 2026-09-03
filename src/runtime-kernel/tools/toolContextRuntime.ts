@@ -31,6 +31,7 @@ export const TOOL_CONTEXT_RUNTIME_RESERVED_KEYS = [
   'runId',
   'parentRunId',
   'childRunDepth',
+  'childRunContextInjections',
   'parentToolCallId',
   'modelInputAdmission',
 ] as const;

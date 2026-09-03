@@ -11,17 +11,12 @@ import {
 import { mergeContextPolicy } from '../contextPolicyMerge';
 
 describe('agentSpecAdapter', () => {
-  it('maps budget, summarization, working memory, reasoning and token estimation into builder config', () => {
+  it('maps budget, working memory and token estimation into builder config', () => {
     const policy = defineContextPolicy({
       budget: {
         maxTokens: 32000,
         reservedForResponse: 1024,
         workingMemoryBudgetPercentage: 0.6,
-      },
-      summarization: {
-        triggerThreshold: 0.8,
-        budgetPercentage: 0.15,
-        oldestMessagesPercentage: 0.5,
       },
       toolHistory: {
         maxInteractionGroups: 8,
@@ -30,9 +25,6 @@ describe('agentSpecAdapter', () => {
         maxRecentToolRuns: 4,
         minToolInteractionsToKeep: 1,
         toolPairingSearchRange: 16,
-      },
-      reasoningRetention: {
-        keepLatestThoughts: 3,
       },
       tokenEstimation: {
         encoding: 'o200k_base',
@@ -45,14 +37,10 @@ describe('agentSpecAdapter', () => {
       DEFAULT_MAX_TOKENS: 32000,
       RESERVED_FOR_RESPONSE: 1024,
       WORKING_MEMORY_BUDGET_PERCENTAGE: 0.6,
-      SUMMARIZATION_TRIGGER_THRESHOLD: 0.8,
-      SUMMARY_BUDGET_PERCENTAGE: 0.15,
-      SUMMARY_OLDEST_MESSAGES_PERCENTAGE: 0.5,
       MAX_TOOL_INTERACTION_GROUPS_TO_KEEP: 8,
       MAX_RECENT_TOOL_RUNS_TO_KEEP: 4,
       MIN_TOOL_INTERACTIONS_TO_KEEP: 1,
       TOOL_PAIRING_SEARCH_RANGE: 16,
-      MAX_THOUGHTS_TO_KEEP: 3,
       AVG_CHARS_PER_TOKEN: 1.8,
       TOOL_CALL_OVERHEAD_TOKENS: 70,
       TOKEN_ENCODING_NAME: 'o200k_base',
@@ -131,18 +119,11 @@ describe('agentSpecAdapter', () => {
       mustKeep: {
         alwaysKeepFenceKinds: ['project-context'],
       },
-      checkpoint: {
-        keepPairsBefore: 4,
-      },
-      summarization: {
-        agentId: 'history_compression',
-        failureBehavior: 'continue-if-within-budget',
-      },
       contextTrace: {
         enabled: true,
       },
       systemReminder: {
-        disabledRuleIds: ['budget-warning'],
+        disabledRuleIds: ['periodic_progress_reflection'],
       },
     });
 
@@ -150,19 +131,12 @@ describe('agentSpecAdapter', () => {
       mustKeep: expect.objectContaining({
         alwaysKeepFenceKinds: ['project-context'],
       }),
-      checkpoint: expect.objectContaining({
-        keepPairsBefore: 4,
-      }),
-      summarization: {
-        agentId: 'history_compression',
-        failureBehavior: 'continue-if-within-budget',
-      },
       contextTrace: expect.objectContaining({
         enabled: true,
       }),
     });
     expect(contextPolicyToSystemReminderOptions(policy)).toEqual(expect.objectContaining({
-      disabledRuleIds: ['budget-warning'],
+      disabledRuleIds: ['periodic_progress_reflection'],
     }));
   });
 
@@ -229,7 +203,7 @@ describe('mergeContextPolicy', () => {
         contextTrace: { enabled: true },
       },
       agentSpec: {
-        systemReminder: { disabledRuleIds: ['budget-warning'] },
+        systemReminder: { disabledRuleIds: ['periodic_progress_reflection'] },
       },
     });
 
@@ -241,6 +215,10 @@ describe('mergeContextPolicy', () => {
   it('merges framework default, host fallback and agent spec by field priority', () => {
     const merged = mergeContextPolicy({
       frameworkDefault: {
+        compaction: {
+          triggerRatio: 0.8,
+          targetRatio: 0.5,
+        },
         budget: {
           maxTokens: 10000,
           reservedForResponse: 1000,
@@ -251,6 +229,9 @@ describe('mergeContextPolicy', () => {
         },
       },
       hostFallback: {
+        compaction: {
+          keepLatestToolGroups: 4,
+        },
         budget: {
           reservedForResponse: 1500,
         },
@@ -265,6 +246,9 @@ describe('mergeContextPolicy', () => {
         },
       },
       agentSpec: {
+        compaction: {
+          triggerRatio: 0.9,
+        },
         budget: {
           maxTokens: 20000,
         },
@@ -283,6 +267,11 @@ describe('mergeContextPolicy', () => {
     expect(merged.toolHistory?.keepLatestRuns).toBe(2);
     expect(merged.toolOutput?.observationGovernance?.maxChars).toBe(20000);
     expect(merged.toolOutput?.observationGovernance?.maxLines).toBe(400);
+    expect(merged.compaction).toEqual(expect.objectContaining({
+      triggerRatio: 0.9,
+      targetRatio: 0.5,
+      keepLatestToolGroups: 4,
+    }));
   });
 
   it('replaces arrays instead of concatenating them', () => {
@@ -322,7 +311,7 @@ describe('mergeContextPolicy', () => {
         systemReminder: {
           thresholds: {
             toolCallStreak: 5,
-            budgetWarningRatio: 0.85,
+            lastStepsHintThreshold: 4,
           },
           extraRules: [
             {
@@ -336,12 +325,12 @@ describe('mergeContextPolicy', () => {
       agentSpec: {
         systemReminder: {
           thresholds: {
-            budgetWarningRatio: 0.75,
+            lastStepsHintThreshold: 2,
           },
           extraRules: [
             {
               id: 'agent-rule',
-              trigger: { kind: 'budget-warning', ratio: 0.75 },
+              trigger: { kind: 'remaining-steps-leq', threshold: 2 },
               contentTemplate: 'agentTemplate',
             },
           ],
@@ -351,12 +340,12 @@ describe('mergeContextPolicy', () => {
 
     expect(merged.systemReminder?.thresholds).toEqual(expect.objectContaining({
       toolCallStreak: 5,
-      budgetWarningRatio: 0.75,
+      lastStepsHintThreshold: 2,
     }));
     expect(merged.systemReminder?.extraRules).toEqual([
       {
         id: 'agent-rule',
-        trigger: { kind: 'budget-warning', ratio: 0.75 },
+        trigger: { kind: 'remaining-steps-leq', threshold: 2 },
         contentTemplate: 'agentTemplate',
       },
     ]);

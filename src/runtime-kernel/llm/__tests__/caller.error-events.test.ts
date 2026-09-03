@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   runtimeEventToSSEEvent,
@@ -47,6 +47,47 @@ function createCompatibleCatalog(): ModelCatalogLike {
 }
 
 describe('LlmCaller 稳定错误事件链', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it('cancellation propagated to LLM 不分类为 provider failure、不重试也不发布 error', async () => {
+    const stream = vi.fn<CanonicalInferencePort['stream']>(async function* (request) {
+      yield {
+        type: 'start',
+        model_id: request.model_id,
+        attempt_id: request.invocation.attempt_id,
+      };
+      yield {
+        type: 'failure',
+        kind: 'aborted',
+        code: 'request_aborted',
+        retryable: false,
+      };
+    });
+    const caller = new LlmCaller({
+      inferencePort: { stream },
+      modelCatalog: createCompatibleCatalog(),
+      maxRetries: 2,
+      retryDelayMs: 0,
+    });
+    const classify = vi.spyOn(ErrorClassifier, 'classify');
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const emitted: AgentErrorEvent[] = [];
+
+    await expect(caller.callWithRetries(
+      'vision-model',
+      [{ role: 'user', content: '继续执行' }],
+      {},
+      event => {
+        if (event.type === 'error') emitted.push(event);
+      },
+    )).rejects.toMatchObject({ name: 'AbortError' });
+
+    expect(stream).toHaveBeenCalledOnce();
+    expect(classify).not.toHaveBeenCalled();
+    expect(emitted).toEqual([]);
+    expect(consoleError).not.toHaveBeenCalled();
+  });
+
   it('流式错误只分类一次并在 AgentEvent、RuntimeEvent、SSE 与 JSON replay 中保真', async () => {
     const stream = vi.fn<CanonicalInferencePort['stream']>();
     const inferencePort: CanonicalInferencePort = { stream };
@@ -111,6 +152,58 @@ describe('LlmCaller 稳定错误事件链', () => {
         },
       },
     });
+  });
+
+  it.each([
+    ['length', 'llm.output_limit_reached'],
+    ['content_filter', 'llm.content_filtered'],
+  ] as const)('canonical finish=%s 不得把不完整输出当成成功结果', async (
+    finishReason,
+    errorCode,
+  ) => {
+    const stream = vi.fn<CanonicalInferencePort['stream']>(async function* (request) {
+      yield {
+        type: 'start',
+        model_id: request.model_id,
+        attempt_id: request.invocation.attempt_id,
+      };
+      yield { type: 'thought_delta', text: '仍在分析' };
+      yield { type: 'answer_delta', text: '尚未完成的正文' };
+      yield { type: 'finish', reason: finishReason };
+    });
+    const caller = new LlmCaller({
+      inferencePort: { stream },
+      modelCatalog: createCompatibleCatalog(),
+      maxRetries: 3,
+      retryDelayMs: 0,
+    });
+    const emitted: AgentErrorEvent[] = [];
+
+    await expect(caller.callWithRetries(
+      'vision-model',
+      [{ role: 'user', content: '完成任务' }],
+      {},
+      event => {
+        if (event.type === 'error') emitted.push(event);
+      },
+    )).rejects.toMatchObject({
+      name: 'LlmIncompleteOutputError',
+      errorCode,
+      recoverable: false,
+      metadata: { finish_reason: finishReason },
+    });
+
+    expect(stream).toHaveBeenCalledOnce();
+    expect(emitted).toEqual([
+      expect.objectContaining({
+        error_code: errorCode,
+        retryable: false,
+        details: expect.objectContaining({
+          category: 'non_retryable',
+          metadata: { finish_reason: finishReason },
+        }),
+      }),
+    ]);
   });
 
   it('Phase 3 图片资源错误经分类与 durable replay 保留稳定 code 和安全详情', () => {

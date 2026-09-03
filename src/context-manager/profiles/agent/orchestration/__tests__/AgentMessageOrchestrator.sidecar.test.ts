@@ -460,7 +460,6 @@ describe('AgentMessageOrchestrator contextPolicy provider registry', () => {
       },
       [],
       new ToolManager(testToolRegistry),
-      undefined,
       {
         promptBudgetLimits: {
           modelContextWindowTokens: 128_000,
@@ -498,7 +497,6 @@ describe('AgentMessageOrchestrator contextPolicy provider registry', () => {
       },
       [],
       new ToolManager(testToolRegistry),
-      undefined,
       {
         promptBudgetLimits: {
           modelContextWindowTokens: 256_000,

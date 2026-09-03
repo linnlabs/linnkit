@@ -1,5 +1,6 @@
 import type {
   FinalAnswerCompletionReason,
+  RuntimeResourceRef,
   SerializableJsonRecord,
   SubRunTraceEvent,
   SubRunTraceToolCallDecision,
@@ -40,7 +41,16 @@ export type SubRunTraceEnvelope = SubRunTraceEnvelopeBase &
         kind: 'tool_output';
         tool_name: string;
         tool_call_id: ToolCallId;
-        status: Extract<NonNullable<SubRunTraceEvent['status']>, 'success' | 'error'>;
+        status: 'success';
+        output: NonNullable<SubRunTraceEvent['output']>;
+        attachments?: readonly RuntimeResourceRef[];
+        duration_ms?: number;
+      }
+    | {
+        kind: 'tool_output';
+        tool_name: string;
+        tool_call_id: ToolCallId;
+        status: 'error';
         output: NonNullable<SubRunTraceEvent['output']>;
         duration_ms?: number;
       }
@@ -56,6 +66,13 @@ export type SubRunTraceEnvelope = SubRunTraceEnvelopeBase &
         answer_id: string;
         content: string;
         completion_reason: FinalAnswerCompletionReason;
+      }
+    | {
+        kind: 'history_summary';
+        original_message_count: number;
+        replaced_message_ids: readonly string[];
+        compression_ratio?: number;
+        included_old_summary?: boolean;
       }
   );
 

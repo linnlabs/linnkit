@@ -28,9 +28,9 @@ export type RuntimeEventUiProjectionKind =
   | 'audit_envelope'
   | 'subrun_trace'
   | 'error'
+  | 'context_usage_snapshot'
   | 'run_execution_metrics'
   | 'history_summary'
-  | 'checkpoint_history_summary'
   | 'unsupported';
 
 export type RuntimeEventRealtimeChannel = 'event_bus_sse' | 'none';
@@ -56,6 +56,7 @@ export const RUNTIME_EVENT_TYPES_NEVER_REPLAYED_TO_UI = [
   'final_answer_chunk',
   'final_answer_reset',
   'subrun_trace',
+  'context_usage_snapshot',
 ] as const satisfies readonly RuntimeEvent['type'][];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -84,6 +85,12 @@ export function isRunExecutionMetricsRuntimeEvent(
   event: RuntimeEvent,
 ): event is Extract<RuntimeEvent, { type: 'run_execution_metrics' }> {
   return event.type === 'run_execution_metrics';
+}
+
+export function isContextUsageSnapshotRuntimeEvent(
+  event: RuntimeEvent,
+): event is Extract<RuntimeEvent, { type: 'context_usage_snapshot' }> {
+  return event.type === 'context_usage_snapshot';
 }
 
 export function isRequiresUserInteractionRuntimeEvent(
@@ -164,17 +171,6 @@ export function shouldCreateToolCallMessage(event: TypedEvent): boolean {
   return isToolCallDecisionEvent(event);
 }
 
-export function isCheckpointHistorySummaryEvent(
-  event: RuntimeEvent,
-): event is Extract<RuntimeEvent, { type: 'history_summary' }> {
-  if (event.type !== 'history_summary') {
-    return false;
-  }
-
-  const metadata = isRecord(event.metadata) ? event.metadata : undefined;
-  return metadata?.summary_kind === 'checkpoint';
-}
-
 export function getRuntimeEventUiProjectionKind(
   event: RuntimeEvent,
 ): RuntimeEventUiProjectionKind {
@@ -207,12 +203,12 @@ export function getRuntimeEventUiProjectionKind(
       return 'subrun_trace';
     case 'error':
       return 'error';
+    case 'context_usage_snapshot':
+      return 'context_usage_snapshot';
     case 'run_execution_metrics':
       return 'run_execution_metrics';
     case 'history_summary':
-      return isCheckpointHistorySummaryEvent(event)
-        ? 'checkpoint_history_summary'
-        : 'history_summary';
+      return 'history_summary';
     default:
       return 'unsupported';
   }
@@ -247,6 +243,10 @@ export function describeRuntimeEventLifecycle(
       return false;
     }
 
+    if (isContextUsageSnapshotRuntimeEvent(event)) {
+      return false;
+    }
+
     if (event.type === 'error') {
       return false;
     }
@@ -268,6 +268,12 @@ export function describeRuntimeEventLifecycle(
     }
 
     if (isToolProcessEvent(event)) {
+      return false;
+    }
+
+    if (event.type === 'thought') {
+      // thought 是供 UI / 审计消费的流式投影；模型侧 reasoning 的唯一事实源
+      // 是同一次 Assistant 产出的 assistant_replay_parts，不能重复进入 Prompt。
       return false;
     }
 
@@ -298,7 +304,9 @@ export function describeRuntimeEventLifecycle(
       case 'requires_user_interaction':
       case 'subrun_trace':
       case 'error':
+      case 'context_usage_snapshot':
       case 'run_execution_metrics':
+      case 'history_summary':
         return 'event_bus_sse';
       case 'audit_envelope':
         return 'none';

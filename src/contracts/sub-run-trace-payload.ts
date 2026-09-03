@@ -3,8 +3,10 @@ import { z } from 'zod';
 import { SerializableJsonRecord, SerializableJsonValue } from './json';
 import { Status, ToolCallPhase } from './runtime-status';
 import { FinalAnswerCompletionReason } from './final-answer';
+import { RuntimeResourceRefs } from './resource-ref';
 import {
   AnswerSegmentIdSchema,
+  HistoryMessageReferenceIdSchema,
   SourceEventIdSchema,
   SubrunIdSchema,
   ToolCallIdSchema,
@@ -24,6 +26,7 @@ export const SubRunTraceKind = z.enum([
   'tool_output',
   'final_answer_chunk',
   'final_answer',
+  'history_summary',
 ]);
 export type SubRunTraceKind = z.infer<typeof SubRunTraceKind>;
 
@@ -53,7 +56,12 @@ export const SubRunTracePayload = z.object({
   args: SerializableJsonRecord.optional(),
   tool_calls: z.array(SubRunTraceToolCallDecision).min(1).optional(),
   output: SerializableJsonValue.optional(),
+  attachments: RuntimeResourceRefs.optional(),
   duration_ms: z.number().optional(),
+  original_message_count: z.number().int().nonnegative().optional(),
+  compression_ratio: z.number().min(0).max(1).optional(),
+  included_old_summary: z.boolean().optional(),
+  replaced_message_ids: z.array(HistoryMessageReferenceIdSchema).optional(),
   meta: SerializableJsonRecord.optional(),
 });
 
@@ -96,6 +104,22 @@ export function validateSubRunTracePayloadSemantics(
         code: z.ZodIssueCode.custom,
         path: ['completion_reason'],
         message: 'final_answer requires completion_reason',
+      });
+    }
+  }
+  if (payload.kind === 'history_summary') {
+    if (payload.original_message_count === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['original_message_count'],
+        message: 'history_summary requires original_message_count',
+      });
+    }
+    if (payload.replaced_message_ids === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['replaced_message_ids'],
+        message: 'history_summary requires replaced_message_ids',
       });
     }
   }
@@ -163,5 +187,20 @@ export function validateSubRunTracePayloadSemantics(
       path: ['output'],
       message: 'tool_output requires structured output',
     });
+  }
+  if (payload.attachments !== undefined) {
+    if (payload.kind !== 'tool_output') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['attachments'],
+        message: `${payload.kind} forbids attachments`,
+      });
+    } else if (payload.status !== 'success') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['attachments'],
+        message: 'attachments require successful tool_output',
+      });
+    }
   }
 }

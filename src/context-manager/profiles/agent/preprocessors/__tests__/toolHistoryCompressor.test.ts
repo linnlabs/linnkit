@@ -53,7 +53,6 @@ function createToolOutputMessage(opts: {
   toolCallId: string;
   toolName: string;
   content: string;
-  checkpointData?: { _type: 'context_checkpoint'; summary: string };
 }): AiMessage {
   return {
     id: opts.id,
@@ -64,7 +63,7 @@ function createToolOutputMessage(opts: {
     metadata: {
       tool_call_id: ToolCallIdSchema.parse(opts.toolCallId),
       tool_name: opts.toolName,
-      data: opts.checkpointData ?? { value: opts.content },
+      data: { value: opts.content },
     },
   };
 }
@@ -228,95 +227,6 @@ describe('ToolHistoryCompressorPreprocessor', () => {
     );
     expect(compressed?.content).toContain('我已经调用了工具');
     expect(compressed?.content).not.toContain('[观察]');
-    expect(result.appliedStrategies).toContain('tool_history_compression');
-  });
-
-  it('keeps the latest checkpoint group while still compressing older non-checkpoint groups', async () => {
-    const preprocessor = new ToolHistoryCompressorPreprocessor({
-      strategy: 'per-pair',
-      retentionMode: 'compress',
-      keepLatestToolPairs: 2,
-    });
-
-    const messages: AiMessage[] = [
-      createUserInput('u_old', 1000, '旧问题'),
-      createToolCallsMessage({
-        id: 'a_tc_1',
-        timestamp: 1100,
-        toolCallId: 'tc_1',
-        toolName: 'workspace_read',
-        args: { document_id: 'doc-1' },
-      }),
-      createToolOutputMessage({
-        id: 't_out_1',
-        timestamp: 1200,
-        toolCallId: 'tc_1',
-        toolName: 'workspace_read',
-        content: '{"observation":"已读取文档 doc-1"}',
-      }),
-      createToolCallsMessage({
-        id: 'a_tc_2',
-        timestamp: 1300,
-        toolCallId: 'tc_2',
-        toolName: 'workspace_read',
-        args: { document_id: 'doc-2' },
-      }),
-      createToolOutputMessage({
-        id: 't_out_2',
-        timestamp: 1400,
-        toolCallId: 'tc_2',
-        toolName: 'workspace_read',
-        content: '{"observation":"已读取文档 doc-2"}',
-      }),
-      createToolCallsMessage({
-        id: 'a_tc_3',
-        timestamp: 1500,
-        toolCallId: 'tc_3',
-        toolName: 'workspace_read',
-        args: { document_id: 'doc-3' },
-      }),
-      createToolOutputMessage({
-        id: 't_out_3',
-        timestamp: 1600,
-        toolCallId: 'tc_3',
-        toolName: 'workspace_read',
-        content: '{"observation":"已读取文档 doc-3"}',
-      }),
-      createToolCallsMessage({
-        id: 'a_tc_cp',
-        timestamp: 1650,
-        toolCallId: 'tc_cp',
-        toolName: 'context_checkpoint',
-        args: { summary: 'phase done' },
-      }),
-      createToolOutputMessage({
-        id: 't_out_cp',
-        timestamp: 1660,
-        toolCallId: 'tc_cp',
-        toolName: 'context_checkpoint',
-        content: 'Context checkpoint created.',
-        checkpointData: { _type: 'context_checkpoint', summary: 'phase done' },
-      }),
-      {
-        id: 'a_old',
-        role: 'assistant',
-        type: 'final_answer',
-        content: '旧回答',
-        timestamp: 1700,
-      },
-      createUserInput('u_current', 9999, '新问题（本轮开始）'),
-    ];
-
-    const result = await preprocessor.process(messages, { debugMode: false });
-
-    expect(result.messages.some(message => message.id === 'a_tc_1')).toBe(false);
-    expect(result.messages.some(message => message.id === 't_out_1')).toBe(false);
-    expect(result.messages.some(message => message.id === 'a_tc_2')).toBe(true);
-    expect(result.messages.some(message => message.id === 't_out_2')).toBe(true);
-    expect(result.messages.some(message => message.id === 'a_tc_3')).toBe(true);
-    expect(result.messages.some(message => message.id === 't_out_3')).toBe(true);
-    expect(result.messages.some(message => message.id === 'a_tc_cp')).toBe(true);
-    expect(result.messages.some(message => message.id === 't_out_cp')).toBe(true);
     expect(result.appliedStrategies).toContain('tool_history_compression');
   });
 

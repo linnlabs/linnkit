@@ -1,11 +1,13 @@
 /**
- * @file src/agent/runtime-kernel/system-reminder/types.ts
+ * @file packages/linnkit/src/runtime-kernel/system-reminder/types.ts
  * @description SystemReminder（系统提醒）类型定义
  *
  * 设计目标（必须遵守）：
  * - ✅ 只对“当前 tick / 当前 request”生效：不写入 history，不转换成 RuntimeEvent，不进入持久化
  * - ✅ 配置驱动：新增/调整提醒只改 rules 配置文件
- * - ✅ 注入形态：追加到“最后一条将发给 LLM 的 message.content”末尾，包裹在 <system-reminder> 标签中
+ * - ✅ 普通 tick 注入：追加到最后一条 message.content，继承该消息 role
+ * - ✅ 压缩专用注入：完整原 Prompt 后新增瞬态 user message；不由本规则模块构造
+ * - ❌ System Reminder 标签不代表独立 system-role message
  */
 
 import type { AgentInvocationRequest } from '../../ports';

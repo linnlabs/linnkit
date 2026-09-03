@@ -1,6 +1,6 @@
 # Context Engineering · linnkit 的上下文工程总览
 
-> **What** · 所有作用在 messages 上的机制总览 —— `contextPolicy` 12 大分组 + `ContextTrace` 可观测闭环 + `TokenizerPort` + 摘要 / 围栏 / 工具历史保留。
+> **What** · 所有作用在 messages 上的机制总览 —— `contextPolicy` 10 大分组 + `ContextTrace` 可观测闭环 + `TokenizerPort` + 摘要 / 围栏 / 工具历史保留。
 > **When to read** · 想精确控制每个 token；上下文超长被裁；要诊断"为什么这条消息被丢了"；自定义 tokenizer；做 token 预算选型。
 > **Prerequisites** · [`agent-registration-guide.md`](./agent-registration-guide.md) ⭐（先理解 `AgentSpec.contextPolicy` 字段结构）。
 > **Key exports** · `ContextTrace` from `@linnlabs/linnkit/contracts` · `TokenizerPort` from `@linnlabs/linnkit/ports` · `formatAgentLlmMessages` / `createMessageFormatter` from `@linnlabs/linnkit/context-manager`。
@@ -19,7 +19,7 @@
 
 ## 0.1 两类真相源：模型容量与 Agent 上下文策略
 
-先回答最常见的问题：**模型能装多少，由 prepared model route 声明；Agent 是否主动少用，由 `AgentSpec.contextPolicy` 声明**。route 的 `context_window_tokens / max_output_tokens` 是容量真相源；摘要、工具历史、工具输出截断、must-keep、checkpoint、reasoning 保留、token 估算、system reminder、trace，以及可选容量 cap 的统一声明入口是 `AgentSpec.contextPolicy`（host 侧通常落在 `AgentDefinition.config.contextPolicy`），其类型真相源是 `AgentSpecContextPolicy`。
+先回答最常见的问题：**模型能装多少，由 prepared model route 声明；Agent 是否主动少用，由 `AgentSpec.contextPolicy` 声明**。route 的 `context_window_tokens / max_output_tokens` 是容量真相源；自动压缩、工具历史、工具输出截断、must-keep、reasoning 保留、token 估算、system reminder、trace，以及可选容量 cap 的统一声明入口是 `AgentSpec.contextPolicy`（host 侧通常落在 `AgentDefinition.config.contextPolicy`），其类型真相源是 `AgentSpecContextPolicy`。
 
 运行时只消费合并后的 effective policy：
 
@@ -75,23 +75,29 @@ host 发出 invoke request
     4. FenceLifetimePreprocessor           ─ 剥离旧轮 turn-only fence
   │
   ▼
-[C] ContextProvider 三阶段填充
+[C] Context Manager 构建
     1. AgentCoreContextProvider          ─ 不可裁的核心层（system / user）
     2. AgentWorkingMemoryProvider        ─ 工作记忆按 P1-P3 优先级填到预算上限
-    3. CheckpointSummarizationProvider   ─ checkpoint 前的旧轮裁干净
-    4. (自动触发) SummarizationProvider   ─ 超预算时整段历史摘要
+    3. selectContextCompactionCandidate  ─ 纯计算最老可替换区段
+    4. formatAgentLlmMessages            ─ 翻译成 provider-neutral wire messages
   │
   ▼
 [D] applySystemReminderStage 注入
     根据 stepCount / phase / 工具调用次数等触发规则
-    在最后一条 message 末尾追加 <system-reminder>...</system-reminder>
+    在最后一条 message 的 content 末尾追加普通 <system-reminder>...</system-reminder>
   │
   ▼
-[E] formatAgentLlmMessages 出关
-    根据 fence formatter / 物理 role 把所有 AiMessage 翻译成 LLM wire messages
+[E] measure_prompt_usage → compact_context
+    reminder 后的最终 Prompt 达阈值时，用当前模型生成固定格式摘要
+    内部请求逐条复用该 Prompt，再追加独立的末尾 compaction reminder 消息
+    重建后只按同一规则重新生成普通 reminder 并计量
   │
   ▼
-LLM provider
+[F] admit_prompt_capacity → commit_context_compaction
+    容量接纳后先 durable commit，再发 end → history_summary
+  │
+  ▼
+[G] LLM provider
 ```
 
 每个阶段都有独立的配置面。
@@ -106,7 +112,9 @@ linnkit 的内部消息（`AiMessage` union）最终都会按 LLM 协议的三�
 |------|-----------|
 | `system` | `system_prompt`、`placement: 'after-system'` 的 fence（不常变化的固定上下文），例如长期规则、当前能力目录、用户偏好等 |
 | `assistant` | LLM 自己产的 `final_answer` / `thought`（canonical reasoning）/ `tool_calls`；以及配对的 `tool_output`（在 Provider wire 上通常使用独立 tool role） |
-| `user` | 用户的 `user_input`、`placement: 'before-current-user'` / `'after-current-user'` 的 fence（经常变化的高频上下文）、例如用户上传的文件、当前时间等以及触发后的 `<system-reminder>` 注入 |
+| `user` | 用户的 `user_input`、`placement: 'before-current-user'` / `'after-current-user'` 的 fence（经常变化的高频上下文），例如用户上传的文件、当前时间等 |
+
+普通 `<system-reminder>` 不是独立 `AiMessage`，也没有固定 role。它只在发送前追加到当时最后一条 wire message 的 `content` 末尾；最后一条可能是 user，也可能是 tool。压缩专用 Reminder 为了保留完整原消息前缀并避免落入 tool output，使用独立的末尾 user-role wire message。两者都不持久化，完整规则见 [§6 System Reminder](#system-reminder)。
 
 当前轮 `llmRole: 'user'` 且 `placement` 指向当前请求附近的 fence，会先按 host 提供的 `formatter` 组装进同一条 `user_input`：
 
@@ -135,15 +143,20 @@ host 也可以在持久化的 `user_input.content` 中预先写入结构化块�
 **重要不变量**：`tool_calls` 和 `tool_output` **必须成对出现**——任何一边丢了另一边就废了。这条不变量贯穿所有压缩 / 裁剪机制。
 
 附件是消息内容的一部分，不建立独立的上下文生命周期：用户图片随所属 `user_input` 同进同退，工具结果图片随完整
-`tool_calls + sibling tool_output` 工具组同进同退。摘要、working memory 与 checkpoint 都只按既有消息/工具组规则
+`tool_calls + sibling tool_output` 工具组同进同退。自动压缩与 working memory 都只按既有消息/工具组规则
 决定保留或退出，不根据附件种类增加永久保留窗口。活动上下文退出只影响后续模型输入，不删除 durable event、附件
 引用或资源字节。
+
+内部压缩请求只在完整主 Prompt 后增加一条纯文本控制消息，因此必须复用 Context Manager 为该 Prompt 生成的
+`imageInputAdmissionEvidence` 完成相同的图片物化；不能重新估算，也不能把 durable 图片引用直接交给 Provider。
+普通与压缩 Reminder 的瞬态文本增量、工具定义和调用输出预留由 Graph 的最终 Prompt 计量负责；摘要重建后则
+使用重建结果新生成的图片证据，避免旧消息索引污染新的正式主调用。
 
 ---
 
 ## 2. Fence 围栏家族（高度可配置 ✅）
 
-把任何"想塞给 LLM 的额外上下文"声明成一个家族（kind），告诉 linnkit"放哪、活多久、是否必保留、最多占多少预算"，linnkit 帮你按规则塞进 messages、按生命周期清掉。
+把任何"想塞给 LLM 的额外上下文"声明成一个家族（kind），告诉 linnkit"放哪、活多久、如何格式化"，linnkit 帮你按规则塞进 messages、按生命周期清掉。
 
 **配置位置**：host 启动时调 `createFenceRegistry(descriptors)`，每条 `FenceDescriptor` 包含：
 
@@ -153,11 +166,11 @@ host 也可以在持久化的 `user_input.content` 中预先写入结构化块�
 | `llmRole` | 物理挂到哪个 role | `'system'` / `'user'` |
 | `placement` | 物理位置 | `'after-system'` / `'before-current-user'` / `'after-current-user'` / `'after-last-tool-result'` |
 | `lifetime` | 活多久 | `'turn-only'`（只本轮）/ `'persisted'`（进 history） |
-| `mustKeep` | 是否在 working memory 抽稀时必保留 | `boolean` |
-| `maxBudgetFraction` | 单类 fence 最多占总预算多少 | `(0, 1]` |
+| `mustKeep` | fence 的必保留意图 | `boolean`（当前尚未自动接入 MustKeepPolicy） |
+| `maxBudgetFraction` | fence 的预算比例意图 | `(0, 1]`（当前只校验取值，尚未执行容量裁决） |
 | `formatter` | 怎么把内容包装成 LLM 看到的字面 | host 提供函数 |
 
-**开放状态**：完全开放。详细装配骨架见 [`context-fences.md`](./context-fences.md)。
+**当前边界**：placement、lifetime 与 formatter 已完整接线；descriptor 上的 `mustKeep` / `maxBudgetFraction` 还不是运行时硬约束。当前轮 fence 会先组装进 `system_prompt` / 最新 `user_input`，最终只受整份 Prompt 容量门禁约束。详细现状见 [`context-fences.md`](./context-fences.md)。
 
 ---
 
@@ -184,6 +197,8 @@ contextPolicy: {
 **默认值**：`DEFAULT_MUST_KEEP_POLICY` 已经把 `system_prompt` / `user_input` 等核心 type 列进 alwaysKeepTypes。
 
 **开放状态**：`AgentSpec.contextPolicy.mustKeep` 已完成运行时接线。host 可以提供 fallback policy，单个 agent 可以通过 spec 覆盖；例如 `additional-context` 这类产品语义应属于 host fallback，不写进 linnkit framework。
+
+**组装边界**：以上按 `fenceKind` 匹配的规则只作用于仍保持独立 `context_injection` 身份的消息。当前轮 system/user fence 会在 Provider 阶段之前组装进 `system_prompt` / 最新 `user_input`，只留下 `assembledFenceKinds` 说明信息，因此当前实现无法再按单个 kind 执行 must-keep 或比例截断。
 
 ---
 
@@ -221,7 +236,7 @@ contextPolicy: {
 
 ---
 
-## 5. ContextProvider 三阶段填充
+## 5. ContextProvider 填充与自动压缩准备
 
 ### 5.1 AgentCoreContextProvider —— 核心层（无需配置）
 
@@ -248,146 +263,114 @@ contextPolicy: {
 | `budget.maxTokens` | 未声明（继承模型 route） | Agent 显式总窗口上限 | ✅ AgentSpec + runtime |
 | `budget.reservedForResponse` | 未声明（继承模型 route） | Agent 显式输出上限，并预留同等输入空间 | ✅ AgentSpec + runtime |
 | `budget.workingMemoryBudgetPercentage` | `0.70` | 工作记忆占可用预算的比例 | ✅ AgentSpec + runtime |
-| `reasoningRetention.keepLatestThoughts` | `1` | 最近保留多少条 thought | ✅ AgentSpec + runtime |
 | `workingMemory.minToolInteractionsToKeep` | `2` | compressed 历史工具摘要的预算兜底组数 | ✅ AgentSpec + runtime |
 | `workingMemory.maxRecentToolRuns` | `2` | 原始 tool_calls 形态保护的最近工具 turn 数 | ✅ AgentSpec + runtime |
 | `workingMemory.maxRecentToolInteractions` | `2` | Deprecated alias，兼容旧配置；新配置请用 `maxRecentToolRuns` | ⚠️ 兼容保留 |
 | `workingMemory.toolPairingSearchRange` | `10` | 搜工具配对的窗口范围 | ✅ AgentSpec + runtime |
 | P1-P3 优先级数字 | `1/2/3` | 优先级编号 | ❌ 不开放|
 
-### 5.3 CheckpointSummarizationProvider —— Checkpoint 主动压缩（开放方式特殊 ✅）
+<a id="automatic-context-compaction"></a>
 
-Agent 主动调一个约定为 `context_checkpoint` 的工具。工具执行成功后，history 里会出现一组普通的 `tool_calls -> tool_output`；只要这个 tool output 的原始结果里带有 linnkit 认可的 checkpoint marker，`CheckpointSummarizationProvider` 就会在下一次上下文构建时清理 checkpoint 之前的旧历史。
+### 5.3 自动上下文压缩 —— Context Manager 纯计划，Graph tick 执行（✅）
 
-- **保留**：must-keep + 这个 checkpoint 工具对本身 + checkpoint 之前最近 N 对工具交互（默认 N=2，可用 `checkpoint.keepPairsBefore` 覆盖）
-- **清掉**：checkpoint 之前更旧的 tool_calls / tool_output / final_answer / thought / 旧 history_summary
+自动压缩对所有模型使用同一套语义，不注册工具，也不增加 Graph node。Context Manager 只负责确定性部分：
 
-checkpoint 不为图片或其他附件增加例外。含附件消息若属于清理范围，会随消息或完整工具组一起退出活动上下文；
-durable history 与资源仍由 host 的正常持久化生命周期管理。
+- 只从已经 materialize、真正进入本次主 Prompt 的消息中选择最老可替换区段；预处理来源历史仅用于展开替换闭包与递增摘要序号，不能虚报释放量。最新用户请求、must-keep、附件、不完整工具组与最近工具组不进入候选。
+- 工具调用按 `assistant.tool_calls + sibling tool_output` 原子组选择，不能拆开。
+- 对 `replacementSourceIds` 和旧摘要的 `replacedMessageIds` 计算来源闭包。
+- 校验模型输出的固定摘要格式与 token 上限，创建尚未发布的 `history_summary` draft，并用 draft 重建上下文。
 
-linnkit 提供协议（`CHECKPOINT_MARKER_TYPE` / `CheckpointSummarizationProvider` / SystemReminder & step-reset 联动）+ 最小工具（`ContextCheckpointTool`）；工作流状态或外部持久化由接入方负责，可通过下面的 hook 接入。
+Graph tick pipeline 负责带副作用的完整事务：
 
-最小接入：
-
-```ts
-import { ContextCheckpointTool } from '@linnlabs/linnkit/runtime-kernel';
-
-export const tools = [
-  new ContextCheckpointTool(),
-];
+```text
+build_context → apply_system_reminder → measure_prompt_usage
+  → compact_context（达到阈值时生成摘要并重建、重新计量）
+  → admit_prompt_capacity
+  → commit_context_compaction（durable commit → end → publisher fan-out）
+  → execute_llm
 ```
 
-如果你改工具名，必须同时改 `contextPolicy.checkpoint.triggerToolName`：
+System Reminder 与自动压缩的关系统一见 [§6](#system-reminder)。
 
-```ts
-const checkpointTool = new ContextCheckpointTool({ name: 'phase_checkpoint' });
+重建后的最终实测 token 必须严格少于压缩前，否则按无收益结果拒绝提交。软阈值下压缩失败时，原 Prompt 仍在硬预算内即可继续；主 Prompt 已严格超限时，压缩失败必须阻止主模型调用。强制收尾 phase 只抑制软触发，硬超限仍先恢复容量，并原样保留收尾 phase 与 tool choice。压缩成功不会重置 `maxSteps` 或 `stepCount`。
 
-contextPolicy: {
-  profileId: 'agent',
-  checkpoint: {
-    triggerToolName: 'phase_checkpoint',
-  },
-}
-```
-
-如果 host 有自己的状态系统，可以用 hook 扩展 payload / observation：
-
-```ts
-const checkpointTool = new ContextCheckpointTool({
-  extraParameters: {
-    workflow_state: {
-      type: 'object',
-      description: 'Host workflow state snapshot',
-    },
-  },
-  buildPayloadExtension: async ({ args, context }) => {
-    // 可选：写入 host 自己的状态存储或文件系统。
-    // 返回值会合并到 tool result data 中，但 _type 与 summary 由 linnkit 固定写回。
-    return {
-      conversation_id: context.conversationId,
-      workflow_state: args.workflow_state,
-    };
-  },
-});
-```
-
-> 注意：`CheckpointSummarizationProvider` 严格读取 `tool_output.metadata.data` 里的 marker，而不是解析展示给模型看的 observation 文本。这是为了避免普通工具输出碰巧像 JSON 时误触发 checkpoint。
-
-**与 summarization 的关键区别**：
-
-| 维度 | summarization | checkpoint |
-|------|---------------|-----------|
-| 谁触发 | linnkit 在 token 超阈值时**被动**触发 | agent 主动判断（"完成了一个阶段任务"等）**主动**触发 |
-| 体感 | 文本摘要，丢得多 | 工具对形态，保留 agent 自己的总结 + task state | 
-| 何时 | 上限附近 | 任何时候 |
-| 颗粒度 | 较粗 | agent 自己控制颗粒 |
-
-**配置位置 / 开放状态**（完整开放面清单见 §11）：
-
-- ✅ **启用方式**：把 `ContextCheckpointTool` 注册进 agent 的工具集即可；不想用就不注册
-- ✅ **改工具名**：`contextPolicy.checkpoint.triggerToolName` 同时控制裁剪识别、GraphExecutor step-reset、SystemReminder 文案——改名必须确保对应工具真实注册进 agent
-- ✅ **marker 协议**：`CHECKPOINT_MARKER_TYPE` framework 内固定；自定义工具也必须输出这个 marker
-
-### 5.4 自动 SummarizationProvider —— 超预算被动摘要（注册 agent 可配置 ✅）
-
-当 token 总用量超过阈值，把最旧的一批消息丢给一个**专用的摘要 agent**，让它生成一段总结，替换掉这批旧消息。
-
-摘要 agent 当前只消费候选消息的文本视图。候选消息携带附件时，附件不单独进入摘要调用；摘要替换原消息后，附件随
-原消息退出活动上下文。需要再次查看原始像素时，Agent 应通过 durable locator 重新读取，而不是让图片绕过统一摘要规则。
+`history_summary` 只有在重建 Prompt 已通过容量门禁后才提交。Graph 先调用 root/child 各自的 `RuntimeEventCommitPort(event, source)`；Host 必须在同一条有序 persistence 队列里完成 routing admission、落盘与 ack，但此时不做 realtime fan-out。成功后 Graph 才发送 `summarization_end`，再把同一 fact 交给既有 RuntimeEvent sink / publisher；persistence consumer 按 fact ID 去重，不能写第二份。durable commit 是不可回滚分界：提交失败必须形成 `start → error`，不得出现 end、`history_summary` 或主模型调用；提交成功后不得再上报压缩失败或 `summarization_error`。生产 Host 的 progress callback 必须 no-throw，transport 失败只记日志；非标准 event sink 的后续 fan-out 失败可以终止 execution，但不能删除或否认已经提交的摘要。
 
 **可配置字段**：
 
-| 字段 | 默认 | 含义 | 开放状态 |
-|------|------|------|---------|
-| `summarization.triggerThreshold` | `0.70` | 超过总预算的多少比例触发 | ✅ AgentSpec |
-| `summarization.budgetPercentage` | `0.12` | 摘要文本本身的 token 长度上限占比 | ✅ AgentSpec |
-| `summarization.oldestMessagesPercentage` | `0.75` | 选取多大比例的最老消息进摘要 | ✅ AgentSpec |
-| 摘要 agent + 失败行为 | `summarization.agentId` / `failureBehavior`；摘要必须通过 host 注册 agent/chat 调用 | ✅ AgentSpec + runtime |
-| 摘要失败的 fatal 判断 | 通过 `ContextProviderError({ code: 'SUMMARIZATION_FAILED', fatal: true })` 抛出 | ✅ 协议化 |
+| 字段 | 默认 | 含义 |
+|------|------|------|
+| `compaction.enabled` | `true` | 是否启用自动压缩 |
+| `compaction.triggerRatio` | `0.80` | reminder 后最终 Prompt 达到该比例时软触发 |
+| `compaction.targetRatio` | `0.50` | 候选计划期望释放到的水位 |
+| `compaction.keepLatestToolGroups` | `2` | 不进入候选的最近完整工具组数量 |
+| `compaction.maxOutputTokens` | `8192` | 内部摘要请求策略上限；最终取 `min(该值, route.max_output_tokens)` |
+| `compaction.maxCompactionsPerRun` | `12` | 单个 run 真正到达 Provider 的压缩 attempt 上限；失败调用同样计入护栏 |
 
-**摘要 agent 的注册边界**：framework 不持有摘要 prompt 正文，也不直接发起裸 LLM call。它只通过 `SummaryGenerationRequest` 把 `agentId`、已格式化的待摘要 `content` 和已解析的 `modelId` 交给 host；host 再通过自己的注册表解析无工具摘要 agent/chat，并按该注册项构造 prompt、完成模型调用。host 可以把默认摘要 agent 注册为 `history_compression`，也可以在 `contextPolicy.summarization.agentId` 中为单个 agent 指定别的注册项。项目、文档、编辑器 block、用户引用和自动补全行为不属于这条合同。
+压缩请求复用当前模型、有序工具定义和普通 Reminder 已注入的完整 Prompt，保持每条原消息不变，再追加一条瞬态 user-role 消息承载专用 `<system-reminder>`。Provider adapter 只负责把 canonical cache anchor 映射到对应 wire 协议，不改变压缩算法。
 
-**最小注册示例**（在 host 侧先注册摘要 agent，再在业务 spec 里填 `agentId`）见 [`agent-registration-guide.md`](./agent-registration-guide.md) §4.2。
-
-**失败行为**：
-
-| `failureBehavior` | 行为 |
-|-------------------|------|
-| `'fail-fast'`（默认）| 摘要失败立即抛 typed fatal `ContextProviderError`，保持旧行为 |
-| `'continue-if-within-budget'` | 只有当前上下文仍在预算内时才允许继续使用原始消息；如果已经超预算，仍然 fail-fast |
-
-`ContextProviderError({ fatal:false })` 是 provider 层唯一允许继续的降级信号；普通异常会被视为程序错误并直接向上抛出，避免 pipeline 静默少跑阶段。
+修改这条主链时运行仓库级 `pnpm run test:context-compaction-gate`。该门禁覆盖 Context Manager 计划、Graph 同轮事务、root/child 隔离与取消、Host durable commit、Renderer live/reload、Provider wire 和审计投影，同时保证旧 checkpoint 工具、step reset 与专用摘要模型不会重新进入生产代码。
 
 ---
 
+<a id="system-reminder"></a>
+
 ## 6. System Reminder（注册表 + AgentSpec 已接线 ✅，**有一项不开放**）
 
-根据当前 tick 的状态（步数、phase、工具调用次数等）在**最后一条 message 末尾**追加一段 `<system-reminder>...</system-reminder>`，利用 LLM 注意力的末尾效应做行为引导。
+System Reminder 是统一的 `<system-reminder>...</system-reminder>` 瞬态控制协议。普通 tick 提醒与压缩专用控制共享标签和“不入历史”的生命周期，但注入位置不同。
 
-**核心设计原则**（重要，你草稿里有一处理解偏差，看下面）：
+先把最容易混淆的三件事分开：
+
+| 对象 | 物理位置 / role | 生命周期 |
+|------|-----------------|----------|
+| 普通 tick Reminder `R / R′` | 拼入当时最后一条 wire message 的 `content`，没有独立 role | 仅当前 tick；触发压缩时随完整原 Prompt 进入内部请求 |
+| 压缩专用 Reminder `C` | 完整原 Prompt 后新增的最后一条瞬态 `role=user` wire message | 仅当前内部压缩请求 |
+| durable `history_summary` | 当前由 Context Manager 以 `role=system` 投放在后续主 Prompt | 持久化历史记忆，直到被下一代摘要替换 |
+
+`history_summary` 是压缩结果，不是 System Reminder；不能因为它当前使用 `role=system`，就把压缩指令也实现成 system-role message。
+
+**核心设计原则**（必须遵守）：
 
 | 不变量 | 说明 |
 |--------|------|
 | ✅ 只对当前 tick 生效 | 不写入 history、不持久化、不产生 RuntimeEvent |
-| ✅ 注入位置固定 | 最后一条 message 的 content 末尾，包裹在 `<system-reminder>` 标签 |
+| ✅ 普通 Reminder 位置固定 | 最后一条 message 的 content 末尾，包裹在 `<system-reminder>` 标签 |
+| ✅ 压缩 Reminder 位置固定 | 完整原 Prompt 后新增的最后一条 user-role wire message；不改写任何原消息 |
 | ✅ 配置驱动 | 内置规则与 host extraRules 都通过 trigger + contentTemplate 注册表解释 |
+| ✅ 两类 Reminder 分工固定 | 内部压缩请求保留已经注入的普通 Reminder，并在其后追加专用压缩 Reminder；重建正式主 Prompt 后，只使用同一份 request / history / executor state 重新生成普通 Reminder |
 | ❌ **不能配置进短期对话历史** | "可以配置允许进入短期对话历史并持久化"——这条**当前不支持**，是反协议的：reminder 本质是"瞬态状态注入"，进 history 会污染缓存与回放语义。如果产品真有"持久化提示"需求，应该走 fence 通道（`lifetime: 'persisted'`），而不是 reminder |
 
-**触发方式**：framework 内置 5 条规则，按顺序判定：
+自动压缩时实际存在三个请求形态：
+
+```text
+压缩前正式主调用：常规上下文 + System Reminder R
+内部压缩请求：    上一行完整 Prompt + Compaction Reminder C
+压缩后正式主调用：重建上下文 + System Reminder R′
+```
+
+`R` / `R′` 按普通规则拼入当时最后一条消息的 content。`C` 则包裹为同样的 `<system-reminder>` 标签，但作为完整原 Prompt 后新增的瞬态 `role=user` wire message；它不是 system-role message，也不进入 history。这样既让完整原 Prompt 成为逐条不变的缓存前缀，也避免最后一条原消息是 tool output 时，压缩指令被当作不可信工具数据。`C` 只用于本次内部压缩请求，要求模型停止原任务、禁止调用工具并仅输出固定格式 Checkpoint。
+
+`R′` 不是从旧 Prompt 复制出来的文本。运行时会用相同的 `request`、`history`、`executorLocal` 和 reminder policy 重新执行一次注册规则；符合纯函数合同的规则应得到与 `R` 等价、通常逐字相同的内容，但它会被追加到**重建后**的最后一条 message。专用 `C` 不进入重建后的主调用。若原 phase 是强制收尾，phase 与 tool choice 也保持不变。随后整份 Prompt 必须重新计量并通过容量门禁。
+
+模块维护者还必须阅读 [`runtime-kernel/system-reminder/README.md`](../../src/runtime-kernel/system-reminder/README.md)。那里规定 owner、文件职责、扩展方式与验证门禁；接入方不要绕过 Graph stage 手工拼接 Reminder。
+
+**触发方式**：framework 内置 4 条规则，按顺序判定：
 
 | 规则 ID | 触发条件 | 用途 |
 |---------|---------|------|
-| `max_steps_force_final_answer` | `phase === 'force_final_answer'` | 最后一步强制收尾，禁用工具 |
+| `max_steps_force_final_answer` | `phase === 'force_final_answer'` | LLM 已不足以再完成 `ToolNode → LLM` 闭环时提前收尾，禁用工具 |
 | `last_steps_hint` | `remainingSteps <= threshold` | 剩余步数提示 |
 | `tool_call_streak_every_ten` | 本轮工具调用次数 ≥ 10 且为 10 的倍数 | 工具循环过深告警 |
 | `periodic_progress_reflection` | `stepCount` 是 30 的倍数 | 长程任务定期反思 |
-| `context_budget_warning` | `stepCount` 达 maxSteps 的 90% 且 agent 有 `checkpoint.triggerToolName` 对应工具 | 上下文即将耗尽，引导调 checkpoint |
+
+`phase` 只在实际进入 LLM 节点时决定工具视图；步数策略不得覆盖 ToolNode 或删除已经接受的工具批次。
+完整边界与 798→799→800 示例见 [Graph Engine §2.2](../../src/runtime-kernel/graph-engine/README.md#22-步数预算与收尾)。
 
 **配置开放状态**：
 
 | 项 | 开放状态 | 备注 |
 |---|---------|------|
-| 规则触发的阈值（10 / 30 / 90% 等数字）| ✅ AgentSpec + runtime | `systemReminder.thresholds` 覆盖 |
+| 规则触发的阈值（10 / 30 等数字）| ✅ AgentSpec + runtime | `systemReminder.thresholds` 覆盖 |
 | 规则文案 | ✅ 注册表 | 内置文案在 runtime template；host extraRules 通过 `contentTemplate` 引用 host 注册模板 |
 | 是否启用某条规则（白名单/黑名单）| ✅ AgentSpec + runtime | `enabledRuleIds` 与 `disabledRuleIds` 二选一 |
 | host 自定义新规则 | ✅ AgentSpec + runtime | `systemReminder.extraRules` 通过 trigger/template 注册表解释 |
@@ -398,7 +381,7 @@ const checkpointTool = new ContextCheckpointTool({
 - spec 只写 `extraRules: [{ id, trigger, contentTemplate, contentArgs }]`，不允许写函数。
 - trigger 由 `SystemReminderRegistry.registerTriggerKind(kind, evaluator)` 注册。
 - 文案由 `SystemReminderRegistry.registerContentTemplate(name, template)` 注册。
-- 内置 5 条规则也走同一套解释链路，因此自定义规则、阈值覆盖、启用/禁用规则的行为一致。
+- 内置 4 条规则也走同一套解释链路，因此自定义规则、阈值覆盖、启用/禁用规则的行为一致。
 
 ---
 
@@ -439,20 +422,18 @@ tool output 的唯一尺寸治理点是执行期 `toolOutput.observationGovernan
 
 ---
 
-## 8. Reasoning / Thought 保留策略（AgentSpec 已运行时接线 ✅）
+<a id="reasoning-retention"></a>
 
-部分 LLM Provider 会返回可见的 reasoning 文本，有些模型在能看到之前 reasoning 历史时表现更好——所以 Linnkit 把 `thought` 当作一类 AiMessage 保留。厂商 wire 字段如何映射为 canonical reasoning 由 Host codec 负责，Context Manager 不识别这些字段。
+## 8. Canonical Reasoning 单一所有权
 
-**当前可配置且已接入 runtime**：
+部分 LLM Provider 会返回可见 reasoning。Linnkit 对同一次 Assistant 产出建立两种投影：
 
-| 项 | 默认 | 开放状态 |
-|---|------|---------|
-| 工作记忆里保留的最近 thought 数量 | `reasoningRetention.keepLatestThoughts = 1` | ✅ AgentSpec + runtime |
-| Provider continuation replay 要求 | `required` / `optional` / `unavailable` | ✅ 由 Host 的显式 inference route 注入，不属于 AgentSpec |
+- `thought` RuntimeEvent 负责流式 UI、历史展示与审计；它会持久化和实时发布，但**永不作为独立消息进入模型上下文**。
+- `assistant_replay_parts` 负责模型回放，按 Provider 原始顺序保存 text、reasoning、tool call 及所属 continuation；这是 reasoning 的唯一模型侧 owner。
 
-默认生产运行时保留**1 条**（最新的那条 thought）。如果需要保留多轮 reasoning，可在 AgentSpec 中设置 `reasoningRetention.keepLatestThoughts`，该字段会透传到 `AgentWorkingMemoryProvider`。
+因此，Context 不再按文本相等做 thought 去重，也没有“最近保留 N 条 thought”的策略。一次 run 中已经进入 ordered replay 的全部 canonical reasoning 都随所属 Assistant 消息保留，直到该消息被正式 `history_summary` 压缩替换。这个统一规则适用于所有模型；不同 Provider 的差异只存在于 continuation codec，不产生另一套上下文算法。
 
-Provider replay 是另一件事：它不决定“保留几条 thought”，而决定当前 route 是否允许回放缺少 continuation 的结构化工具组。Linnkit 不按模型名猜测；Host 从 `inference_route.continuation.tool_replay` 注入。required route 缺少 continuation 时直接失败，不降级、不补空字段。AgentSpec 无权覆盖 Provider 协议能力。
+Host 仍必须让 `assistant_part_end.text` 与该 part 已发送的 `thought_delta` 累积文本一致。这是双投影 conformance 要求，不是让 Runtime 通过文本匹配决定谁进入 Prompt。Provider continuation replay 则由 Host 的 `inference_route.continuation.tool_replay` 声明；required route 缺少 continuation 时直接失败，不降级、不补空字段。
 
 ---
 
@@ -473,6 +454,31 @@ Provider replay 是另一件事：它不决定“保留几条 thought”，而�
 
 完整 token 口径地图见 [`token-management.md`](./token-management.md)：那里专门说明预算估算、remote count、provider usage、component ledger 与 cost/calibration 的区别。
 
+#### 9.1.1 压缩后的最大预算一览
+
+先看唯一的总上限：`effectiveWindowTokens` 取模型 route 总窗口与 Agent 显式 `maxTokens` 的较小值；`outputLimitTokens` 取 route 输出上限与 Agent 显式 `reservedForResponse` 的较小值；`inputBudgetTokens = effectiveWindowTokens - outputLimitTokens`。全部 messages（含 reminder 与图片估算）加上 prepared tool definitions，必须不超过 `inputBudgetTokens`。
+
+`targetRatio = 0.50` 是压缩的**目标水位**，不是压缩后的硬上限。受保护内容过多时，压缩结果可以高于 50%，但只有不超过 `inputBudgetTokens` 才能提交并调用主模型；严格超限会得到 `CONTEXT_COMPACTION_REBUILD_OVER_BUDGET`，摘要不提交，主模型不调用。
+
+| 对象 / `AiMessage.type` | 默认独立上限或保留量 | 最终预算口径 | 相关细则 |
+|---|---:|---|---|
+| **整份最终输入** | `inputBudgetTokens`（输入硬预算的 100%） | 唯一总硬上限；等于上限可接纳，超过即在 Provider 前拒绝 | [Token 管理](./token-management.md) |
+| Prepared tool definitions | 无独立上限 | 先占用 `inputBudgetTokens`，剩余部分才是 `messageBudgetTokens` | [工具开发](./tool-development-guide.md) |
+| `system_prompt` | 无独立上限；默认必保留 | 与其他内容共同受最终总门禁约束 | [Agent 注册](./agent-registration-guide.md) |
+| `history_summary` | `min(8192 tokens, route.max_output_tokens)` | 这是摘要正文上限；只保留最新摘要，重建后的整份输入仍须通过总门禁 | [自动压缩 §5.3](#automatic-context-compaction) |
+| `user_input` | Linnkit 无独立 token 上限；最新一条默认必保留 | Host 可以另设字符、字节或附件入口限制；这些限制不属于 Linnkit 固定合同 | [Context Fence](./context-fences.md) |
+| `context_injection` / `context_before` / `context_after` / `document_fragment` / `task_request` | 当前没有 per-fence 硬上限 | `FenceDescriptor.maxBudgetFraction` 目前只校验声明，尚未形成运行时裁决；当前只受最终总门禁约束 | [Context Fence](./context-fences.md) |
+| `thought` / canonical reasoning | `thought` 不进入模型输入；reasoning 与其他 Assistant 输出共享 `outputLimitTokens` | 全量 reasoning 通过所属 `assistant_replay_parts` 回放并计入消息 token，直到正式压缩替换 | [Reasoning 所有权 §8](#reasoning-retention) |
+| `final_answer` / `tool_code` / `task_completion` | 无独立 token 上限 | 当前一次模型生成共享 `outputLimitTokens`；历史消息按工作记忆预算取舍 | [Token 管理](./token-management.md) |
+| `tool_calls` | 与 thought / text 共享本次生成的 `outputLimitTokens`，没有第二份独立上限 | 普通 route 会把上限发给 Provider；ChatGPT Codex 订阅 route 按其客户端合同省略 wire 上限，只保留本地预算预留。进入历史后与全部 sibling `tool_output` 整组同进同退 | [Tool History](./tool-history.md) / [Provider catalog](../../../../docs/source-acquisition/provider-catalog.md) |
+| `tool_output` | 默认在超过 20,000 字符或 1,200 行时落盘并替换为 preview | 这是执行期字符/行阈值，不是 token 上限；preview 仍受最终总门禁约束 | [Tools](./tools.md) |
+| `user_input` / `tool_output` 的图片附件 | Linnkit 不固定数量、字节或分辨率上限 | Host 的 `LlmInputMaterializerPort` / route profile 负责 admission；图片 token 估算计入最终输入，附件随所属消息或完整工具组同进同退 | [图片输入](./llm-provider.md#5-图片输入) |
+| `<system-reminder>` | 无独立 token 上限 | 普通 Reminder 拼入末条 content；压缩专用 Reminder 是独立末尾 wire 消息。两者都重新计量并接受同一总门禁 | [System Reminder §6](#system-reminder) |
+
+以无模型 route 时的 framework fallback 为例：总窗口 256,000，输出预留 16,384，所以输入硬预算是 **239,616 tokens**；80% 软触发线约为 **191,693 tokens**，50% 目标水位是 **119,808 tokens**。即使目标不可达，已接纳结果也不会超过 239,616 tokens。
+
+这里的“不超限”以当前生效的 `TokenizerPort` / remote count 口径为准。若 Host 只使用近似 tokenizer，Linnkit 能保证“不发送自己已经测得超限的请求”，但 Provider 的真实 tokenizer 仍可能得到不同计数；需要严格一致时应注入对应模型的 tokenizer 或启用 remote count，见下文 §9.2—§9.4。
+
 ### 9.2 谁来算 token？
 
 > 本文档把"计算 token 的方法"统称为 **tokenizer**。这是一个**总称**——既包括 linnkit 内置的默认 tokenizer（基于 tiktoken + 字节比兜底），也包括 host 注入的任何自定义实现。所有运行期上下文预算决策都通过当前生效的 tokenizer 完成。
@@ -480,7 +486,7 @@ Provider replay 是另一件事：它不决定“保留几条 thought”，而�
 **linnkit 协议层既定事实**：
 
 - linnkit **内置一个默认 tokenizer**（实现：`TokenCalculator` + `tiktoken@^1.0.22` 硬依赖）—— 只有 Host/AgentSpec 显式声明 `tokenEstimation.encoding` 时才调用对应 tiktoken encoding；未声明或 tiktoken 不可用时使用 `avgCharsPerToken` 粗估。Linnkit 不从模型名或 Provider 名猜 encoding。
-- runtime 统一通过 `tokenizer.estimateMessage(...)` 估算 message token，预算判断会同时计入基础 message overhead、内容 token、tool call 参数 token 与 `tokenEstimation.toolCallOverhead`。如果 `encoding` 不可用，才回退到 `avgCharsPerToken`。
+- runtime 统一通过 `tokenizer.estimateMessage(...)` 估算 message token，预算判断会同时计入基础 message overhead、canonical replay 中的 text/reasoning、tool call 参数 token 与 `tokenEstimation.toolCallOverhead`。存在 `assistant_replay_parts` 时，它与真实 Provider 请求一致，是 Assistant 内容的唯一估算来源，不重复计算投影 `content`。如果 `encoding` 不可用，才回退到 `avgCharsPerToken`。
 - `TokenizerPort` 的 `modelId` 参数只供 Host 自定义实现按显式 route 决策；内置 `DefaultTokenizerPort` 不解释它。需要 tiktoken 时必须声明准确 encoding，需要厂商 tokenizer 时由 Host 注入自己的 `TokenizerPort`。
 - 这个 tokenizer **仅用于 budget 决策**（"还能塞多少消息"），**不用于**计费——计费 token 数由 provider 返回的 `usage` 字段决定，host 自己消费。
 - linnkit **不发明跨 provider 统一 token 数协议**——每个 host / agent 决定自己用什么 tokenizer（默认内置 / 调三参数 / 完全替换）。
@@ -630,7 +636,7 @@ contextPolicy: {
 - `overflowed`：trace 事件超过 `maxTraceEvents` 时为 `true`，防止观测数据反过来膨胀。
 - GraphExecutor 会把 `contextTrace` 从 context builder 透传到 context audit record；runtime-kernel 只按 `unknown` 透传，不反向依赖 context-manager 类型。
 
-`ContextTrace.remoteTokenCount` 只解释 Context Manager 构建结束时的 messages。真正提交给 provider 的最终口径由 Graph 的 `measure_prompt_usage` stage 在 system reminder 后重新测量，并同时带上 prepared tools。成功的 provider attempt 才会把严格 `ContextUsageSnapshot` 写入 tick output / checkpoint；调用失败或取消不会提交候选快照。
+`ContextTrace.remoteTokenCount` 只解释 Context Manager 构建结束时的 messages。真正提交给 provider 的最终口径由 Graph 的 `measure_prompt_usage` stage 在 system reminder 后重新测量，并同时带上 prepared tools。达到阈值时，`compact_context` 生成摘要、重建并重新计量；随后 `admit_prompt_capacity` 校验 `used_tokens <= input_budget_tokens`，`commit_context_compaction` 才提交已接纳的 `history_summary`。成功的 provider attempt 才会把严格 `ContextUsageSnapshot` 写入 tick output / engine checkpoint；超限被拒绝、调用失败或取消都不会提交候选快照。LlmNode 还会把该成功快照作为 ephemeral `context_usage_snapshot` 经已注入的 RuntimeEventSink 发布，不进入 Graph history；Host 若需要 reload，仍由 execution settlement 把最新快照写入 durable `run_execution_metrics`。事件治理与实时接入见 [`realtime.md`](./realtime.md)。
 
 **边界**：ContextTrace 不是 DevTools，也不是 PromptTrace 可视化；它只提供最小可观测闭环。跨 run prompt diff、图形化时间线、长期审计落库属于阶段 2。
 
@@ -643,11 +649,9 @@ contextPolicy: {
 - `budget.maxTokens` / `reservedForResponse` / `workingMemoryBudgetPercentage`
 - `toolHistory.{strategy, retentionMode, keepLatestToolPairs, keepLatestRuns, maxInteractionGroups, overflowStrategy}`
 - `toolOutput.observationGovernance.{enabled, maxChars, maxLines}`
-- `summarization.{triggerThreshold, budgetPercentage, oldestMessagesPercentage, agentId, failureBehavior}`
+- `compaction.{enabled, triggerRatio, targetRatio, keepLatestToolGroups, maxOutputTokens, maxCompactionsPerRun}`
 - `MustKeepPolicy.{alwaysKeepTypes, alwaysKeepFenceKinds, truncationRules}`
 - `workingMemory.{maxRecentToolRuns, maxRecentToolInteractions(deprecated alias), minToolInteractionsToKeep, toolPairingSearchRange}`
-- `checkpoint.{keepPairsBefore, triggerToolName}`
-- `reasoningRetention.keepLatestThoughts`
 - `tokenEstimation.{encoding, avgCharsPerToken, toolCallOverhead}`
 - `systemReminder.{enabledRuleIds, disabledRuleIds, thresholds, extraRules}`
 - `contextTrace.{enabled, includeMessageIds, includeTokenBreakdown, maxTraceEvents}`
@@ -661,7 +665,7 @@ contextPolicy: {
 ### 🚫 协议性不开放（不计划开放）
 
 - system reminder **持久化进 history**（违反 reminder 协议本质——若需持久化请走 fence `lifetime: 'persisted'`）
-- ContextProvider 三阶段顺序（核心 → 工作记忆 → 摘要）
+- 默认 ContextProvider 顺序（核心 → 工作记忆）与 Graph tick 压缩事务顺序
 - 工具历史填充的 P1-P3 优先级数字
 - `tool_calls` / `tool_output` 配对不变量
 
@@ -673,11 +677,10 @@ contextPolicy: {
 |------------|------------|----------|
 | 控制总预算 / 预留响应 token | `contextPolicy.budget` | `ContextTrace.effectivePolicy` + final token usage |
 | 控制工具历史保留方式 | `contextPolicy.toolHistory` | `ContextTrace.message-decision` 中 tool_calls / tool_output 的 keep/drop |
-| 控制摘要何时触发、用哪个摘要 agent | `contextPolicy.summarization` | summary event + `ContextTrace.provider` 中 summarization provider token delta |
-| 必保留某类 host 上下文 | `contextPolicy.mustKeep.alwaysKeepFenceKinds` | fence 对应 message 的 decision 为 `kept_by_CORE_CONTEXT` |
+| 控制自动压缩开关、触发水位、目标水位与摘要上限 | `contextPolicy.compaction` | `context_compaction` telemetry + `history_summary` + 压缩前后 Prompt usage |
+| 必保留某类仍独立存在的 host fence | `contextPolicy.mustKeep.alwaysKeepFenceKinds` | fence 对应 message 的 decision 为 `kept_by_CORE_CONTEXT`；当前轮已组装 fence 不适用 |
 | 调整工作记忆工具组数量 | `contextPolicy.workingMemory` | working-memory provider 后的 kept count / token delta |
-| 改 checkpoint 工具名或保留窗口 | `contextPolicy.checkpoint` | checkpoint provider 策略命中 + GraphExecutor step-reset 行为 |
-| 控制 thought 保留数量 | `contextPolicy.reasoningRetention.keepLatestThoughts` | thought message 的 keep/drop 数量 |
+| 验证 reasoning 回放是否完整且无重复 | RuntimeEvent lifecycle + `assistant_replay_parts` | `thought` 仅出现在 UI/审计，ordered replay 中的 reasoning 按原顺序进入 Provider 请求 |
 | 控制工具 observation 执行期预览阈值 | `contextPolicy.toolOutput.observationGovernance` | `metadata.observationTruncation.blobId` 是否生成 + tool node 单测 |
 | 声明 Provider 工具回放要求 | Host `inference_route.continuation.tool_replay` | required route 缺 continuation 时是否 fail-closed |
 | 调整 token 估算口径 | `contextPolicy.tokenEstimation` | provider token delta 曲线变化 |
@@ -694,10 +697,10 @@ SystemReminder 是**当前 tick 的瞬态提醒**，不会进入历史。内置�
 contextPolicy: {
   profileId: 'agent',
   systemReminder: {
-    enabledRuleIds: ['last_steps_hint', 'context_budget_warning'],
+    enabledRuleIds: ['last_steps_hint', 'periodic_progress_reflection'],
     thresholds: {
       lastStepsHintThreshold: 2,
-      budgetWarningRatio: 0.85,
+      periodicReflectionPeriod: 24,
     },
   },
 }

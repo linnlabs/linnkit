@@ -10,18 +10,17 @@
  *   - `nodeId`: 图执行当前停在哪个节点
  *   - `pendingToolCalls`: 已发出还未回收的 tool call
  *   - `executorLocal.stepCount`: 循环步数计数
- *   - `local`: 节点间共享的中间字典（含 history、checkpointCount 等）
+ *   - `local`: 节点间共享的中间字典（含 history、executorLocal 等）
  *
  * 这是 **执行控制层** 的概念：让一次 run 在被打断后能从断点恢复继续推理，
  * 让宿主能查询"我现在停在哪个节点、还欠几个 tool call"。
  *
  * ### 这个 Checkpointer **不是**：
  *
- * - **不是** 应用层的"对话总结 / 上下文裁剪 checkpoint"。那是上下文工程
- *   领域的概念，通常由宿主自己实现成一个 LLM tool（让模型主动写阶段总结，
- *   下一轮上下文构建时把摘要点之前的旧消息从 LLM context window 里裁掉）。
- *   那种产出本质上是一个 RuntimeEvent，落在宿主的 EventStore 里，跟本接口
- *   毫无关系。
+ * - **不是** 上下文压缩的事实存储。摘要仍由 LLM tick pipeline 生成并作为
+ *   `history_summary` RuntimeEvent 提交；本快照只保留同一 run 的
+ *   `executorLocal.contextCompaction` 计数与最近计划身份，以便 wait-user resume
+ *   不会重复压缩同一段历史。
  *
  * - **不是** RuntimeEvent 持久化。事件流的持久化由 `EventStore` 接口负责。
  *

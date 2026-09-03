@@ -1,6 +1,6 @@
 # Agent Registration Guide · Agent 注册与装配规范
 
-> **What** · `AgentSpec` 静态蓝图 + `defineAgent` quickstart helper + `contextPolicy` 12 大分组 + 多 agent 协作。
+> **What** · `AgentSpec` 静态蓝图 + `defineAgent` quickstart helper + `contextPolicy` 10 大分组 + 多 agent 协作。
 > **When to read** · 第一次注册 agent；精细化控制上下文；多 agent 串接；做 agent 注册表。
 > **Prerequisites** · [`02-quickstart.md`](./02-quickstart.md)；建议先读 [`tool-development-guide.md`](./tool-development-guide.md) ⭐。
 > **Key exports** · `AgentSpec` / `ToolBindingSpec` / `defineContextPolicy` from `@linnlabs/linnkit/contracts` · `defineAgent` / `runAgent` from `@linnlabs/linnkit/quickstart`。
@@ -123,11 +123,11 @@ const contextPolicy = defineContextPolicy({
   // 只有这个 Agent 确实需要比模型 route 更小的窗口/输出时才声明容量 cap。
   budget: { maxTokens: 128_000, reservedForResponse: 8_000 },
   toolHistory: { strategy: 'per-run', overflowStrategy: 'keep-latest' },
-  summarization: { agentId: 'summarizer', triggerThreshold: 0.8 },
+  compaction: { triggerRatio: 0.8, targetRatio: 0.5 },
 });
 ```
 
-12 大分组的详细说明见 [`context-engineering.md`](./context-engineering.md) ⭐。
+10 大分组的详细说明见 [`context-engineering.md`](./context-engineering.md) ⭐。
 
 如果你只是想确认“改预算要不要改很多地方”，先看 [`context-engineering.md §0.1`](./context-engineering.md#context-policy-source-of-truth)：模型 route 是容量真相源，`contextPolicy` 是 Agent 行为与可选容量上限的声明入口；运行时会先做三层合并，再由 adapter 拆给各消费点。
 
@@ -148,32 +148,30 @@ linnkit 内置默认 tokenizer（`tiktoken` + 字节比兜底），用于在已�
 
 linnkit **不**做：跨 provider 统一计费 token 数协议（不同模型口径不一样）。计费 token 走 provider `usage`。
 
-### 4.2 摘要 agent：`summarization.agentId`
+### 4.2 自动上下文压缩：`compaction`
 
-被动摘要（`contextPolicy.summarization`）会把一批旧消息交给 host 注册表里的**无工具**摘要 agent/chat；framework 不写摘要 prompt、不直接裸调 LLM。接入顺序：**先在 host 侧注册摘要项** → **再让业务 `AgentSpec` 的 `summarization.agentId` 指向该注册 id**。
-
-运行时，framework 只向 host 的 `generateSummary` port 传递
-`SummaryGenerationRequest { agentId, content, modelId }`。产品侧的项目、文档或编辑器上下文应留在
-host 自有请求中，不能扩张摘要合同。
+长任务不再注册专用摘要 Agent，也不通过 Context build 内的 Provider 调模型。Graph 在主调用前计量最终 Prompt，达到阈值后用**当前 Agent 的模型与完整 Prompt**发起一次无工具压缩请求：原 Prompt 每条消息保持不变，最后新增一条瞬态 `role=user` 消息承载压缩专用 `<system-reminder>`。它不是 system-role message，也不持久化。压缩结果只有在重建后通过容量门禁才会提交为 durable `history_summary`；后者当前由 Context Manager 以 `role=system` 投放，二者不是同一个对象。
 
 ```ts
-// ① host：注册一个无工具的摘要 agent/chat（表单项形状随 host 而定；核心是 id 可被解析、tools 为空）
-//    例如注册 id: 'history_compression'，并自行装配 prompt / 模型。
-
-// ② 业务 AgentSpec.contextPolicy（片段）
 defineContextPolicy({
   profileId: 'agent',
-  summarization: {
-    agentId: 'history_compression',
-    triggerThreshold: 0.72,
-    failureBehavior: 'continue-if-within-budget',
+  compaction: {
+    enabled: true,
+    triggerRatio: 0.8,
+    targetRatio: 0.5,
+    keepLatestToolGroups: 2,
+    maxOutputTokens: 8192,
+    maxCompactionsPerRun: 12,
   },
-}),
+});
 ```
 
-- `agentId` 必须在 host 注册表里存在；未知 id 应在装配期失败。
-- 摘要 agent **不要带工具**，否则摘要路径可能二次进工具循环。
-- `failureBehavior: 'continue-if-within-budget'`：仅当当前上下文仍不超预算时可继续用原文；**已超预算仍会 fail-fast**。字段语义与阈值细则见 [`context-engineering.md`](./context-engineering.md) §5.4。
+- `enabled` 默认为 `true`；显式 `false` 才关闭。
+- `triggerRatio` 是软触发线，`targetRatio` 是压缩后的目标占比，且必须更低。
+- `keepLatestToolGroups` 保护最近完整工具组；附件和不完整工具组也不进入可替换区段。
+- `maxOutputTokens` 限制本次压缩输出；`maxCompactionsPerRun` 限制单次 run 真正到达 Provider 的压缩 attempt，失败调用也会消耗这项产品护栏。
+- 压缩不增加 Agent 、工具或 Graph 节点，不重置步数预算，前端也无需新的配置与交互。
+- System Reminder 的普通 tick 与压缩专用位置合同见 [`runtime-kernel/system-reminder/README.md`](../../src/runtime-kernel/system-reminder/README.md)。
 
 ---
 
@@ -330,7 +328,7 @@ const handle = runSupervisor.spawnDetached({
 
 - [`tool-development-guide.md`](./tool-development-guide.md) — 工具内部设计规范
 - [`tools.md`](./tools.md) — `ToolRuntimePort` / `ObservationPreviewPort` 接入面
-- [`context-engineering.md`](./context-engineering.md) — 12 大分组 `contextPolicy` + `TokenizerPort`
+- [`context-engineering.md`](./context-engineering.md) — 10 大分组 `contextPolicy` + `TokenizerPort`
 - [`context-fences.md`](./context-fences.md) — fence 注册与注入（与 `mustKeep` 配合）
 - [`run-supervisor.md`](./run-supervisor.md) — `RunHandle.cost()` / `observe` / `cancel`
 - [`child-runs.md`](./child-runs.md) — `invokeChildRun` vs `spawnDetached`

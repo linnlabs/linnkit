@@ -1,7 +1,7 @@
 import type { MessageProcessingState } from '../base';
 import type { ToolPairMatcher } from './ToolPairMatcher';
 import type { HistoricalToolCandidate } from './types';
-import type { ToolInteractionGroup } from '../../../utils/toolInteractionGroup';
+import type { ToolInteractionGroup } from '../../../../../shared/toolInteractionGroup';
 
 /**
  * 构造 P3 历史工具候选。

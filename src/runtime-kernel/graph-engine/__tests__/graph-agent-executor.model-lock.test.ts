@@ -104,7 +104,6 @@ describe('GraphAgentExecutor - run 内 quota 模型锁定', () => {
             timestamp: Date.now(),
           },
         ],
-        summaryEvents: [],
       }),
     };
 
@@ -209,7 +208,6 @@ describe('GraphAgentExecutor - run 内 quota 模型锁定', () => {
       contextBuilder: {
         build: vi.fn().mockResolvedValue({
           llmMessages: [{ role: 'user', content: 'hi' }],
-          summaryEvents: [],
         }),
       },
       cloudQuotaFallbackModelId: 'cloud-deepseek-reasoner',

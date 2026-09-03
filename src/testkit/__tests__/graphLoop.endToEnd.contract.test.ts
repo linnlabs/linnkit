@@ -215,7 +215,6 @@ describe('linnkit testkit graph loop end-to-end smoke', () => {
         async build(): Promise<GraphExecutorContextBuildOutput> {
           return {
             llmMessages: [{ role: 'user', content: 'hello' }],
-            summaryEvents: [],
             outputProcessor,
           };
         },
@@ -272,6 +271,109 @@ describe('linnkit testkit graph loop end-to-end smoke', () => {
         is_complete: true,
       }),
     ]);
+    aiHarness.assertAllTurnsConsumed();
+  });
+
+  it('模型在工具调用后以 length 收口时不得执行截断工具', async () => {
+    const conversationId = 'conv_linnkit_incomplete_tool';
+    const turnId = 'turn_linnkit_incomplete_tool';
+    const streamedEvents: unknown[] = [];
+    const executeTool = vi.fn<ToolRuntimePort['executeTool']>();
+    const aiHarness = createScriptedInferenceHarness([{
+      contentChunks: ['准备执行'],
+      toolCalls: [{
+        id: 'call_incomplete',
+        name: 'mock_tool',
+        argumentsJson: '{"query":"unfinished"}',
+      }],
+      finishReason: 'length',
+    }]);
+    const toolRuntime: ToolRuntimePort = {
+      getToolSchemas: () => [{
+        type: 'function',
+        function: {
+          name: 'mock_tool',
+          description: 'mock tool',
+          parameters: {
+            type: 'object',
+            properties: { query: { type: 'string', description: '查询内容' } },
+          },
+        },
+      }],
+      getToolDefinition: () => ({
+        name: 'mock_tool',
+        description: 'mock tool',
+        parameters: {
+          type: 'object',
+          properties: { query: { type: 'string', description: '查询内容' } },
+        },
+      }),
+      executeTool,
+    };
+    const reasoner = new GraphAgentExecutor({
+      llmCaller: aiHarness.getLlmCaller(),
+      toolRuntime,
+      contextBuilder: {
+        async build(): Promise<GraphExecutorContextBuildOutput> {
+          return { llmMessages: [{ role: 'user', content: '执行工具' }] };
+        },
+      },
+    });
+    const toolContext = createToolContextFixture({
+      conversationId,
+      turnId,
+      historyEvents: [],
+    });
+    const sequencer = new execution.EventSequencer(conversationId);
+    const eventBus = new execution.EventBus(sequencer.getExecutionId());
+    const publisher = new execution.RuntimeEventPublisher(eventBus, sequencer, {
+      run_id: RunIdSchema.parse('run-incomplete-tool'),
+      lane: 'foreground',
+      visibility: 'conversation',
+    });
+    eventBus.on('event', envelope => streamedEvents.push(envelope.payload));
+    const harness = createGraphLoopHarness({
+      conversationId,
+      turnId,
+      query: '执行工具',
+      request: {
+        query: '执行工具',
+        promptKey: 'incomplete-tool-contract',
+        model_id: 'scripted-model',
+        enableTools: true,
+        availableTools: ['mock_tool'],
+      },
+      toolContext,
+      llmCaller: aiHarness.getLlmCaller(),
+      toolRuntime,
+      observationPreview: createObservationPreviewStub(),
+      createLlmNode: () => new LlmNode({ reasoner }),
+      maxSteps: 4,
+      runtimeEventSink: (event, source) => publisher.publish(event, source),
+    });
+
+    await expect(harness.run()).rejects.toMatchObject({
+      errorCode: 'llm.output_limit_reached',
+      recoverable: false,
+    });
+    eventBus.close();
+
+    expect(executeTool).not.toHaveBeenCalled();
+    expect(streamedEvents).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: 'error',
+        error_code: 'llm.output_limit_reached',
+        retryable: false,
+      }),
+      expect.objectContaining({
+        type: 'final_answer',
+        completion_reason: 'interrupted',
+        content: '准备执行',
+      }),
+    ]));
+    expect(streamedEvents).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'tool_call_decision' }),
+    ]));
     aiHarness.assertAllTurnsConsumed();
   });
 

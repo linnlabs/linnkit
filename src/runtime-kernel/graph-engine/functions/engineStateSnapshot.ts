@@ -31,6 +31,7 @@ export function cloneEngineStateValue<T>(value: T): T {
 const NON_CHECKPOINT_LOCAL_KEYS = [
   'memory',
   'runtimeEventSink',
+  'runtimeEventCommitPort',
   'runtimeFailureFactSink',
   'signal',
   'summarizationCallbacks',

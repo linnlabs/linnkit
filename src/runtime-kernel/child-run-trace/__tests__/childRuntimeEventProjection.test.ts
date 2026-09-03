@@ -6,6 +6,7 @@ import {
   validateRuntimeEvent,
   validateSSEEvent,
   type RoutedRuntimeEvent,
+  type RuntimeResourceRef,
   type RuntimeEvent,
   ToolCallIdSchema,
 } from '../../../contracts';
@@ -17,6 +18,18 @@ const childIdentity = {
   parent_run_id: 'parent-run-1',
   lane: 'child' as const,
   visibility: 'parent-trace' as const,
+};
+
+const imageRef: RuntimeResourceRef = {
+  id: 'child-image-attachment',
+  kind: 'image',
+  resourceId: 'child-image-asset',
+  mediaType: 'image/png',
+  byteLength: 128,
+  width: 16,
+  height: 8,
+  sha256: 'a'.repeat(64),
+  fileName: 'slide-001.png',
 };
 
 function childEvent(event: RuntimeEvent): RoutedRuntimeEvent {
@@ -154,6 +167,82 @@ describe('child RuntimeEvent -> parent subrun trace', () => {
     ]);
   });
 
+  it('成功 child tool_output 把 durable attachment refs 原样投影到 Runtime 与 SSE trace', () => {
+    const output = childEvent({
+      type: 'tool_output',
+      id: 'child-image-output',
+      conversation_id: 'conversation-1',
+      turn_id: 'child-turn-1',
+      timestamp: 2,
+      version: 1,
+      tool_name: 'read_file',
+      tool_call_id: ToolCallIdSchema.parse('call-read-image'),
+      status: 'success',
+      observation: '图片已读取。',
+      data: { content_type: 'image/png' },
+      attachments: [imageRef],
+    });
+    const trace = projectChildRuntimeEventToSubRunTrace(output);
+    expect(trace).toMatchObject({
+      kind: 'tool_output',
+      source_event_id: 'child-image-output',
+      status: 'success',
+      attachments: [imageRef],
+    });
+    if (!trace) throw new Error('successful child tool output should produce a trace');
+
+    const published: RuntimeEvent[] = [];
+    const publisher = new RuntimeEventSubRunTracePublisher({
+      runtimeEventSink: event => {
+        published.push(event);
+        return routeRuntimeEvent(event, {
+          run_id: 'parent-run-1',
+          lane: 'foreground',
+          visibility: 'conversation',
+        });
+      },
+      conversationId: 'conversation-1',
+      turnId: 'parent-turn-1',
+      parentToolCallId: ToolCallIdSchema.parse('parent-tool-call-1'),
+      subrunId: 'child-run-1',
+    });
+    publisher.publish(trace);
+
+    const publishedTrace = published[0];
+    if (!publishedTrace) throw new Error('parent trace publisher should emit one runtime event');
+    expect(publishedTrace).toMatchObject({ attachments: [imageRef] });
+    expect(runtimeEventToSSEEvent(publishedTrace)).toMatchObject({
+      type: 'subrun_trace',
+      attachments: [imageRef],
+    });
+  });
+
+  it('把已提交的 child 摘要投影为不含正文的 parent trace 展示事实', () => {
+    const summary = childEvent({
+      type: 'history_summary',
+      id: 'child-summary-1',
+      conversation_id: 'conversation-1',
+      turn_id: 'child-turn-1',
+      timestamp: 5,
+      version: 1,
+      content: 'child 内部上下文摘要正文',
+      replaced_message_ids: ['child-tool-output-1'],
+      original_message_count: 4,
+      summary_seq: 1,
+      compression_ratio: 0.25,
+      included_old_summary: false,
+    });
+
+    expect(projectChildRuntimeEventToSubRunTrace(summary)).toEqual({
+      kind: 'history_summary',
+      source_event_id: 'child-summary-1',
+      original_message_count: 4,
+      replaced_message_ids: ['child-tool-output-1'],
+      compression_ratio: 0.25,
+      included_old_summary: false,
+    });
+  });
+
   it('publisher 生成的 Runtime/SSE trace 共用正式 source 与答案字段', () => {
     const published: RuntimeEvent[] = [];
     const publisher = new RuntimeEventSubRunTracePublisher({
@@ -186,8 +275,16 @@ describe('child RuntimeEvent -> parent subrun trace', () => {
       content: '交付',
       completion_reason: 'terminal',
     });
+    publisher.publish({
+      kind: 'history_summary',
+      source_event_id: 'child-summary-1',
+      original_message_count: 4,
+      replaced_message_ids: ['child-tool-output-1'],
+      compression_ratio: 0.25,
+      included_old_summary: false,
+    });
 
-    expect(published).toHaveLength(2);
+    expect(published).toHaveLength(3);
     for (const event of published) {
       expect(validateRuntimeEvent(event).success).toBe(true);
       const sse = runtimeEventToSSEEvent(event);
@@ -205,6 +302,15 @@ describe('child RuntimeEvent -> parent subrun trace', () => {
         type: 'subrun_trace',
         source_event_id: 'child-answer-1',
         answer_id: 'child-answer-1',
+      },
+      {
+        type: 'subrun_trace',
+        source_event_id: 'child-summary-1',
+        kind: 'history_summary',
+        original_message_count: 4,
+        replaced_message_ids: ['child-tool-output-1'],
+        compression_ratio: 0.25,
+        included_old_summary: false,
       },
     ]);
   });
@@ -234,6 +340,7 @@ describe('child RuntimeEvent -> parent subrun trace', () => {
       turn_id: 'turn-1',
       timestamp: 1,
       version: 1,
+      ephemeral: true,
       parent_tool_call_id: 'parent-call-1',
       subrun_id: 'child-run-1',
       kind: 'final_answer_chunk',
@@ -249,5 +356,42 @@ describe('child RuntimeEvent -> parent subrun trace', () => {
         answer_id: 'answer-1',
       }).success
     ).toBe(false);
+  });
+
+  it('共享协议只允许成功 tool_output 携带 attachments', () => {
+    const base = {
+      type: 'subrun_trace',
+      id: 'trace-image-1',
+      conversation_id: 'conversation-1',
+      turn_id: 'turn-1',
+      timestamp: 1,
+      version: 1,
+      ephemeral: true,
+      parent_tool_call_id: 'parent-call-1',
+      subrun_id: 'child-run-1',
+      source_event_id: 'child-image-output',
+      attachments: [imageRef],
+    };
+    expect(validateRuntimeEvent({
+      ...base,
+      kind: 'tool_output',
+      tool_name: 'read_file',
+      tool_call_id: 'child-read-call',
+      status: 'success',
+      output: { data: { content_type: 'image/png' } },
+    }).success).toBe(true);
+    expect(validateRuntimeEvent({
+      ...base,
+      kind: 'tool_output',
+      tool_name: 'read_file',
+      tool_call_id: 'child-read-call',
+      status: 'error',
+      output: { error: 'failed' },
+    }).success).toBe(false);
+    expect(validateRuntimeEvent({
+      ...base,
+      kind: 'thought_complete',
+      content: 'done',
+    }).success).toBe(false);
   });
 });

@@ -1,4 +1,4 @@
-import { applySystemReminders } from '../../../system-reminder/apply';
+import { applyTickSystemReminder } from '../../functions/applyTickSystemReminder';
 import { defineTickStage } from '../types';
 import type { TickStage } from '../types';
 
@@ -8,23 +8,16 @@ export function createApplySystemReminderStage(): TickStage {
     reads: ['llmMessages', 'request', 'history', 'executorLocal'],
     writes: ['systemReminderHitRuleIds', 'llmMessages'],
     async run(ctx) {
-      let systemReminderHitRuleIds: string[] | undefined;
-      const llmMessages = applySystemReminders({
+      const result = applyTickSystemReminder({
         llmMessages: ctx.llmMessages,
-        ctx: {
-          request: ctx.request,
-          history: ctx.history,
-          executorLocal: ctx.executorLocal,
-        },
-        policy: ctx.executorLocal?.systemReminderPolicy,
-        onInjected: ({ ruleIds }) => {
-          systemReminderHitRuleIds = Array.isArray(ruleIds) ? ruleIds : [];
-        },
+        request: ctx.request,
+        history: ctx.history,
+        executorLocal: ctx.executorLocal,
       });
 
       return {
-        systemReminderHitRuleIds,
-        llmMessages,
+        systemReminderHitRuleIds: result.hitRuleIds,
+        llmMessages: result.llmMessages,
       };
     },
   });

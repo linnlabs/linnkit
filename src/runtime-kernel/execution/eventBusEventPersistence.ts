@@ -37,6 +37,28 @@ export class EventBusEventPersistence {
     }
   }
 
+  /**
+   * 在 EventBus fan-out 前提交一条 durable fact。
+   *
+   * 中文备注：自动上下文压缩会立即使用 `history_summary`
+   * 重建后续 Prompt，因此必须先确认事实已落盘，再让 realtime 和其它
+   * observer 看到它。这仍复用同一条写队列，并用事件 ID 防止随后的
+   * EventBus publish 重复落库。
+   */
+  async commitBeforePublish(event: RoutedRuntimeEvent): Promise<void> {
+    if (!shouldPersistRuntimeEvent(event)) {
+      throw new Error(
+        `[EventBusEventPersistence] commit-before-publish requires a durable event: ${event.type}`,
+      );
+    }
+    if (this.scheduledEventIds.has(event.id)) {
+      throw new Error(
+        `[EventBusEventPersistence] event was already scheduled before durable commit: ${event.id}`,
+      );
+    }
+    await this.scheduleWrite(event);
+  }
+
   /** 已由 Host admission transaction 提交的 incoming fact 不得再次落盘。 */
   acknowledgePersisted(events: readonly RuntimeEvent[]): void {
     for (const event of events) {
@@ -50,6 +72,10 @@ export class EventBusEventPersistence {
       return;
     }
 
+    void this.scheduleWrite(event).catch(() => undefined);
+  };
+
+  private scheduleWrite(event: RoutedRuntimeEvent): Promise<void> {
     this.scheduledEventIds.add(event.id);
     const eventStoreId = this.options.nextEventStoreId();
     const write = this.writeTail.then(async () => {
@@ -59,7 +85,8 @@ export class EventBusEventPersistence {
     void write.catch((error: unknown) => {
       this.firstWriteError ??= error;
     });
-  };
+    return write;
+  }
 
   private readonly disconnect = (): void => {
     if (!this.connected) return;

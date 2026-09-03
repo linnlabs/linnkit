@@ -152,9 +152,6 @@ describe('AgentContextManager image input budget', () => {
       { promptKey: 'default', query: '' },
       messages,
       200,
-      undefined,
-      undefined,
-      undefined,
       {
         policy: policy.contextTrace,
         effectiveContextPolicy: policy,
@@ -216,9 +213,6 @@ describe('AgentContextManager image input budget', () => {
         attachments: [imageRef],
       }],
       200,
-      undefined,
-      undefined,
-      undefined,
       {
         policy: policy.contextTrace,
         effectiveContextPolicy: policy,

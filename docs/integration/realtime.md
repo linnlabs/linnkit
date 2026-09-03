@@ -15,12 +15,18 @@
 
 同一逻辑 run 可以经历多个 execution 与 HTTP/SSE transport。`run_execution_metrics` 记录本次 execution 的 durable 结算事实，`run_status` 投影 RunRegistry 权威状态，`transport_end` 只关闭当前连接。`awaiting_user` 等非终态 run 必须保留，resume 沿用 `run_id` 并分配新 `execution_id`。
 
+Prompt 上下文占用有意拆成两层：Graph 每次成功 Provider attempt 通过既有 RuntimeEventSink 发布 ephemeral
+`context_usage_snapshot`，供实时 UI 提高刷新频率；execution settlement 最多发布一条 durable
+`run_execution_metrics.context_usage`，供 EventStore/reload 最终收敛。失败、取消或被 `admit_prompt_capacity` 拒绝的 attempt 不发布候选快照。频率按成功
+Prompt 计算，不按工具事件计算：一次 Prompt 返回多个 tool calls 仍是一条快照，工具完成后的下一次 Prompt 成功才再次更新。
+自动 compaction 的内部模型调用只进入 token ledger 与 `context_compaction` / `llm_call` telemetry，不生成 `context_usage_snapshot`；该快照始终只代表成功提交给主 Provider 的 Agent Prompt。
+
 Host 的 cancel command 必须按精确 `run_id` 读取持久身份，并等待该 execution 的事实 drain 与
 Host finalize。cancel 与自然 `completed/failed` 同时发生属于合法终态竞争；Host 应返回竞争后的
 真实 terminal status，不能因为 run 已从 active 列表消失就返回冲突。不存在的 run、错误的
 conversation 归属或 child/root 身份错误仍必须拒绝，不能把幂等扩大成无条件成功。
 
-并发 Agent 还必须显式声明投影边界：foreground 正文用 `lane=foreground / visibility=conversation`；标题、摘要等不应进入正文的辅助 run 用 `lane=auxiliary / visibility=none`。lane 决定控制权，visibility 决定消息是否可见，二者都不能靠 promptKey 或事件内容猜测。
+并发 Agent 还必须显式声明投影边界：foreground 正文用 `lane=foreground / visibility=conversation`；标题等不应进入正文的辅助 run 用 `lane=auxiliary / visibility=none`。自动 compaction 不是辅助 run，它继承当前 root 或 child execution 的 routing identity，仅把内部 LLM 调用标记为 `phase=context-internal / purpose=context_compaction`。lane 决定控制权，visibility 决定消息是否可见，二者都不能靠 promptKey 或事件内容猜测。
 
 ## 1. 事件转换链路
 
@@ -79,8 +85,9 @@ realtime adapter 在官方 mapper 之后只能写 `execution_id / execution_seq 
 | `parent_run_id` | 父子 run 关系 | RunSupervisor / child-run orchestration | 不得藏出多个 metadata 变体 |
 | `execution_id` | 一次实际执行或 transport 尝试 | EventSequencer / host session | resume 必须产生新值 |
 | `turn_id` | 对话轮次事实分组 | host conversation orchestration | 不得用 step count 推断 |
+| `user_message_id` | Host 产品 read model 中触发 execution 的用户事实 | host conversation orchestration | 可选正式绑定；客户端不得按 turn 或 active message 猜测 |
 | `answer_id` | 一个答案 segment；也是该段 final fact 与 UI message 的稳定身份 | streaming adapter；非流式终答创建边界 | 新 `final_answer.id === answer_id`；mapper、node、host 只透传 |
-| `summarization_id` | 一次 SSE-only 摘要进度 presentation；引用 start event ID | Host summarization adapter | start 满足 `id === summarization_id`；end/error 原样透传并保持同一 run/execution |
+| `summarization_id` | 一次 SSE-only 压缩进度 presentation；引用 start event ID | Host compaction progress adapter | start 满足 `id === summarization_id`；end/error 原样透传并保持同一 run/execution |
 | `final_answer_chunk.seq` | 单答案 segment 内顺序 | streaming adapter；非流式终答创建边界 | 从 0 连续；下游只验证，不改写 |
 | `final_answer.completion_reason` | segment 封口原因 | LLM / Tool node 的事实创建边界 | `terminal`、`tool_call`、`interrupted`；下游只读 |
 | `tool_call_id` | 工具 decision/process/output 关联键 | provider 或 host tool bootstrap | 全链稳定 |
@@ -96,7 +103,9 @@ realtime adapter 在官方 mapper 之后只能写 `execution_id / execution_seq 
 
 所有用户可见 assistant 文本共用一条实时协议：`final_answer_chunk` 负责 live 正文，完整 `final_answer` 负责 durable 事实和 live 封口。封口事实必须携带 `completion_reason`：`terminal` 才是 run 的终态交付，`tool_call` 是工具调用前的可见播报，`interrupted` 是异常或取消时封存的未完成段。非流式 LLM 或工具终答必须由 Graph 事实创建边界先发布 `seq=0,is_last=true` 的 one-shot chunk；Host 与客户端禁止从完整答案或 `tool_output` 补造缺失的 live 正文。客户端从首个 chunk 起就必须以稳定 `answer_id` 归并该 segment；seal 验证 `final_answer.id === answer_id` 及正文一致性，只修订同一实体。
 
-摘要进度与摘要事实也必须分开。`summarization_start/end/error` 是 SSE-only Host signal，三者共享正式 `summarization_id + run_id + execution_id + turn_id`；end 的统计字段固定为 `original_message_count / compressed_message_count / compression_ratio`，比例是 `0..1` 数值。`history_summary` 才是 durable fact，其 `original_message_count` 是事实创建时必填的数据，SSE、存储或客户端不得根据 replaced IDs 或默认值猜测。Context Manager、Graph Engine 与 Host 间的生命周期回调只允许导入 `packages/linnkit/src/contracts/summarization.ts` 的 `SummarizationCallbacks`，不得复制成 `unknown` 或开放对象。客户端不得把 progress 伪装成 history summary，不得按最新消息猜 end/error 归属，也不得因 durable fact 到达再保留第二条 completed presentation。
+压缩进度与摘要事实也必须分开。`summarization_start/end/error` 是 SSE-only Host signal，三者共享正式 `summarization_id + run_id + execution_id + turn_id`；end 还必须携带 `summary_id`，且它严格等于本次已提交的 `history_summary.id`。end 的统计字段固定为 `original_message_count / compressed_message_count / compression_ratio`，比例是 `0..1` 数值。`history_summary` 才是 durable fact，其 `original_message_count` 是事实创建时必填的数据，SSE、存储或客户端不得根据 replaced IDs 或默认值猜测。
+
+Context Manager 只做压缩计划、固定格式校验和 pending summary draft。重建 Prompt 通过容量接纳后，Graph 的 `commit_context_compaction` 必须先调用 Host `RuntimeEventCommitPort` 完成 routing admission、durable persistence 与 ack，且不 fan-out；成功后才允许 callback 发送 `summarization_end`，再由既有 RuntimeEvent sink / publisher 发布同一 `history_summary`。EventBus persistence consumer 按 fact ID 去重，不能重复写库。Host callback 不得发布 RuntimeEvent 或持久化。Context Manager、Graph Engine 与 Host 间的 presentation 回调只允许导入 `packages/linnkit/src/contracts/summarization.ts` 的 `SummarizationCallbacks`，不得复制成 `unknown` 或开放对象。commit 失败必须形成 `start → error`，不得出现 end、摘要 fact 或主模型调用；commit 成功后摘要不可回滚，也不得再上报 `summarization_error` 或 `llm.context.compaction_failed`。生产 Host callback 必须 no-throw，progress transport 失败只记录日志；非标准 RuntimeEvent sink 若在后续 fan-out 抛错，execution 可以失败，但已提交摘要必须保留。标准 execution settlement 只为 commit 前的压缩失败根据 `llm.context.compaction_failed` / `llm.context.compaction_insufficient` 最多结算一份 error fact。客户端不得把 progress 伪装成 history summary，也不得按最新消息猜 end/error 归属。
 
 ### 1.4 一个事实、一个 publisher
 
@@ -104,15 +113,17 @@ realtime adapter 在官方 mapper 之后只能写 `execution_id / execution_seq 
 
 需要 durable history 的 execution 使用 `EventBusEventPersistence` 订阅同一个 EventBus：它按发布顺序串行写入注入的 EventStore，跳过 ephemeral 事件，并由 `drain()` 在 lifecycle 进入终态前传播首个写入失败。root 与 child 不得各自复制 persistence queue；EventStore cursor 由宿主注入的单一 `nextEventStoreId` owner 生成。
 
+自动 compaction 的 `history_summary` 是唯一例外的时序要求，不是第二条事实链：Graph 在 publisher fan-out 前调用 `RuntimeEventCommitPort(event, source)`，Host 复用同一有序 persistence 队列完成 routing admission 与 durable commit，但不发送 EventEnvelope；随后 publisher fan-out 同一 fact，persistence consumer 按 fact ID 识别已提交记录并跳过重复写入。这样 realtime 永远不会先于数据库看到摘要，同时仍只有一个事实 ID 和一个 publisher。
+
 Linnkit 已提供 `RuntimeEventPublisher`：构造时绑定同一次 execution 的 `EventBus`、`EventSequencer` 与 `RuntimeEventRoutingIdentity`；`publish()` 会返回附着正式身份后的 RuntimeEvent，并把同一对象放入 envelope。Graph execution journal 和 Host 消费方必须使用这个返回值，不能再自行映射一份平行对象。
 
 Provider / Agent mapper 的输出必须停留在 `RuntimeEvent` 草稿。mapper context 只能补充普通 metadata，不得携带 `routingIdentity`；Graph local 也不得保存 routing identity。`RuntimeEventSink` 是 Graph 的必需 admission port，返回值必须是 `RoutedRuntimeEvent`，Graph journal 只能记录这个返回值。缺少 sink 时应在执行边界失败，不能给 standalone、child 或测试环境发明默认节点级 fallback。
 
 root Host 通常以 `RuntimeEventPublisher` 实现 sink；child orchestration 以显式 child admission sink 附着 child identity，再把 routed fact 可选投影为 parent trace。quickstart 与 testkit 也必须在装配层建立 sink：callback、MemoryEventStore 和 observer 都是 EventBus 的平级消费者，禁止执行结束后遍历 Graph result 补发或补写。
 
-`RuntimeEvent` 基础 schema 允许 host 绑定前的草稿事实暂时没有 routing identity；进入 execution publisher 后，`run_id / lane / visibility` 是强制字段。这个边界用于支持 Context Manager 等先创建事实草稿、后由 host 确认 run 所有权的真实场景，不代表实时或持久化主链可以缺少身份。
+`RuntimeEvent` 基础 schema 允许 host 绑定前的草稿事实暂时没有 routing identity；进入 execution publisher 后，`run_id / lane / visibility` 是强制字段。自动 compaction 的 Context Manager 会创建 pending `history_summary` draft，但只有 Graph 的 commit stage 能把它交给当前 execution publisher；这不代表实时或持久化主链可以缺少身份。
 
-Host 如果需要给 Graph、工具上下文、摘要和 execution settlement 统一补充 `activity`、`runtime_trace` 等扩展材料，应在 publisher 前注入一个 execution-scoped sink。该 sink 只能合并不参与路由的 metadata；正式 routing identity 仍只由 `RuntimeEventPublisher` 附着，禁止在 wrapper 与 publisher 各实现一遍身份提升或 schema 路由。
+Host 如果需要给 Graph、工具上下文、自动 compaction 和 execution settlement 统一补充 `activity`、`runtime_trace` 等扩展材料，应在 publisher 前注入一个 execution-scoped sink。该 sink 只能合并不参与路由的 metadata；正式 routing identity 仍只由 `RuntimeEventPublisher` 附着，禁止在 wrapper 与 publisher 各实现一遍身份提升或 schema 路由。
 
 禁止：
 
@@ -141,11 +152,13 @@ child thought 的完成性也属于 child fact：provider 正常完成、失败�
 - 每条 trace 都必须在顶层携带 `source_event_id`，指向唯一 child RuntimeEvent；
 - `tool_call_decision` 必须携带本次 child fact 的 canonical `tool_calls[]` 完整批次，不得拆成多条 trace，也不得使用标量 `tool_name/tool_call_id/args` 代替；
 - `tool_process` 必须携带 owner admission 后的 `tool_name + tool_call_id + args + phase + status`；decision 不表示已开始，不定义 queued/pending 展示状态；
-- `tool_output` 必须携带单个工具身份、terminal success/error 状态与结构化 output；Host 紧凑历史保存 decision 是为了在 ephemeral process 不存在时可确定恢复 args；
+- `tool_output` 必须携带单个工具身份、terminal success/error 状态与结构化 output；只有 success 可以在顶层携带有序 durable `attachments` refs，failure 与其他 trace kind 必须拒绝该字段；Host 紧凑历史保存 decision 是为了在 ephemeral process 不存在时可确定恢复 args；
 - `final_answer_chunk` 必须在顶层携带 `answer_id / seq / delta`，可选 `is_last`；
 - `final_answer` 必须在顶层携带 `answer_id / content / completion_reason`；
 - `answer_id / seq / is_last / source_event_id` 禁止放进开放 `meta`；
-- Runtime→SSE 官方 mapper 必须原样保留这些字段。
+- Runtime→SSE 官方 mapper 必须原样保留这些字段，包括成功工具结果的 attachment refs 顺序。
+
+parent trace 中的 attachment refs 只是展示所需的资源身份，不包含图片字节或 host 物理路径，也不会成为父 Agent 的模型输入。Host 如果持久化紧凑 trace，必须原样保存并在公开合同校验后恢复；客户端只能把 refs 交给正式 attachment/tool-card admission，不能根据 output、observation 或 locator 补造附件。
 
 `projectChildRuntimeEventToSubRunTrace()` 只负责“哪些 child 事件可展示、字段如何映射”，不负责 child admission、生成 parent trace id、持久化或 transport。Host 必须把发布与生命周期装配放在该纯投影之外。
 
@@ -215,6 +228,8 @@ child thought 的完成性也属于 child fact：provider 正常完成、失败�
 | `thought`（完成）| ✓ | ✓ | ✓ | ✓ |
 | `tool_call_decision` | ✓ | ✓ | ✓ | ✓ |
 | `requires_user_interaction` | ✓ | ✓ | ✗ | ✓ |
+| `history_summary` | ✓ | ✓ | ✓ | ✓ |
+| `context_usage_snapshot` | ✗（ephemeral）| ✗ | ✗ | ✓ |
 | `run_execution_metrics` | ✓ | ✓ | ✗ | ✓ |
 | `audit_envelope` | ✓ | ✗ | ✗ | ✗ |
 
@@ -222,13 +237,18 @@ child thought 的完成性也属于 child fact：provider 正常完成、失败�
 
 `tool_call_decision` 表示模型提交了调用清单，不等于所有调用正在执行。普通 ToolNode 串行消费清单，实际开始由 ephemeral `tool_process(start)` 表达。客户端不应为 decision 创建 queued/pending 可见行；未来 ToolNode 并行化时只是多个 process 同时开始，协议不变。无论成功、失败还是 run 取消，decision 中每个 `tool_call_id` 都必须有 durable `tool_output` 配对；未启动就取消的调用使用 error output 明确结算，不能让 Host 或 Renderer 把永久 loading 当成可恢复状态。
 
+`context_usage_snapshot` 必须通过 Graph 已注入的 RuntimeEventSink 发布，不能为 token 面板建立 node→transport 旁路。它不进入
+Graph history/checkpoint event list、EventStore、UI replay 或 Agent context；Host 可以在 publisher 前的 execution-scoped
+enrichment 中绑定 `user_message_id`。客户端收到后只修订该正式用户实体；最终 metrics 使用相同产品投影覆盖最终值。
+这个事件代表“Provider 已接纳并成功完成的 Prompt attempt”，不是单纯测量结果。主 Prompt 超过输入预算时必须在 Provider 前以 `llm.prompt.input_budget_exceeded` 失败，候选快照只用于该次错误诊断，不进入实时、checkpoint 或结算快照。
+
 实际决策一律以 `shouldXxxRuntimeEvent()` 函数返回值为准；这张表只是速查。
 
 表中的 `replayToUi=✓` 还隐含 routing 前提：仅对 `lane=foreground / visibility=conversation` 成立。相同类型若属于 child 或 auxiliary run，仍可持久化，但 `replayToUi=false`。
 
 `run_status / transport_end / transport_error` 是 SSE-only 宿主信号，不是 RuntimeEvent，不进 EventStore 或 Agent context。它们必须引用正式 `run_id / execution_id`，不得从 metadata、active conversation 或连接是否关闭反推所有权。
 
-`summarization_start / summarization_end / summarization_error` 同样是 SSE-only 宿主信号。start 创建 presentation identity，end/error 只能引用；完成后的 `history_summary` 仍按 RuntimeEvent 主链发布和持久化。两条链语义相关但身份不同，Host 不得把 callback 的开放对象直接展开成 wire DTO。
+`summarization_start / summarization_end / summarization_error` 同样是 SSE-only 宿主信号。start 创建 presentation identity，end/error 引用该 identity；end 的 `summary_id` 另外精确引用本次已提交的 `history_summary.id`。完成后的摘要由 Graph 的 `commit_context_compaction` 先 durable commit，再按 `end → RuntimeEvent publisher fan-out` 进入主链，之后才允许主 Provider 调用。Renderer 只能用这个 ID 将 completed progress 与 durable summary 归并，不能按 run、execution 或“最近一条摘要”猜测。Host 不得把 callback 的开放对象直接展开成 wire DTO，也不得在 callback 内调 RuntimeEventSink。只有 commit 前或 commit 本身失败才走 `start → error`；commit 成功后 progress transport 失败只能记录日志，不能再发 error 或撤销摘要。
 
 测试 realtime adapter 时，必须在同一个 EventBus 上先发布至少一条其它事件，再发布 `final_answer_chunk(seq=0, 1)`，同时断言业务 `seq` 保持 `0, 1`、`execution_seq` 按整个 execution 单调递增。只测试单事件 mapper 无法发现字段覆盖。
 

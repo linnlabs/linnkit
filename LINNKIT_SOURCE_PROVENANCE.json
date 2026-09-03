@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "sourceRepository": "linnlabs/linnya",
+  "sourceCommit": "85b6c83a6514422241ca38d5a96c3755326ba68c",
+  "packageName": "@linnlabs/linnkit",
+  "packageVersion": "0.31.0",
+  "projectedFileCount": 575,
+  "projectionSha256": "1015113fd667705c252c6602ef28d47e95102fe7f565eeb1585158a426950798"
+}

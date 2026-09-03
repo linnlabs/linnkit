@@ -115,6 +115,29 @@ describe('MessageFormatter fences', () => {
     ]);
   });
 
+  it('never formats UI thought projections as model messages', () => {
+    const formatter = createMessageFormatter();
+    const messages: AiMessage[] = [
+      {
+        id: 'thought-1',
+        role: 'assistant',
+        type: 'thought',
+        content: 'UI reasoning projection',
+        timestamp: 1,
+      },
+      {
+        id: 'answer-1',
+        role: 'assistant',
+        type: 'final_answer',
+        content: 'Answer',
+        timestamp: 2,
+      },
+    ];
+
+    expect(formatter.format(messages)).toEqual([{ role: 'assistant', content: 'Answer' }]);
+    expect(formatAgentLlmMessages(messages)).toEqual([{ role: 'assistant', content: 'Answer' }]);
+  });
+
   it('keeps ordered user/tool resource refs in native LLM messages', () => {
     const attachments: RuntimeResourceRef[] = [
       {

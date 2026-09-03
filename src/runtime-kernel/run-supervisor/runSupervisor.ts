@@ -346,7 +346,7 @@ export class DefaultRunSupervisor<TRequest extends RunRequestSnapshot = RunReque
       return {
         runId,
         handle,
-        activate: () => this.activateResumeClaim(runId, claimId, parentSignal),
+        activate: execution => this.activateResumeClaim(runId, claimId, parentSignal, execution),
         release: () => this.releaseResumeClaim(runId, claimId),
       };
     });
@@ -406,7 +406,8 @@ export class DefaultRunSupervisor<TRequest extends RunRequestSnapshot = RunReque
   private async activateResumeClaim(
     runId: RunId,
     claimId: string,
-    parentSignal?: AbortSignal
+    parentSignal?: AbortSignal,
+    execution?: { readonly executionId: import('../../contracts').ExecutionId },
   ): Promise<RunHandle<TRequest>> {
     return this.withRunControlLock(runId, async () => {
       const handle = this.getHandle(runId);
@@ -445,6 +446,7 @@ export class DefaultRunSupervisor<TRequest extends RunRequestSnapshot = RunReque
         pausedAt: undefined,
         metadata: {
           ...(record.metadata ?? {}),
+          ...(execution ? { executionId: execution.executionId } : {}),
           awaitingUser: {
             ...awaitingUserWithoutClaim,
             interaction: {

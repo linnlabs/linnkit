@@ -144,6 +144,7 @@ export const SSEToolOutputEvent = BaseSSEEvent.extend({
   observation: z.string().refine(value => value.trim().length > 0, 'observation must not be blank'),
   data: SerializableJsonValue.optional(),
   error: z.string().optional(),
+  error_code: z.string().trim().min(1).optional(),
   duration_ms: z.number().optional(),
   attachments: RuntimeResourceRefs.optional(),
 });
@@ -198,13 +199,20 @@ export const SSETransportErrorEvent = BaseSSEEvent.extend({
 
 export type SSETransportErrorEvent = z.infer<typeof SSETransportErrorEvent>;
 
+export const SSEContextUsageSnapshotEvent = BaseSSEEvent.extend({
+  type: z.literal('context_usage_snapshot'),
+  user_message_id: RuntimeEventIdSchema.optional(),
+  context_usage: ContextUsageSnapshot,
+});
+
+export type SSEContextUsageSnapshotEvent = z.infer<typeof SSEContextUsageSnapshotEvent>;
+
 export const SSERunExecutionMetricsEvent = BaseSSEEvent.extend({
   type: z.literal('run_execution_metrics'),
   execution_id: ExecutionIdSchema,
   outcome: RunExecutionOutcome,
   duration_ms: z.number().nonnegative(),
   user_message_id: RuntimeEventIdSchema.optional(),
-  benchmark: SerializableJsonRecord.optional(),
   context_usage: ContextUsageSnapshot.optional(),
 });
 
@@ -258,6 +266,8 @@ export const SSESummarizationEndEvent = BaseSSEEvent.extend({
   run_id: RunIdSchema,
   execution_id: ExecutionIdSchema,
   summarization_id: RuntimeEventIdSchema,
+  /** 本次 presentation 已完成提交的 durable history_summary 身份。 */
+  summary_id: RuntimeEventIdSchema,
   original_message_count: z.number().int().nonnegative(),
   compressed_message_count: z.number().int().nonnegative(),
   compression_ratio: z.number().min(0).max(1).optional(),
@@ -289,6 +299,7 @@ export const SSEEvent = z
     SSERequiresUserInteractionEvent,
     SSEErrorEvent,
     SSETransportErrorEvent,
+    SSEContextUsageSnapshotEvent,
     SSERunExecutionMetricsEvent,
     SSERunStatusEvent,
     SSETransportEndEvent,
@@ -307,6 +318,9 @@ export const SSEEvent = z
       }
       if (event.status === 'success' && event.error !== undefined) {
         ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['error'], message: 'successful tool_output must not contain error' });
+      }
+      if (event.status === 'success' && event.error_code !== undefined) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['error_code'], message: 'successful tool_output must not contain error_code' });
       }
       if (event.status === 'error' && event.data !== undefined) {
         ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['data'], message: 'failed tool_output must not contain data' });
@@ -405,6 +419,7 @@ export function runtimeEventToSSEEvent(event: RuntimeEvent): SSEEvent | null {
         observation: event.observation,
         data: event.data,
         error: event.error,
+        error_code: event.error_code,
         duration_ms: event.duration_ms,
         ...(event.attachments ? { attachments: event.attachments } : {}),
       };
@@ -430,7 +445,12 @@ export function runtimeEventToSSEEvent(event: RuntimeEvent): SSEEvent | null {
         args: event.args,
         tool_calls: event.tool_calls,
         output: event.output,
+        attachments: event.attachments,
         duration_ms: event.duration_ms,
+        original_message_count: event.original_message_count,
+        compression_ratio: event.compression_ratio,
+        included_old_summary: event.included_old_summary,
+        replaced_message_ids: event.replaced_message_ids,
         meta: event.meta,
       };
     case 'requires_user_interaction':
@@ -493,6 +513,13 @@ export function runtimeEventToSSEEvent(event: RuntimeEvent): SSEEvent | null {
         error_code: event.error_code,
         retryable: event.retryable,
       };
+    case 'context_usage_snapshot':
+      return {
+        ...base,
+        type: 'context_usage_snapshot',
+        user_message_id: event.user_message_id,
+        context_usage: event.context_usage,
+      };
     case 'run_execution_metrics':
       return {
         ...base,
@@ -501,7 +528,6 @@ export function runtimeEventToSSEEvent(event: RuntimeEvent): SSEEvent | null {
         outcome: event.outcome,
         duration_ms: event.duration_ms,
         user_message_id: event.user_message_id,
-        benchmark: event.benchmark,
         context_usage: event.context_usage,
       };
   }
@@ -674,7 +700,7 @@ export const createSSEToolOutputEvent = (
   result: ToolOutputEventResult,
   options: SSEEventCreatorOptions<
     SSEToolOutputEvent,
-    'tool_name' | 'tool_call_id' | 'status' | 'observation' | 'data' | 'error'
+    'tool_name' | 'tool_call_id' | 'status' | 'observation' | 'data' | 'error' | 'error_code'
   > = {}
 ): SSEToolOutputEvent => SSEToolOutputEvent.parse({
   ...options,
@@ -689,7 +715,10 @@ export const createSSEToolOutputEvent = (
   observation: result.observation,
   ...(result.status === 'success'
     ? { data: toSerializableJsonValue(result.data) }
-    : { error: result.error }),
+    : {
+        error: result.error,
+        ...(result.error_code === undefined ? {} : { error_code: result.error_code }),
+      }),
 });
 
 export const createSSESubRunTraceEvent = (

@@ -1,11 +1,12 @@
 /**
- * @file src/agent/runtime-kernel/system-reminder/apply.ts
- * @description SystemReminder 注入引擎：把提醒追加到“最后一条将发送给 LLM 的 message.content”末尾
+ * @file packages/linnkit/src/runtime-kernel/system-reminder/apply.ts
+ * @description 普通 tick SystemReminder 注入引擎
  *
  * 关键约束（根因级）：
  * - 这里的注入只发生在“即将发给 LLM 的 messages”数组上
  * - 不生成 RuntimeEvent，不写入 history，不进入数据库（下一次 request 不可回放）
- * - 允许出现在 LLMRunAudit（after_context_manager）里：因为它属于“本次真实发给模型的输入”
+ * - 普通 Reminder 允许出现在 LLMRunAudit（after_context_manager）里，因为它属于本次真实输入
+ * - 压缩专用 Reminder 由 Graph compaction feature 追加为末尾 user message，不经过本文件注入
  */
 
 import type { AgentSpecSystemReminderPolicy } from '../../contracts';
@@ -14,6 +15,7 @@ import { createSystemReminderRules } from './rules';
 import { defaultSystemReminderRegistry, type SystemReminderRegistry } from './registry';
 import type { SystemReminderContext, SystemReminderRule } from './types';
 import { Logger } from '../../shared/logger';
+import { formatSystemReminder } from './format';
 
 const logger = new Logger('SystemReminder');
 
@@ -28,13 +30,30 @@ const normalizeReminderText = (raw: string): string | undefined => {
   return t.length > 0 ? t : undefined;
 };
 
-const wrapSystemReminderTag = (body: string): string => {
-  // 中文备注：统一用标签包裹，方便模型识别，也方便未来 UI/解析侧按标签提取
-  return `<system-reminder>\n${body}\n</system-reminder>`;
-};
+/**
+ * 把一条瞬态 Reminder 追加到现有 Prompt 末尾。
+ *
+ * 中文备注：这是普通 tick Reminder 的既有注入方式。压缩专用控制需要严格保留
+ * 原消息级前缀，因此必须新增瞬态末尾 user message，不能把控制指令并入 tool output。
+ */
+function appendOrdinarySystemReminder(
+  llmMessages: readonly LlmRequestMessage[],
+  body: string,
+): LlmRequestMessage[] {
+  const tag = formatSystemReminder(body);
+  if (!tag || llmMessages.length === 0) return [...llmMessages];
+
+  const lastIdx = llmMessages.length - 1;
+  const last = llmMessages[lastIdx];
+  const currentContent = readString(last.content) ?? '';
+  const glue = currentContent.length > 0 && !currentContent.endsWith('\n') ? '\n\n' : '\n';
+  const nextMessages = [...llmMessages];
+  nextMessages[lastIdx] = { ...last, content: `${currentContent}${glue}${tag}` };
+  return nextMessages;
+}
 
 /**
- * 将 system-reminder 追加到最后一条消息末尾（原地返回新数组，但不修改原数组引用）
+ * 将普通 system-reminder 追加到最后一条消息末尾（返回新数组，不修改原数组）
  */
 export function applySystemReminders(params: {
   llmMessages: LlmRequestMessage[];
@@ -94,17 +113,7 @@ export function applySystemReminders(params: {
 
   // 2) 组装一个标签块（多条提醒合并到同一个 <system-reminder> 中）
   const body = texts.map((t) => `- ${t.replace(/\n/g, '\n  ')}`).join('\n');
-  const tag = wrapSystemReminderTag(body);
-
-  // 3) 只追加到最后一条消息的 content 末尾（不新增消息）
-  const lastIdx = llmMessages.length - 1;
-  const last = llmMessages[lastIdx];
-  const currentContent = readString(last.content) ?? '';
-  const glue = currentContent.length > 0 && !currentContent.endsWith('\n') ? '\n\n' : '\n';
-  const nextContent = `${currentContent}${glue}${tag}`;
-
-  const nextMessages = [...llmMessages];
-  nextMessages[lastIdx] = { ...last, content: nextContent };
+  const nextMessages = appendOrdinarySystemReminder(llmMessages, body);
 
   /**
    * ✅ 轻量审计日志（方案 B）

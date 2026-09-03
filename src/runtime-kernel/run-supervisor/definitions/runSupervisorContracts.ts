@@ -1,4 +1,4 @@
-import type { AgentSpec, RunId, RuntimeEvent, ToolCallId } from '../../../contracts';
+import type { AgentSpec, ExecutionId, RunId, RuntimeEvent, ToolCallId } from '../../../contracts';
 import type { AuditPort } from '../../../ports';
 import type { EventBus } from '../../execution/event-bus';
 import type { EventStore } from '../../graph-engine/event-store/base';
@@ -65,7 +65,8 @@ export interface RunResumeInteraction {
 export interface RunResumeClaim<TRequest extends RunRequestSnapshot = RunRequestSnapshot> {
   readonly runId: RunId;
   readonly handle: RunHandle<TRequest>;
-  activate(): Promise<RunHandle<TRequest>>;
+  /** 同一逻辑 run 的新 execution 身份必须与 claim 激活原子写入。 */
+  activate(execution?: { readonly executionId: ExecutionId }): Promise<RunHandle<TRequest>>;
   release(): Promise<void>;
 }
 

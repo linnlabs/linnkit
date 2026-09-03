@@ -18,6 +18,7 @@ import type {
   FencePlacement,
   FenceRegistry,
 } from '../../../shared/fences';
+import { CONTEXT_CHECKPOINT_ROOT_SYSTEM_GUARD } from '../../../features/context-compaction';
 
 export interface BaseAgentTaskOptions {
   fenceRegistry?: FenceRegistry;
@@ -59,7 +60,7 @@ export abstract class BaseAgentTask implements IAgentTask {
         id: generateAiMessageId(),
         role: 'system',
         type: 'system_prompt',
-        content: systemPrompt,
+        content: `${systemPrompt}\n\n${CONTEXT_CHECKPOINT_ROOT_SYSTEM_GUARD}`,
         timestamp: Date.now(),
       });
     }

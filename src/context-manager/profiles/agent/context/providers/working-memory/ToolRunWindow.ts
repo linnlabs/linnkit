@@ -1,5 +1,5 @@
 import type { MessageProcessingState } from '../base';
-import type { ToolInteractionGroup } from '../../../utils/toolInteractionGroup';
+import type { ToolInteractionGroup } from '../../../../../shared/toolInteractionGroup';
 
 export interface ProtectedToolRunWindow {
   minRunOrdinal: number | null;

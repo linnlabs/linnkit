@@ -23,7 +23,11 @@ import type {
   ProviderContinuation,
   RuntimeResourceRef,
 } from '../contracts';
-import type { CanonicalInferenceTool, CanonicalToolChoice } from './canonical-inference';
+import type {
+  CanonicalInferenceCachePolicy,
+  CanonicalInferenceTool,
+  CanonicalToolChoice,
+} from './canonical-inference';
 
 export type { ProviderContinuation } from '../contracts';
 
@@ -53,6 +57,8 @@ export type LlmRequestMessage =
 
 export interface LlmCallOptions {
   tools?: CanonicalInferenceTool[];
+  /** Provider 无关的稳定前缀断点；不支持显式缓存的 adapter 可以忽略。 */
+  cache_policy?: CanonicalInferenceCachePolicy;
   /**
    * 工具选择策略（Linnkit canonical inference 语义）
    *

@@ -33,7 +33,7 @@
 | 层 | linnkit 负责 | host 负责 |
 |---|---|---|
 | runtime-kernel | graph loop、tool runtime、run lifecycle、事件治理 | 默认工具、SSE/WebSocket/IPC、业务执行策略 |
-| context-manager | 上下文窗口构建、预算裁剪、fence、摘要、checkpoint、trace | 业务上下文注入、must-keep 策略、provider registry 配置 |
+| context-manager | 上下文窗口构建、预算裁剪、fence、自动压缩计划与重建、trace | 业务上下文注入、must-keep 策略、provider registry 配置 |
 | ports | 稳定接入接口 | 具体 LLM、存储、tokenizer、telemetry、audit 实现 |
 | testkit | 通用 fixture、harness、不变量校验 | host-bound harness 与生产装配回归 |
 

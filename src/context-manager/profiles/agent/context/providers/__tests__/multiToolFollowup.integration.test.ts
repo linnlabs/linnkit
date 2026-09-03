@@ -267,13 +267,6 @@ describe('multi tool follow-up integration', () => {
         timestamp: 1000,
       },
       {
-        id: 'thought_old_missing_sidecar',
-        role: 'assistant',
-        type: 'thought',
-        content: '我需要读 README。',
-        timestamp: 1050,
-      },
-      {
         id: 'assistant_missing_sidecar',
         role: 'assistant',
         type: 'tool_calls',

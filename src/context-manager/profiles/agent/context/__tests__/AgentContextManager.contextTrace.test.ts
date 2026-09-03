@@ -153,6 +153,34 @@ describe('AgentContextManager ContextTrace', () => {
     expect(result.contextTrace).toBeUndefined();
   });
 
+  it('无可替换区段时仍返回已解析的压缩策略', async () => {
+    const manager = createManager();
+    const effectivePolicy = defineContextPolicy({
+      compaction: {
+        enabled: true,
+        triggerRatio: 0.85,
+        targetRatio: 0.45,
+      },
+    });
+
+    const result = await manager.buildContextFromPreprocessedMessages(
+      { promptKey: 'default', query: '当前问题' },
+      [
+        message('system_1', 'system', 'system_prompt', '系统提示', 1),
+        message('user_1', 'user', 'user_input', '当前问题', 2),
+      ],
+      1000,
+      { effectiveContextPolicy: effectivePolicy },
+    );
+
+    expect(result.contextCompactionCandidate).toBeUndefined();
+    expect(result.contextCompactionPolicy).toMatchObject({
+      enabled: true,
+      triggerRatio: 0.85,
+      targetRatio: 0.45,
+    });
+  });
+
   it('开启后记录 effective policy、provider token delta 与 keep/drop 决策', async () => {
     const manager = createManager();
     const effectivePolicy = defineContextPolicy({
@@ -172,9 +200,6 @@ describe('AgentContextManager ContextTrace', () => {
         message('user_1', 'user', 'user_input', '当前问题', 3),
       ],
       1000,
-      undefined,
-      undefined,
-      undefined,
       {
         policy: effectivePolicy.contextTrace,
         effectiveContextPolicy: effectivePolicy,
@@ -287,9 +312,6 @@ describe('AgentContextManager ContextTrace', () => {
         message('user_1', 'user', 'user_input', '当前问题', 3),
       ],
       1000,
-      undefined,
-      undefined,
-      undefined,
       {
         policy: effectivePolicy.contextTrace,
         effectiveContextPolicy: effectivePolicy,
@@ -366,9 +388,6 @@ describe('AgentContextManager ContextTrace', () => {
         message('user_1', 'user', 'user_input', '当前问题', 2),
       ],
       1000,
-      undefined,
-      undefined,
-      undefined,
       {
         policy: effectivePolicy.contextTrace,
         effectiveContextPolicy: effectivePolicy,
@@ -417,9 +436,6 @@ describe('AgentContextManager ContextTrace', () => {
         message('user_1', 'user', 'user_input', '当前问题', 2),
       ],
       1000,
-      undefined,
-      undefined,
-      undefined,
       {
         policy: effectivePolicy.contextTrace,
         effectiveContextPolicy: effectivePolicy,
@@ -478,9 +494,6 @@ describe('AgentContextManager ContextTrace', () => {
         message('user_1', 'user', 'user_input', '当前问题', 2),
       ],
       1000,
-      undefined,
-      undefined,
-      undefined,
       {
         policy: effectivePolicy.contextTrace,
         effectiveContextPolicy: effectivePolicy,
@@ -523,9 +536,6 @@ describe('AgentContextManager ContextTrace', () => {
         message('user_1', 'user', 'user_input', '当前问题', 2),
       ],
       1000,
-      undefined,
-      undefined,
-      undefined,
       {
         policy: effectivePolicy.contextTrace,
         effectiveContextPolicy: effectivePolicy,
@@ -572,9 +582,6 @@ describe('AgentContextManager ContextTrace', () => {
         message('user_1', 'user', 'user_input', '当前问题', 2),
       ],
       1000,
-      undefined,
-      undefined,
-      undefined,
       {
         policy: effectivePolicy.contextTrace,
         effectiveContextPolicy: effectivePolicy,
@@ -660,9 +667,6 @@ describe('AgentContextManager ContextTrace', () => {
         message('user_1', 'user', 'user_input', '当前问题', 2),
       ],
       1000,
-      undefined,
-      undefined,
-      undefined,
       {
         policy: effectivePolicy.contextTrace,
         effectiveContextPolicy: effectivePolicy,
@@ -723,9 +727,6 @@ describe('AgentContextManager ContextTrace', () => {
         message('user_1', 'user', 'user_input', '当前问题', 2),
       ],
       1000,
-      undefined,
-      undefined,
-      undefined,
       {
         policy: effectivePolicy.contextTrace,
         effectiveContextPolicy: effectivePolicy,
@@ -804,9 +805,6 @@ describe('AgentContextManager ContextTrace', () => {
       { promptKey: 'default', query: '继续基于工具结果回答' },
       [...history, message('user-followup', 'user', 'user_input', '继续基于工具结果回答', 3)],
       1000,
-      undefined,
-      undefined,
-      undefined,
       {
         policy: effectivePolicy.contextTrace,
         effectiveContextPolicy: effectivePolicy,

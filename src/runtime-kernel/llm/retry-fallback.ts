@@ -176,6 +176,16 @@ export async function callWithRetryFallback(params: CallWithRetriesParams): Prom
       return llmResponse;
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
+      if (lastError.name === 'AbortError') {
+        logger.info('LLM 调用已取消，不进入 provider failure 分类与重试流程', {
+          attempt: attempt + 1,
+          actualAttempts,
+          maxTotalAttempts,
+          reason: lastError.message,
+        });
+        throw lastError;
+      }
+
       // 流式 onError 已完成分类；这里复用同一结果，避免重试判断与最终事件漂移。
       const classification =
         streamedErrorClassification ??
@@ -189,11 +199,6 @@ export async function callWithRetryFallback(params: CallWithRetriesParams): Prom
         maxTotalAttempts,
         error: lastError.message,
       });
-
-      if (lastError.name === 'AbortError') {
-        logger.info('收到 AbortError，直接向上抛出，不进入错误事件与重试流程');
-        throw lastError;
-      }
 
       previousAttemptTracker = attemptTracker;
 

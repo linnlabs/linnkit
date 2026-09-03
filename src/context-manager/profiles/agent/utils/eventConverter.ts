@@ -19,7 +19,6 @@ function isHistorySummaryEvent(event: RuntimeEvent): event is RuntimeEvent & {
   content: string;
   original_message_count?: number;
   compression_ratio?: number;
-  generated_by?: string;
   included_old_summary?: boolean;
   replaced_message_ids?: string[];
   summary_seq?: number;

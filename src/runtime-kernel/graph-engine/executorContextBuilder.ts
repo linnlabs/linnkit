@@ -1,23 +1,21 @@
 import type {
   AgentInvocationRequest,
+  CanonicalInferenceCachePolicy,
   ImageInputAdmissionEvidence,
   LlmRequestMessage,
 } from '../../ports';
 import type { EffectivePromptBudget } from './functions/resolveEffectivePromptBudget';
 import type {
   ContextBuildTokenEstimate,
+  ContextCompactionCandidate,
+  ContextCompactionPlan,
   ContextComponentTokenLedgerEntry,
   ContextTokenComponent,
-  InternalLlmCallUsage,
   PromptUsageMeasurementPolicy,
   RuntimeEvent,
-  SummarizationCallbacks,
+  HistorySummaryEvent,
+  ResolvedContextCompactionPolicy,
 } from '../../contracts';
-
-export interface PendingContextRuntimeEvent extends Record<string, unknown> {
-  id: string;
-  type: string;
-}
 
 export interface GraphExecutorOutputProcessor {
   /**
@@ -31,7 +29,6 @@ export interface GraphExecutorOutputProcessor {
 export interface GraphExecutorContextBuildInput {
   request: AgentInvocationRequest;
   history: RuntimeEvent[];
-  summarizationCallbacks?: SummarizationCallbacks;
   modelId: string;
   /** `prepare_call` 对最终 tools/control 的本地估算，Context Builder 必须先从输入预算扣除。 */
   toolDefinitionTokens: number;
@@ -40,13 +37,18 @@ export interface GraphExecutorContextBuildInput {
 
 export interface GraphExecutorContextBuildOutput {
   llmMessages: LlmRequestMessage[];
+  /** 当前正式主 Prompt 的稳定前缀锚点；由 Host 根据消息语义标注。 */
+  cachePolicy?: CanonicalInferenceCachePolicy;
   /** 模型 route、Agent policy 与 prepared tools 合并后的单一预算事实。 */
   promptBudget?: EffectivePromptBudget;
   /** reminder 后最终 Prompt 计数必须遵守的 route、remote count 与 calibration 策略。 */
   promptUsageMeasurementPolicy?: PromptUsageMeasurementPolicy;
   /** Context Manager 产出的短生命周期图片预算证据；不得写入 checkpoint 或 provider options。 */
   imageInputAdmissionEvidence?: ImageInputAdmissionEvidence;
-  summaryEvents: PendingContextRuntimeEvent[];
+  /** 最终 Prompt 达阈值时，Graph 可消费的纯压缩计划。 */
+  contextCompactionCandidate?: GraphContextCompactionCandidate;
+  /** 即使当前没有可替换区段，Graph 仍需知道策略以正确结算硬超限。 */
+  contextCompactionPolicy?: ResolvedContextCompactionPolicy;
   /**
    * Host 注入的输出文本处理器。
    *
@@ -77,15 +79,43 @@ export interface GraphExecutorContextBuildOutput {
    */
   tokenComponents?: ContextTokenComponent[];
   tokenLedgerEntry?: ContextComponentTokenLedgerEntry;
-  /**
-   * context build 内部 LLM 调用 usage。
-   *
-   * 中文备注：runtime 只在 build stage 为这些调用补发 telemetry；它们不进入 RuntimeEvent，
-   * 避免把审计数据写入模型上下文或历史事件。
-   */
-  internalLlmCalls?: InternalLlmCallUsage[];
 }
+
+export type GraphContextCompactionCandidate = ContextCompactionCandidate;
+
+export interface GraphExecutorContextApplyInput extends GraphExecutorContextBuildInput {
+  plan: ContextCompactionPlan;
+  checkpointContent: string;
+  summaryId: string;
+  conversationId: string;
+  turnId: string;
+  timestamp: number;
+  maxOutputTokens: number;
+}
+
+export type GraphExecutorContextApplyOutput =
+  | {
+      kind: 'ready';
+      rebuiltContext: GraphExecutorContextBuildOutput;
+      pendingSummaryEvent: HistorySummaryEvent;
+      compressionRatio: number;
+      summaryTokenEstimate: number;
+    }
+  | {
+      kind: 'invalid';
+      reason: string;
+      tokenEstimate?: number;
+      messageId?: string;
+    }
+  | {
+      kind: 'ineffective';
+      compressionRatio: number;
+      summaryTokenEstimate: number;
+    };
 
 export interface GraphExecutorContextBuilder {
   build(input: GraphExecutorContextBuildInput): Promise<GraphExecutorContextBuildOutput>;
+  applyCompaction?(
+    input: GraphExecutorContextApplyInput,
+  ): Promise<GraphExecutorContextApplyOutput>;
 }

@@ -86,6 +86,9 @@ export class ToolNodeEventBridge {
       observation: result.observation,
       success: result.status === 'success',
       ...(result.status === 'success' ? { data: result.data } : { error: result.error }),
+      ...(result.status === 'error' && result.error_code !== undefined
+        ? { error_code: result.error_code }
+        : {}),
       duration_ms: options.durationMs,
       ...(options.attachments ? { attachments: [...options.attachments] } : {}),
     };

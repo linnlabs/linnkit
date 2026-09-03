@@ -1,5 +1,5 @@
 /**
- * @file src/agent/runtime-kernel/system-reminder/rules.ts
+ * @file packages/linnkit/src/runtime-kernel/system-reminder/rules.ts
  * @description SystemReminder 规则集合（注册式配置入口）
  *
  * 中文备注：
@@ -31,11 +31,6 @@ export const SYSTEM_REMINDER_RULES: ReadonlyArray<SystemReminderRuleDefinition> 
     id: 'periodic_progress_reflection',
     trigger: { kind: 'step-count-modulo', period: 30, minStep: 30 },
     contentTemplate: 'periodicProgressReflection',
-  },
-  {
-    id: 'context_budget_warning',
-    trigger: { kind: 'budget-warning', ratio: 0.9 },
-    contentTemplate: 'contextBudgetWarning',
   },
 ];
 
@@ -94,12 +89,6 @@ function applyThresholdOverrides(
         period: periodicReflectionPeriod,
         minStep: periodicReflectionPeriod,
       },
-    };
-  }
-  if (definition.id === 'context_budget_warning' && thresholds.budgetWarningRatio !== undefined) {
-    return {
-      ...definition,
-      trigger: { ...definition.trigger, ratio: thresholds.budgetWarningRatio },
     };
   }
   if (definition.id === 'last_steps_hint' && thresholds.lastStepsHintThreshold !== undefined) {

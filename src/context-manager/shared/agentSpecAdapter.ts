@@ -1,9 +1,7 @@
 import type {
   AgentSpec,
-  AgentSpecCheckpointPolicy,
   AgentSpecContextPolicy,
   AgentSpecContextTracePolicy,
-  AgentSpecSummarizationPolicy,
   AgentSpecSystemReminderPolicy,
   AgentSpecToolOutputPolicy,
 } from '../../contracts';
@@ -16,10 +14,6 @@ export interface AgentContextBuilderConfigOverrides {
   DEFAULT_MAX_TOKENS?: number;
   RESERVED_FOR_RESPONSE?: number;
   WORKING_MEMORY_BUDGET_PERCENTAGE?: number;
-  SUMMARIZATION_TRIGGER_THRESHOLD?: number;
-  SUMMARY_BUDGET_PERCENTAGE?: number;
-  SUMMARY_OLDEST_MESSAGES_PERCENTAGE?: number;
-  MAX_THOUGHTS_TO_KEEP?: number;
   TOOL_PAIRING_SEARCH_RANGE?: number;
   MIN_TOOL_INTERACTIONS_TO_KEEP?: number;
   MAX_RECENT_TOOL_RUNS_TO_KEEP?: number;
@@ -42,8 +36,6 @@ export interface AgentSpecPreprocessorOptions {
 
 export interface AgentSpecProviderOptions {
   mustKeep?: MustKeepPolicy;
-  checkpoint?: AgentSpecCheckpointPolicy;
-  summarization?: Pick<AgentSpecSummarizationPolicy, 'agentId' | 'failureBehavior'>;
   contextTrace?: AgentSpecContextTracePolicy;
 }
 
@@ -75,10 +67,8 @@ export function contextPolicyToContextBuilderConfig(
   const config: AgentContextBuilderConfigOverrides = {};
   const {
     budget,
-    summarization,
     toolHistory,
     workingMemory,
-    reasoningRetention,
     tokenEstimation,
   } = policy;
 
@@ -90,15 +80,6 @@ export function contextPolicyToContextBuilderConfig(
   }
   if (budget?.workingMemoryBudgetPercentage !== undefined) {
     config.WORKING_MEMORY_BUDGET_PERCENTAGE = budget.workingMemoryBudgetPercentage;
-  }
-  if (summarization?.triggerThreshold !== undefined) {
-    config.SUMMARIZATION_TRIGGER_THRESHOLD = summarization.triggerThreshold;
-  }
-  if (summarization?.budgetPercentage !== undefined) {
-    config.SUMMARY_BUDGET_PERCENTAGE = summarization.budgetPercentage;
-  }
-  if (summarization?.oldestMessagesPercentage !== undefined) {
-    config.SUMMARY_OLDEST_MESSAGES_PERCENTAGE = summarization.oldestMessagesPercentage;
   }
   if (toolHistory?.maxInteractionGroups !== undefined) {
     config.MAX_TOOL_INTERACTION_GROUPS_TO_KEEP = toolHistory.maxInteractionGroups;
@@ -112,9 +93,6 @@ export function contextPolicyToContextBuilderConfig(
   }
   if (workingMemory?.toolPairingSearchRange !== undefined) {
     config.TOOL_PAIRING_SEARCH_RANGE = workingMemory.toolPairingSearchRange;
-  }
-  if (reasoningRetention?.keepLatestThoughts !== undefined) {
-    config.MAX_THOUGHTS_TO_KEEP = reasoningRetention.keepLatestThoughts;
   }
   if (tokenEstimation?.avgCharsPerToken !== undefined) {
     config.AVG_CHARS_PER_TOKEN = tokenEstimation.avgCharsPerToken;
@@ -159,8 +137,6 @@ export function contextPolicyToProviderOptions(
 
   return {
     mustKeep: contextPolicyToMustKeepPolicy(policy),
-    checkpoint: policy.checkpoint,
-    summarization: pickDefinedSummarizationOptions(policy.summarization),
     contextTrace: policy.contextTrace,
   };
 }
@@ -216,20 +192,4 @@ export function contextPolicyToRuntimeOptions(
     executionOptions: contextPolicyToExecutionOptions(policy),
     systemReminder: contextPolicyToSystemReminderOptions(policy),
   };
-}
-
-function pickDefinedSummarizationOptions(
-  summarization: AgentSpecSummarizationPolicy | undefined,
-): AgentSpecProviderOptions['summarization'] {
-  if (!summarization) {
-    return undefined;
-  }
-  const result: AgentSpecProviderOptions['summarization'] = {};
-  if (summarization.agentId !== undefined) {
-    result.agentId = summarization.agentId;
-  }
-  if (summarization.failureBehavior !== undefined) {
-    result.failureBehavior = summarization.failureBehavior;
-  }
-  return Object.keys(result).length > 0 ? result : undefined;
 }

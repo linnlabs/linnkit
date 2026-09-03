@@ -20,6 +20,7 @@ const { getToolDefinitionMock, executeToolMock } = vi.hoisted(() => ({
   getToolDefinitionMock: vi.fn(),
   executeToolMock: vi.fn(),
 }));
+const EXPECTED_IDEMPOTENCY_KEY = ['b80e1053e71d71fc', 'f23f698531db6960'].join('');
 
 function structuredToolResult(observation: string): string {
   return JSON.stringify({ data: {}, observation });
@@ -312,7 +313,7 @@ describe('ToolNode - 单元测试', () => {
               {
                 metadata: {
                   idempotency: {
-                    key: 'b80e1053e71d71fcf23f698531db6960',
+                    key: EXPECTED_IDEMPOTENCY_KEY,
                   },
                 },
               }
@@ -340,7 +341,7 @@ describe('ToolNode - 单元测试', () => {
         ephemeral: true,
         metadata: {
           idempotency: {
-            key: 'b80e1053e71d71fcf23f698531db6960',
+            key: EXPECTED_IDEMPOTENCY_KEY,
             cache_hit: true,
           },
         },
@@ -400,7 +401,7 @@ describe('ToolNode - 单元测试', () => {
         data: {},
         metadata: {
           idempotency: {
-            key: 'b80e1053e71d71fcf23f698531db6960',
+            key: EXPECTED_IDEMPOTENCY_KEY,
             cache_hit: false,
           },
         },
@@ -411,7 +412,7 @@ describe('ToolNode - 单元测试', () => {
         ephemeral: true,
         metadata: {
           idempotency: {
-            key: 'b80e1053e71d71fcf23f698531db6960',
+            key: EXPECTED_IDEMPOTENCY_KEY,
             cache_hit: true,
           },
         },

@@ -70,6 +70,24 @@ describe('ToolNodeEventBridge runtime facts', () => {
     });
   });
 
+  it('工具业务错误码随失败事实进入正式 tool_output', () => {
+    const { bridge, published } = createSubject();
+
+    bridge.emitToolOutput({
+      status: 'error',
+      observation: 'image model missing',
+      error: 'image model missing',
+      error_code: 'image_generation.model_not_configured',
+    });
+
+    expect(published).toHaveLength(1);
+    expect(published[0]).toMatchObject({
+      type: 'tool_output',
+      status: 'error',
+      error_code: 'image_generation.model_not_configured',
+    });
+  });
+
   it('publisher 失败必须传播，失败事实不能进入 journal', () => {
     const publishError = new Error('publisher unavailable');
     const { bridge } = createSubject(publishError);

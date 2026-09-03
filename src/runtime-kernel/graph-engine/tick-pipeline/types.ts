@@ -17,13 +17,22 @@ import type { LlmCallOptions } from '../../llm/caller';
 import type { ModelInputRequirement } from '../../llm/input-capabilities';
 import type { TelemetryPort } from '../../telemetry/telemetryPort';
 import type { AuditPort } from '../../../ports';
-import type { ExecutorLocalPatch, ExecutorLocalState, StandardToolCall } from '../types';
+import type {
+  ExecutorLocalPatch,
+  ExecutorLocalState,
+  RuntimeEventCommitPort,
+  StandardToolCall,
+} from '../types';
 import type { GraphExecutorOutputProcessor } from '../executorContextBuilder';
+import type { GraphContextCompactionCandidate } from '../executorContextBuilder';
 import type { EffectivePromptBudget } from '../functions/resolveEffectivePromptBudget';
 import type {
   CanonicalLlmUsage,
   AssistantReplayPart,
   ContextUsageSnapshot,
+  ContextCompactionPlan,
+  ResolvedContextCompactionPolicy,
+  HistorySummaryEvent,
   PromptUsageMeasurementPolicy,
   ProviderContinuation,
   RuntimeEvent,
@@ -72,6 +81,7 @@ export interface TickInput {
    */
   executorLocal?: ExecutorLocalState;
   summarizationCallbacks?: SummarizationCallbacks;
+  runtimeEventCommitPort?: RuntimeEventCommitPort;
 }
 
 export interface TickOutput {
@@ -101,6 +111,7 @@ export interface TickPipelineContext {
   executorLocal?: ExecutorLocalState;
   executorLocalPatch?: ExecutorLocalPatch;
   summarizationCallbacks?: SummarizationCallbacks;
+  runtimeEventCommitPort?: RuntimeEventCommitPort;
   modelId: string;
   toolSchemas: FunctionToolSchema[];
   toolModelInputRequirement?: ModelInputRequirement;
@@ -113,6 +124,24 @@ export interface TickPipelineContext {
   contextUsage?: ContextUsageSnapshot;
   llmMessages: LlmRequestMessage[];
   imageInputAdmissionEvidence?: ImageInputAdmissionEvidence;
+  contextCompactionCandidate?: GraphContextCompactionCandidate;
+  contextCompactionPolicy?: ResolvedContextCompactionPolicy;
+  pendingContextCompaction?: {
+    attemptIndex: number;
+    plan: ContextCompactionPlan;
+    policy: ResolvedContextCompactionPolicy;
+    modelId: string;
+    event: HistorySummaryEvent;
+    compressionRatio: number;
+    summaryTokenCount: number;
+    compactionInputTokens: number;
+    compactionDurationMs: number;
+    canonicalUsage?: CanonicalLlmUsage;
+    forcedPhaseRecovery: boolean;
+    targetUnreachable: boolean;
+    usageBefore: ContextUsageSnapshot;
+    usageAfter: ContextUsageSnapshot;
+  };
   conversationId: string;
   turnId: string;
   llmCallStartedAt?: number;
@@ -141,6 +170,9 @@ export type TickStageId =
   | 'build_context'
   | 'apply_system_reminder'
   | 'measure_prompt_usage'
+  | 'compact_context'
+  | 'admit_prompt_capacity'
+  | 'commit_context_compaction'
   | 'execute_llm'
   | 'build_decision';
 

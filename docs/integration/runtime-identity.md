@@ -26,7 +26,7 @@ Runtime 身份统一位于 `packages/linnkit/src/contracts/identity/`，并只�
 | `execution_id` | 一次实际执行 | execution owner | 全局 | 单次 start 或 resume |
 | `trace_id` | 一条可观察性关联链 | EventSequencer | 全局 | execution 生命周期 |
 | `answer_id` | 一个可流式聚合的答案段 | answer segment creator | 全局 | 首 chunk 到 seal 及回放 |
-| `summarization_id` | 一次 SSE-only 摘要进度 presentation | Host summarization adapter | execution 内 | start 到 end/error；等于 start event ID |
+| `summarization_id` | 一次 SSE-only 压缩进度 presentation | Host compaction progress adapter | execution 内 | start 到 end/error；等于 start event ID |
 | `thought_message_id` | 一个可增量合并的思考段 | thought creator | run 内 | 思考段生命周期 |
 | `tool_call_id` | 一次工具调用 | provider 或 tool bootstrap | run 内 | decision、process、output 全链 |
 | `interaction_id` | 一次等待用户输入的交互 | interaction creator | run 内 | wait 到 resume |
@@ -76,9 +76,11 @@ chunk 是独立增量事实；若 chunk event ID 与 `answer_id` 相同，事实
 
 trace 类别的唯一取值合同是 `contracts/sub-run-trace-payload.ts` 的 `SubRunTraceKind`。Host、持久化 adapter、transport 与客户端只能导入或派生，禁止为了查询或展示再维护一份 kind 列表。
 
-### 3.4 Summarization presentation
+### 3.4 Compaction presentation 与摘要事实
 
-`summarization_start/end/error` 是 Host realtime presentation，不是 Runtime fact。start 必须满足 `id === summarization_id`；end/error 原样引用该 ID，并与 start 使用同一 `run_id + execution_id + turn_id`。完成产生的 `history_summary` 是另一份 durable 事实，不能复用 progress type 或让客户端按“最近一条摘要”猜关联。
+`summarization_start/end/error` 是 Host realtime presentation，不是 Runtime fact。start 必须满足 `id === summarization_id`；end/error 原样引用该 ID，并与 start 使用同一 `run_id + execution_id + turn_id`。完成产生的 `history_summary` 是另一份 durable 事实：Context Manager 只创建 pending draft，Graph 的 `commit_context_compaction` 在主 Prompt 容量接纳后先通过当前 execution 的 `RuntimeEventCommitPort` 完成 routing admission 与 durable commit，再发送 end，并由既有 event handler 发布同一 fact。Host callback 不得发布 Runtime fact。commit 失败时只能出现 start/error，不能出现 end/summary；commit 成功后摘要身份已经成立，不得因 progress transport 或后续 fan-out 失败改写成 error 或回滚摘要。两者不能复用 progress type，也不能让客户端按“最近一条摘要”猜关联。
+
+自动 compaction 不创建 auxiliary run 或第二套 run identity；它继承当前 root / child 的正式 scope。内部模型调用只用 telemetry 的 `phase=context-internal / purpose=context_compaction` 区分，不能用新的 `run_id`、`summarization_id` 或开放 metadata 伪装执行归属。
 
 ## 4. 创建与导入纪律
 
@@ -121,7 +123,7 @@ Linnkit 不拥有 UI message identity，但使用 Linnkit 的客户端必须遵�
 3. answer 首 chunk、后续 chunk 与 seal 的 `answer_id` 不变。
 4. tool decision、process、interaction 与 output 的 `tool_call_id` 不变。
 5. child trace 的 `source_event_id` 指向真实 child fact。
-6. summarization start/end/error 的 `summarization_id` 与 execution scope 全程不变。
+6. compaction presentation 的 start/end/error 保持同一 `summarization_id` 与 execution scope，durable `history_summary` 由同一 scope 的 Graph commit stage 唯一发布。
 7. 缺失、空白、碰撞或错 scope 身份会显式失败。
 8. 接入方 live 与 durable/read-model 投影最终一致。
 

@@ -1,6 +1,4 @@
-import { Logger } from '../../../../shared/logger';
 import { createContextComponentLedgerEntry } from '../../../token-accounting';
-import { normalizedUsageFromCanonical } from '../../../../shared/llmTelemetryContext';
 import {
   generateContextLedgerEntryId,
   toSerializableJsonRecord,
@@ -8,12 +6,6 @@ import {
 import type { GraphExecutorContextBuilder } from '../../executorContextBuilder';
 import { defineTickStage } from '../types';
 import type { TickPipelineContext, TickStage } from '../types';
-import {
-  buildHistorySummaryRuntimeEvent,
-  isHistorySummaryEvent,
-} from '../helpers';
-
-const logger = new Logger('GraphAgentExecutor');
 
 export interface BuildContextStageDependencies {
   contextBuilder: GraphExecutorContextBuilder;
@@ -27,7 +19,6 @@ export function createBuildContextStage(
     reads: [
       'request',
       'history',
-      'summarizationCallbacks',
       'modelId',
       'toolDefinitionTokens',
       'llmOptions',
@@ -36,7 +27,6 @@ export function createBuildContextStage(
       'conversationId',
       'turnId',
       'input',
-      'eventHandler',
     ],
     writes: [
       'llmMessages',
@@ -46,12 +36,13 @@ export function createBuildContextStage(
       'promptBudget',
       'promptUsageMeasurementPolicy',
       'llmOptions',
+      'contextCompactionCandidate',
+      'contextCompactionPolicy',
     ],
     async run(ctx) {
       const contextBuildResult = await dependencies.contextBuilder.build({
         request: ctx.request,
         history: ctx.history,
-        summarizationCallbacks: ctx.summarizationCallbacks,
         modelId: ctx.modelId,
         toolDefinitionTokens: ctx.toolDefinitionTokens,
         signal: ctx.signal,
@@ -77,36 +68,6 @@ export function createBuildContextStage(
         });
       }
 
-      for (const internalCall of contextBuildResult.internalLlmCalls ?? []) {
-        ctx.telemetry.emit({
-          kind: 'llm_call',
-          modelId: internalCall.modelId,
-          stream: false,
-          durationMs: 0,
-          usage: normalizedUsageFromCanonical(internalCall.canonicalUsage),
-          canonicalUsage: internalCall.canonicalUsage,
-          phase: 'context-internal',
-          purpose: internalCall.purpose,
-          scope: {
-            conversationId: ctx.conversationId,
-            runId: ctx.input.toolContext?.runId ?? ctx.turnId,
-            parentRunId: ctx.input.toolContext?.parentRunId,
-            turnId: ctx.turnId,
-          },
-        });
-      }
-
-      for (const event of contextBuildResult.summaryEvents) {
-        if (!isHistorySummaryEvent(event)) {
-          continue;
-        }
-        const runtimeEvent = buildHistorySummaryRuntimeEvent(event, ctx.conversationId, ctx.turnId);
-        ctx.eventHandler?.(runtimeEvent);
-        logger.info('[GraphAgentExecutor] 发出上下文构建摘要事件', {
-          eventId: runtimeEvent.id,
-        });
-      }
-
       return {
         llmMessages: contextBuildResult.llmMessages,
         imageInputAdmissionEvidence: contextBuildResult.imageInputAdmissionEvidence,
@@ -114,12 +75,19 @@ export function createBuildContextStage(
         contextTrace,
         promptBudget: contextBuildResult.promptBudget,
         promptUsageMeasurementPolicy: contextBuildResult.promptUsageMeasurementPolicy,
+        contextCompactionCandidate: contextBuildResult.contextCompactionCandidate,
+        contextCompactionPolicy: contextBuildResult.contextCompactionPolicy,
         llmOptions: contextBuildResult.promptBudget
           ? {
               ...ctx.llmOptions,
               max_tokens: contextBuildResult.promptBudget.outputLimitTokens,
+              ...(contextBuildResult.cachePolicy
+                ? { cache_policy: contextBuildResult.cachePolicy }
+                : {}),
             }
-          : ctx.llmOptions,
+          : contextBuildResult.cachePolicy
+            ? { ...ctx.llmOptions, cache_policy: contextBuildResult.cachePolicy }
+            : ctx.llmOptions,
       };
     },
   });

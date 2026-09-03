@@ -53,48 +53,9 @@ class MessageFormatter {
     options?: { nativeTools?: false },
   ): ChatMessage[];
   public format(messages: AiMessage[], options: MessageFormatOptions = {}): (ChatMessage | NativeToolCallingMessage)[] {
-    const processedMessages = options.nativeTools ? messages : this.mergeThoughtAndAnswer(messages);
-    return processedMessages
+    return messages
       .map((msg) => this.formatSingleMessage(msg, options))
       .filter((msg): msg is ChatMessage | NativeToolCallingMessage => msg !== null);
-  }
-
-  private mergeThoughtAndAnswer(messages: AiMessage[]): AiMessage[] {
-    const processedMessages: AiMessage[] = [];
-    for (let i = 0; i < messages.length; i++) {
-      const currentMsg = messages[i];
-      const nextMsg = messages[i + 1];
-      if (this.shouldMergeWithNext(currentMsg, nextMsg)) {
-        processedMessages.push(this.performMerge(currentMsg, nextMsg));
-        i++;
-        continue;
-      }
-      processedMessages.push(currentMsg);
-    }
-    return processedMessages;
-  }
-
-  private shouldMergeWithNext(current: AiMessage, next: AiMessage | undefined): boolean {
-    if (!next) {
-      return false;
-    }
-    return current.role === 'assistant' && next.role === 'assistant' && current.type === 'thought' && next.type === 'final_answer';
-  }
-
-  private performMerge(thought: AiMessage, answer: AiMessage): AiMessage {
-    return {
-      id: answer.id,
-      role: 'assistant',
-      type: 'final_answer',
-      content: `<think>${thought.content}</think>${answer.content}`,
-      timestamp: answer.timestamp,
-      metadata: {
-        ...answer.metadata,
-        ...thought.metadata,
-        isMergedMessage: true,
-        originalIds: [thought.id, answer.id],
-      },
-    };
   }
 
   private formatSingleMessage(
@@ -176,7 +137,7 @@ class MessageFormatter {
       case 'history_summary':
         return { role: 'system', content };
       case 'thought':
-        return { role, content: content.includes('<think>') ? content : `<think>${content}</think>` };
+        return null;
       case 'tool_calls': {
         const toolCalls = metadata?.tool_calls;
         if (Array.isArray(toolCalls) && toolCalls.length > 0) {

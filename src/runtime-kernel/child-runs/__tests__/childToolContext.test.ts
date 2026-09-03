@@ -82,4 +82,22 @@ describe('childToolContext depth policy', () => {
 
     expect(childContext.registeredChildRunInvoker).toBe(registeredChildRunInvoker);
   });
+
+  it('递归 child 应继承 root admission 冻结的环境注入', () => {
+    const childRunContextInjections = [{
+      kind: 'project-context',
+      content: 'project name: test',
+    }];
+    const childContext = createChildRunToolContext({
+      parentToolContext: { childRunContextInjections },
+      conversationId: 'conv-context-child',
+      turnId: 'turn-context-child',
+      runId: RunIdSchema.parse('run-context-child'),
+      userQuery: 'nested child',
+      modelId: 'model-test',
+      seedHistory: [],
+    });
+
+    expect(childContext.childRunContextInjections).toBe(childRunContextInjections);
+  });
 });

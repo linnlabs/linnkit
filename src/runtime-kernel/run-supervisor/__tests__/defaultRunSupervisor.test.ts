@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { routeRuntimeEvent, RunIdSchema, ToolCallIdSchema } from '../../../contracts';
+import {
+  ExecutionIdSchema,
+  routeRuntimeEvent,
+  RunIdSchema,
+  ToolCallIdSchema,
+} from '../../../contracts';
 import type {
   AgentSpec,
   EventEnvelope,
@@ -375,13 +380,18 @@ describe('DefaultRunSupervisor', () => {
       interaction,
       new EventBus('exec-resume')
     );
-    const resumedHandle = await resumeClaim.activate();
+    const resumedHandle = await resumeClaim.activate({
+      executionId: ExecutionIdSchema.parse('execution-resume-2'),
+    });
     expect(resumedHandle).toBe(handle);
     await expect(resumedHandle.request()).resolves.toEqual(request);
     await expect(registryStore.load(RunIdSchema.parse('run-1'))).resolves.toMatchObject({
       runId: 'run-1',
       status: 'running',
       currentNode: 'llm',
+      metadata: {
+        executionId: 'execution-resume-2',
+      },
     });
     await expect(
       supervisor.claimResume(

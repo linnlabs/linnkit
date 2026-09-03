@@ -60,7 +60,7 @@ export interface CreateRuntimeErrorEventInput {
    */
   source?: string;
   /**
-   * 可选：覆盖 error_code（例如 SUMMARIZATION_FAILED）。
+   * 可选：覆盖 error_code，用于保留业务错误的稳定分类。
    */
   errorCode?: string;
   /**

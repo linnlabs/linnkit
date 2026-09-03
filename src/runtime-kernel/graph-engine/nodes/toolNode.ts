@@ -52,7 +52,6 @@ import {
   executeToolWithIdempotency,
   type ToolIdempotencyInFlightRegistry,
 } from './toolNode.idempotency';
-import { DEFAULT_CONTEXT_CHECKPOINT_TOOL_NAME } from '../../system-reminder/helpers';
 import { parsePendingToolCalls } from '../functions/parsePendingToolCalls';
 import {
   isToolExecutionAbort,
@@ -65,17 +64,6 @@ const logger = new Logger('ToolNode');
 
 function isAbortSignal(value: unknown): value is AbortSignal {
   return value !== null && typeof value === 'object' && 'aborted' in value;
-}
-
-function readContextCheckpointToolName(local: UnknownRecord): string {
-  const executorLocal = local.executorLocal;
-  if (executorLocal && typeof executorLocal === 'object' && !Array.isArray(executorLocal)) {
-    const value = (executorLocal as Record<string, unknown>).contextCheckpointToolName;
-    if (typeof value === 'string' && value.trim().length > 0) {
-      return value.trim();
-    }
-  }
-  return DEFAULT_CONTEXT_CHECKPOINT_TOOL_NAME;
 }
 
 function readToolObservationPolicy(
@@ -698,13 +686,6 @@ export class ToolNode implements GraphNode {
       runtimeEvents: context.bridge.getRuntimeEvents(),
     });
 
-    if (context.toolName === readContextCheckpointToolName(context.local)) {
-      context.state.local._checkpointStepReset = true;
-      logger.info('[ToolNode] context checkpoint 执行成功，设置步数重置标记', {
-        toolName: context.toolName,
-      });
-    }
-
     if (control?.terminateRun) {
       logger.info('[ToolNode] 收到 control.terminateRun，执行完工具后直接 yield 结束本轮 run', {
         toolName: context.toolName,
@@ -757,7 +738,7 @@ export class ToolNode implements GraphNode {
       toolName: context.toolName,
       durationMs: context.exec.durationMs,
       ok: false,
-      errorCode: context.exec.errorKind,
+      errorCode: context.exec.errorCode ?? context.exec.errorKind,
       conversationId: context.conversationId,
       turnId: context.turnId,
       runId: context.toolContext.runId,
@@ -770,6 +751,9 @@ export class ToolNode implements GraphNode {
         status: 'error',
         observation: error,
         error,
+        ...(context.exec.errorCode === undefined
+          ? {}
+          : { error_code: context.exec.errorCode }),
       },
       { durationMs: context.exec.durationMs }
     );

@@ -10,8 +10,8 @@ linnkit is an open-source project licensed under MIT. Contributions of all kinds
 
 **Requirements**
 
-- Node.js `>=22`
-- npm `>=10`
+- Node.js `>=20`
+- npm `>=9`
 
 **Getting started**
 
@@ -33,18 +33,16 @@ npm run test:smoke
 
 | Command | What it runs |
 |---------|-------------|
-| `npm run test:smoke` | Linnkit package shell smoke test — verifies exports and sub-entrypoints resolve correctly |
-| `npm run test:smoke:dist` | Linnkit runtime import + browser-safe events seam test against the built dist |
-| `npm run test` | Linnkit core test suite |
-| `npm run typecheck` | Linnkit core TypeScript type check (no emit) |
-| `npm run build` | Build Linnkit core dist (required before `test:smoke:dist`) |
+| `npm run test:smoke` | Package shell smoke test — verifies exports and sub-entrypoints resolve correctly |
+| `npm run test:smoke:dist` | Runtime import + browser-safe events seam test against the built dist |
+| `npm run test` | Full vitest suite |
+| `npm run typecheck` | TypeScript type check (no emit) |
+| `npm run build` | Build dist (required before `test:smoke:dist`) |
 
 Before opening a PR, run locally:
 
 ```bash
-npm run typecheck
-npm run build
-npm run test
+npm run typecheck && npm run build && npm run test
 ```
 
 All three must pass.
@@ -55,13 +53,15 @@ All three must pass.
 
 **Checklist before marking PR ready for review**
 
-- [ ] Linnkit core 的 `npm run typecheck`、`build`、`test` 全部通过
+- [ ] `npm run typecheck` passes
+- [ ] `npm run build` succeeds
+- [ ] `npm run test` passes (all suites green)
 - [ ] New public exports are documented in the relevant `docs/integration/` guide
 - [ ] If you modified a public sub-entrypoint, check the snapshot test in `src/runtime-kernel/__tests__/__snapshots__/` and `src/testkit/__tests__/__snapshots__/` — update snapshots intentionally, not blindly
 
 **Scope guidance**
 
-- linnkit core is intentionally thin — it does not include built-in LLM providers, RAG, memory systems, or UI. Provider integrations belong in Host repositories and cannot add Provider semantics or dependencies to the core.
+- linnkit is intentionally thin — it does not include built-in LLM providers, RAG, memory systems, or UI. Please don't open PRs adding these.
 - Bug fixes and protocol-level improvements are always welcome.
 - Larger features or API surface changes: open an issue first to discuss design intent.
 

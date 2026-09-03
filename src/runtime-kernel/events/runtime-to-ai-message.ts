@@ -197,12 +197,10 @@ function readObservationTruncationMeta(value: unknown): ObservationTruncationMet
 }
 
 function applyHistorySummary(summaryEvent: HistorySummaryEvent, memory: ConversationMemoryPort): void {
-  const generatedBy = Reflect.get(summaryEvent, 'generated_by');
   const summaryMetadata: AiMessage['metadata'] = {
     messageType: 'summary',
     originalMessageCount: summaryEvent.original_message_count,
     compressionRatio: summaryEvent.compression_ratio,
-    ...(typeof generatedBy === 'string' ? { generatedBy } : {}),
     includedOldSummary: summaryEvent.included_old_summary,
     replacedMessageIds: summaryEvent.replaced_message_ids,
     summarySeq: summaryEvent.summary_seq,

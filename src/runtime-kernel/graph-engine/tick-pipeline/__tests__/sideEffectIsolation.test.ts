@@ -39,7 +39,6 @@ function createContextBuilder(): GraphExecutorContextBuilder {
       ];
       return {
         llmMessages,
-        summaryEvents: [],
         contextTrace: {
           kind: 'side-effect-contract',
           providerCount: 1,

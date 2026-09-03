@@ -8,6 +8,7 @@ import type {
   GraphExecutorContextBuildOutput,
 } from '../../executorContextBuilder';
 import { createApplySystemReminderStage } from '../stages/applySystemReminderStage';
+import { createAdmitPromptCapacityStage } from '../stages/admitPromptCapacityStage';
 import { createBuildContextStage } from '../stages/buildContextStage';
 import { createBuildDecisionStage } from '../stages/buildDecisionStage';
 import { createExecuteLlmStage } from '../stages/executeLlmStage';
@@ -164,7 +165,6 @@ describe('tick pipeline stage write contracts', () => {
         const llmMessages: LlmRequestMessage[] = [{ role: 'user', content: 'hello' }];
         return {
           llmMessages,
-          summaryEvents: [],
           outputProcessor,
           contextTrace: {
             kind: 'contract',
@@ -188,7 +188,6 @@ describe('tick pipeline stage write contracts', () => {
       reads: [
         'request',
         'history',
-        'summarizationCallbacks',
         'modelId',
         'toolDefinitionTokens',
         'llmOptions',
@@ -197,7 +196,6 @@ describe('tick pipeline stage write contracts', () => {
         'conversationId',
         'turnId',
         'input',
-        'eventHandler',
       ],
       writes: [
         'llmMessages',
@@ -207,6 +205,8 @@ describe('tick pipeline stage write contracts', () => {
         'promptBudget',
         'promptUsageMeasurementPolicy',
         'llmOptions',
+        'contextCompactionCandidate',
+        'contextCompactionPolicy',
       ],
     });
     const writes = await runAndExpectWrites(stage, ctx);
@@ -293,6 +293,38 @@ describe('tick pipeline stage write contracts', () => {
     });
     const writes = await runAndExpectWrites(stage, ctx);
 
+    expectWritesMatchDeclaration(stage, writes);
+  });
+
+  it('admit_prompt_capacity 只读取最终 Prompt 候选，不写共享上下文', async () => {
+    const ctx = createTestTickPipelineContext({
+      context: {
+        promptUsageCandidate: {
+          basis: 'last_completed_llm_prompt',
+          budget_model_id: 'primary-model',
+          used_tokens: 100,
+          components: {
+            system_prompt_tokens: 20,
+            conversation_tokens: 80,
+            tool_definition_tokens: 0,
+          },
+          component_attribution: 'normalized_local_estimate',
+          input_budget_tokens: 100,
+          remaining_tokens: 0,
+          output_limit_tokens: 20,
+          source: 'local-estimate',
+          confidence: 'estimate',
+          measured_at: 1,
+        },
+      },
+    });
+    const stage = createAdmitPromptCapacityStage();
+
+    expectStageDeclaration(stage, {
+      reads: ['promptUsageCandidate'],
+      writes: [],
+    });
+    const writes = await runAndExpectWrites(stage, ctx);
     expectWritesMatchDeclaration(stage, writes);
   });
 

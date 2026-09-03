@@ -10,6 +10,11 @@ export { MemoryEventStore } from './event-store/memoryEventStore';
 export { createMonotonicEventStoreIdFactory, requireEventStoreId } from './event-store/base';
 export { createHostToolCallBootstrap } from './functions/createHostToolCallBootstrap';
 export { resolveEffectivePromptBudget } from './functions/resolveEffectivePromptBudget';
+export { evaluatePrimaryPromptCapacity } from './functions/evaluatePrimaryPromptCapacity';
+export {
+  PRIMARY_PROMPT_CAPACITY_ERROR_CODE,
+  PrimaryPromptCapacityError,
+} from './definitions/primaryPromptCapacityError';
 export { readCheckpointContextUsage } from './functions/engineStateSnapshot';
 export { isRuntimeFailureFact } from './functions/runtimeFailureFact';
 export { ENGINE_STATE_SCHEMA_VERSION } from './types';
@@ -19,8 +24,10 @@ export type {
   GraphExecutorContextBuilder,
   GraphExecutorContextBuildInput,
   GraphExecutorContextBuildOutput,
+  GraphExecutorContextApplyInput,
+  GraphExecutorContextApplyOutput,
+  GraphContextCompactionCandidate,
   GraphExecutorOutputProcessor,
-  PendingContextRuntimeEvent,
 } from './executorContextBuilder';
 export type {
   Checkpointer,
@@ -35,6 +42,7 @@ export type {
   ExecutorLocalPatch,
   ExecutorLocalState,
   GraphNode,
+  RuntimeEventCommitPort,
   RuntimeEventSink,
   RuntimeFailureFact,
   RuntimeFailureFactSink,
@@ -48,3 +56,5 @@ export type {
   EffectivePromptBudget,
   ResolveEffectivePromptBudgetInput,
 } from './functions/resolveEffectivePromptBudget';
+export type { PrimaryPromptCapacityAdmission } from './functions/evaluatePrimaryPromptCapacity';
+export type { PrimaryPromptCapacityErrorMetadata } from './definitions/primaryPromptCapacityError';

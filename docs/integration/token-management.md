@@ -42,20 +42,30 @@ Context Manager messages 已确定
   ├─ ContextTrace 记录 finalTokens / remoteTokenCount / tokenComponents
   └─ buildContextStage 发 context_build telemetry
      ▼
-Graph apply_system_reminder → measure_prompt_usage
+Graph apply_system_reminder → measure_prompt_usage → admit_prompt_capacity
   ├─ 同一个 TokenizerPort 估算 System / Conversation / Tool definitions 权重
   ├─ remote count 同时接收最终 messages 与 prepared tools
-  └─ 每个 fallback attempt 按 active route 重测；只有成功 attempt 提交 ContextUsageSnapshot
+  ├─ 每个 fallback attempt 按 active route 重测、重新接纳
+  └─ 超输入预算时在 Provider 前拒绝；只有成功 attempt 提交 ContextUsageSnapshot
      ▼
 LLM 调用完成
+  ├─ LlmNode 通过 RuntimeEventSink 发布 ephemeral context_usage_snapshot
   ├─ canonical stream 产生 actual usage
   ├─ llm_call telemetry 写入 usage ledger / run cost
-  └─ host calibration collector 把 context_build local estimate 与 llm_call actual usage 配对
+  ├─ host calibration collector 把 context_build local estimate 与 llm_call actual usage 配对
+  └─ execution settlement 用最新快照发布 durable run_execution_metrics
      ▼
 下一轮 context build 读取样本，calibration 生效
 ```
 
 这里有一个刻意设计的边界：**remote count 在裁剪之后调用，只记录更准的发送前测量，不重跑本轮裁剪**。Context Manager 内的 remote count 解释 messages 构建结果；Graph 的最终 remote count 则覆盖 reminder 后 messages + tools，并形成产品可持久化快照。如果要让 remote count 影响后续裁剪，仍需通过 calibration 在下一轮生效。
+
+但 Graph 会用这份最终测量做当前 attempt 的容量门禁：`used_tokens <= input_budget_tokens` 才能调 Provider；严格超出时抛 `llm.prompt.input_budget_exceeded`。这不是第二轮裁剪，而是副作用前的 fail-closed admission。被拒绝的候选可进入 typed error metadata 用于诊断，但不得冒充成功 `ContextUsageSnapshot`。
+
+`context_usage_snapshot` 的发布频率是“每次成功 LLM Prompt 一条”，不是“每个工具一条”。一个 Prompt 可以决定批量工具调用；
+工具执行不改变已经提交的 Prompt，只有工具结果进入 history 后发生的下一次成功 LLM 调用才会产生新快照。临时事件不落
+EventStore，Host 需要历史恢复时应持久化 execution 最终 `run_execution_metrics.context_usage`。完整生命周期见
+[`realtime.md`](./realtime.md)。
 
 ## 4. `ContextBuildResult.tokenUsage` 怎么读
 

@@ -1,3 +1,5 @@
+import type { AgentContextInjection } from '../../../ports';
+
 export type FenceLlmRole = 'user' | 'system';
 export type FencePlacement =
   | 'after-system'
@@ -16,12 +18,7 @@ export interface FenceDescriptor {
   formatter: (content: string, attrs: Record<string, unknown>) => string;
 }
 
-export interface FenceInjection {
-  kind: string;
-  content: string;
-  attrs?: Record<string, unknown>;
-  metadata?: Record<string, unknown>;
-}
+export type FenceInjection = AgentContextInjection;
 
 export interface FenceRegistry {
   register(descriptor: FenceDescriptor): void;

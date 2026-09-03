@@ -201,6 +201,7 @@ export function buildCanonicalInferenceRequest(
     messages: input.messages.map(projectMessage),
     tools: input.options.tools ?? [],
     tool_choice: input.options.tool_choice ?? 'auto',
+    ...(input.options.cache_policy ? { cache_policy: input.options.cache_policy } : {}),
     sampling: {
       ...(input.options.temperature !== undefined ? { temperature: input.options.temperature } : {}),
       ...(input.options.top_p !== undefined ? { top_p: input.options.top_p } : {}),

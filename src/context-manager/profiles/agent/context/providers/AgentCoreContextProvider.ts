@@ -57,13 +57,23 @@ export class AgentCoreContextProvider extends BaseContextProvider {
     
     // 获取所有原始消息，用于判断最新用户输入
     const allMessages = states.map(s => s.message);
+    const latestHistorySummaryIndex = findLatestHistorySummaryIndex(allMessages);
+    const latestUserInputIndex = findLatestUserInputIndex(allMessages);
     
     for (let i = 0; i < states.length; i++) {
       const state = states[i];
       const msg = state.message;
       
       // 检查是否为核心消息
-      if (this.isCoreMessage(msg, i, allMessages)) {
+      if (this.isCoreMessage(
+        msg,
+        i,
+        latestHistorySummaryIndex,
+        latestUserInputIndex,
+      )) {
+        if (msg.type === 'history_summary') {
+          strategiesApplied.push('history_summary');
+        }
         let processedContent = msg.content;
         let contentType: MessageProcessingState['contentType'] = 'full';
         const truncationRule = findMatchingTruncationRule(msg, this.mustKeepPolicy);
@@ -143,7 +153,18 @@ export class AgentCoreContextProvider extends BaseContextProvider {
    * 3. 保留 MustKeepPolicy 指定的 fence
    * 4. 对命中的 MustKeepPolicy.truncationRules 做 Token 截断
    */
-  private isCoreMessage(msg: AiMessage, index: number, allMessages: AiMessage[]): boolean {
+  private isCoreMessage(
+    msg: AiMessage,
+    index: number,
+    latestHistorySummaryIndex: number,
+    latestUserInputIndex: number,
+  ): boolean {
+    // 最新 durable summary 是此前已压缩事实的唯一载体。即使当前工具组吃满工作记忆预算，
+    // 也不能静默丢掉它；旧 summary 仍保持可替换，不会在 core 层累积。
+    if (msg.type === 'history_summary') {
+      return index === latestHistorySummaryIndex;
+    }
+
     // 规则1: 系统提示词始终无条件保留
     if (this.mustKeepPolicy.alwaysKeepTypes.includes(msg.type) && msg.type !== 'user_input') {
       return true;
@@ -151,19 +172,12 @@ export class AgentCoreContextProvider extends BaseContextProvider {
     
     // 规则2: 保留最新的用户输入消息 (current_user_request)
     if (msg.type === 'user_input') {
-      const lastUserIndex = allMessages.map(m => m.type).lastIndexOf('user_input');
-      return index === lastUserIndex;
+      return index === latestUserInputIndex;
     }
     
     const fenceKind = msg.metadata?.fenceKind;
     if (fenceKind && this.mustKeepPolicy.alwaysKeepFenceKinds.includes(fenceKind)) {
       return true;
-    }
-    
-    // 🚨 重要：history_summary 不在此处保留，让其进入后续的处理流程
-    // 这是解决"循环累积"问题的关键 - 旧摘要必须能被新摘要替换
-    if (msg.type === 'history_summary') {
-      return false;
     }
     
     return false;
@@ -188,4 +202,25 @@ export class AgentCoreContextProvider extends BaseContextProvider {
       
     return result + '...';
   }
+}
+
+function findLatestHistorySummaryIndex(messages: readonly AiMessage[]): number {
+  let latestIndex = -1;
+  let latestSequence = -1;
+  messages.forEach((message, index) => {
+    if (message.type !== 'history_summary') return;
+    const sequence = message.metadata?.summarySeq ?? -1;
+    if (latestIndex === -1 || sequence > latestSequence) {
+      latestIndex = index;
+      latestSequence = sequence;
+    }
+  });
+  return latestIndex;
+}
+
+function findLatestUserInputIndex(messages: readonly AiMessage[]): number {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index]?.type === 'user_input') return index;
+  }
+  return -1;
 }

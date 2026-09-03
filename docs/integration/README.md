@@ -117,7 +117,7 @@ Runtime 身份不是一条 `conversation → run → execution → turn → answ
 
 持久化、read model 与观察器读取完整 RuntimeEvent 的正式身份时，必须使用 `parseRuntimeEventRoutingIdentity(event)`。该函数只接受顶层 `run_id / parent_run_id / lane / visibility`；禁止从 `metadata.run_id`、`metadata.run_context` 或 `turn_id` 猜测身份。缺少正式身份代表 publisher / admission 边界被绕过，应直接失败。
 
-child fact 先进入独立 child EventBus/EventStore，父级 `subrun_trace` 只是通过 `source_event_id` 关联的展示 read model。child 工具 decision 在 trace 中保留 canonical `tool_calls[]` 完整批次，process 才表示单个调用经 owner admission 后实际开始；协议不定义 queued/pending 展示状态。任何影响路由、归并、生命周期或副作用目标的值，都必须进入共享 contracts 或由 host/app 从已校验 DTO 建立显式 ID 映射；开放 `metadata/meta` 只能保存非关键展示和诊断信息。完整规范与测试门禁见 [`realtime.md`](./realtime.md)、[`child-runs.md`](./child-runs.md) 和 [`testing.md`](./testing.md)。
+child fact 先进入独立 child EventBus/EventStore，父级 `subrun_trace` 只是通过 `source_event_id` 关联的展示 read model。child 工具 decision 在 trace 中保留 canonical `tool_calls[]` 完整批次，process 才表示单个调用经 owner admission 后实际开始；协议不定义 queued/pending 展示状态。成功 child 工具结果可以为完整详情保留经过合同校验的有序 durable resource refs，但 trace 不传资源字节、物理路径，也不把它们加入父模型输入。任何影响路由、归并、生命周期或副作用目标的值，都必须进入共享 contracts 或由 host/app 从已校验 DTO 建立显式 ID 映射；开放 `metadata/meta` 只能保存非关键展示和诊断信息。完整规范与测试门禁见 [`realtime.md`](./realtime.md)、[`child-runs.md`](./child-runs.md) 和 [`testing.md`](./testing.md)。
 
 Host composition root 必须一次性装配 Supervisor、EventStore、cursor、Audit、Telemetry、
 CostCollector 与模型输入端口，并创建一个 registered child invoker 显式注入 root
@@ -212,8 +212,9 @@ Memory fallback 补齐缺失依赖。需要接入多 agent、多 workspace 或�
 | ……让工具产生的超长 observation 不占满上下文                         | [tools.md §5](./tools.md)（`ObservationPreviewPort`）+ [context-engineering.md §6](./context-engineering.md)                                                     |
 | ……定义一个新 agent / 写 `AgentSpec`                         | [agent-registration-guide.md](./agent-registration-guide.md) ⭐                                                                                                 |
 | ……配 token 预算 / 控制每个 token / 确认改预算要不要到处改          | [context-engineering.md §0.1](./context-engineering.md#context-policy-source-of-truth)（配置真相源与三层合并）+ [token-management.md](./token-management.md) |
+| ……让前端在每次成功 LLM 调用后刷新上下文占用                      | [token-management.md §3](./token-management.md#3-一轮请求的数据流) + [realtime.md §4](./realtime.md#4-几个常见事件的处置-cheatsheet) |
 | ……用真实的 Claude / Gemini tokenizer 替代默认                 | [token-management.md](./token-management.md) + [context-engineering.md §9.4](./context-engineering.md)（`TokenizerPort`）                    |
-| ……被动摘要：先注册摘要 agent、再填 `summarization.agentId`         | [agent-registration-guide.md](./agent-registration-guide.md) §4.2 + [context-engineering.md](./context-engineering.md) §5.4                                    |
+| ……配置自动上下文压缩的触发/目标水位、输出上限或显式禁用 | [agent-registration-guide.md](./agent-registration-guide.md) §4.2 + [context-engineering.md](./context-engineering.md) §5.3 |
 | ……把 host 的"当前文件 / 项目状态 / 引用段落"喂给 agent                | [context-fences.md](./context-fences.md) ⭐                                                                                                                     |
 | ……让关键信息（如 user prefs）永远不被裁掉                           | [context-fences.md](./context-fences.md) ⭐（`mustKeep` policy）                                                                                                  |
 | ……工具调用反复占满上下文要压缩                                      | [tool-history.md](./tool-history.md)（`per-pair` / `per-run` / `none`）                                                                                          |

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { SerializableJsonRecord } from './json';
+import { DEFAULT_CONTEXT_COMPACTION_POLICY } from './contextCompaction';
 
 export const AgentSpecMessageType = z.enum([
   'system_prompt',
@@ -10,7 +11,6 @@ export const AgentSpecMessageType = z.enum([
   'context_after',
   'document_fragment',
   'task_request',
-  'thought',
   'final_answer',
   'tool_code',
   'tool_calls',
@@ -48,14 +48,26 @@ export const AgentSpecToolOutputPolicy = z.object({
 });
 export type AgentSpecToolOutputPolicy = z.infer<typeof AgentSpecToolOutputPolicy>;
 
-export const AgentSpecSummarizationPolicy = z.object({
-  triggerThreshold: z.number().min(0).max(1).optional(),
-  budgetPercentage: z.number().min(0).max(1).optional(),
-  oldestMessagesPercentage: z.number().min(0).max(1).optional(),
-  agentId: z.string().min(1).optional(),
-  failureBehavior: z.enum(['fail-fast', 'continue-if-within-budget']).optional(),
+/** Graph 在主模型调用前执行的统一上下文压缩策略。 */
+export const AgentSpecContextCompactionPolicy = z.object({
+  enabled: z.boolean().optional(),
+  triggerRatio: z.number().gt(0).lt(1).optional(),
+  targetRatio: z.number().gt(0).lt(1).optional(),
+  keepLatestToolGroups: z.number().int().nonnegative().optional(),
+  maxOutputTokens: z.number().int().positive().optional(),
+  maxCompactionsPerRun: z.number().int().positive().optional(),
+}).superRefine((value, ctx) => {
+  const triggerRatio = value.triggerRatio ?? DEFAULT_CONTEXT_COMPACTION_POLICY.triggerRatio;
+  const targetRatio = value.targetRatio ?? DEFAULT_CONTEXT_COMPACTION_POLICY.targetRatio;
+  if (targetRatio >= triggerRatio) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['targetRatio'],
+      message: 'targetRatio must be lower than triggerRatio',
+    });
+  }
 });
-export type AgentSpecSummarizationPolicy = z.infer<typeof AgentSpecSummarizationPolicy>;
+export type AgentSpecContextCompactionPolicy = z.infer<typeof AgentSpecContextCompactionPolicy>;
 
 export const AgentSpecMustKeepTruncationRule = z.object({
   fenceKind: z.string().min(1),
@@ -80,17 +92,6 @@ export const AgentSpecWorkingMemoryPolicy = z.object({
 });
 export type AgentSpecWorkingMemoryPolicy = z.infer<typeof AgentSpecWorkingMemoryPolicy>;
 
-export const AgentSpecCheckpointPolicy = z.object({
-  keepPairsBefore: z.number().int().nonnegative().optional(),
-  triggerToolName: z.string().min(1).optional(),
-});
-export type AgentSpecCheckpointPolicy = z.infer<typeof AgentSpecCheckpointPolicy>;
-
-export const AgentSpecReasoningRetentionPolicy = z.object({
-  keepLatestThoughts: z.number().int().nonnegative().optional(),
-});
-export type AgentSpecReasoningRetentionPolicy = z.infer<typeof AgentSpecReasoningRetentionPolicy>;
-
 export const AgentSpecTokenEstimationPolicy = z.object({
   encoding: z.string().min(1).optional(),
   avgCharsPerToken: z.number().positive().optional(),
@@ -113,7 +114,6 @@ export const SYSTEM_REMINDER_BUILTIN_TRIGGER_KINDS = [
   'remaining-steps-leq',
   'step-count-modulo',
   'tool-call-streak',
-  'budget-warning',
   'agent-has-tool',
 ] as const;
 
@@ -125,7 +125,6 @@ export const AgentSpecSystemReminderTrigger = z.object({
   toolName: z.string().min(1).optional(),
   period: z.number().int().positive().optional(),
   minStep: z.number().int().nonnegative().optional(),
-  ratio: z.number().min(0).max(1).optional(),
   config: SerializableJsonRecord.optional(),
 });
 export type AgentSpecSystemReminderTrigger = z.infer<typeof AgentSpecSystemReminderTrigger>;
@@ -144,7 +143,6 @@ export const AgentSpecSystemReminderPolicy = z.object({
   thresholds: z.object({
     toolCallStreak: z.number().int().nonnegative().optional(),
     periodicReflectionPeriod: z.number().int().positive().optional(),
-    budgetWarningRatio: z.number().min(0).max(1).optional(),
     lastStepsHintThreshold: z.number().int().nonnegative().optional(),
   }).optional(),
   extraRules: z.array(AgentSpecSystemReminderExtraRule).optional(),
@@ -172,11 +170,9 @@ export const AgentSpecContextPolicy = z.object({
   budget: AgentSpecBudgetPolicy.optional(),
   toolHistory: AgentSpecToolHistoryPolicy.optional(),
   toolOutput: AgentSpecToolOutputPolicy.optional(),
-  summarization: AgentSpecSummarizationPolicy.optional(),
+  compaction: AgentSpecContextCompactionPolicy.optional(),
   mustKeep: AgentSpecMustKeepPolicy.optional(),
   workingMemory: AgentSpecWorkingMemoryPolicy.optional(),
-  checkpoint: AgentSpecCheckpointPolicy.optional(),
-  reasoningRetention: AgentSpecReasoningRetentionPolicy.optional(),
   tokenEstimation: AgentSpecTokenEstimationPolicy.optional(),
   systemReminder: AgentSpecSystemReminderPolicy.optional(),
   contextTrace: AgentSpecContextTracePolicy.optional(),
@@ -207,11 +203,13 @@ const DEFAULT_CONTEXT_POLICY: Required<AgentSpecContextPolicy> = {
       maxLines: 1_200,
     },
   },
-  summarization: {
-    triggerThreshold: 0.7,
-    budgetPercentage: 0.12,
-    oldestMessagesPercentage: 0.75,
-    failureBehavior: 'fail-fast',
+  compaction: {
+    enabled: true,
+    triggerRatio: 0.8,
+    targetRatio: 0.5,
+    keepLatestToolGroups: 2,
+    maxOutputTokens: 8192,
+    maxCompactionsPerRun: 12,
   },
   mustKeep: {
     alwaysKeepTypes: ['system_prompt', 'user_input'],
@@ -224,13 +222,6 @@ const DEFAULT_CONTEXT_POLICY: Required<AgentSpecContextPolicy> = {
     minToolInteractionsToKeep: 2,
     toolPairingSearchRange: 10,
   },
-  checkpoint: {
-    keepPairsBefore: 2,
-    triggerToolName: 'context_checkpoint',
-  },
-  reasoningRetention: {
-    keepLatestThoughts: 1,
-  },
   tokenEstimation: {
     encoding: 'cl100k_base',
     avgCharsPerToken: 2.0,
@@ -242,7 +233,6 @@ const DEFAULT_CONTEXT_POLICY: Required<AgentSpecContextPolicy> = {
     thresholds: {
       toolCallStreak: 10,
       periodicReflectionPeriod: 30,
-      budgetWarningRatio: 0.9,
       lastStepsHintThreshold: 0,
     },
     extraRules: [],
@@ -277,11 +267,9 @@ export function defineContextPolicy(input: AgentSpecContextPolicyInput = {}): Ag
         ...input.toolOutput?.observationGovernance,
       },
     },
-    summarization: { ...DEFAULT_CONTEXT_POLICY.summarization, ...input.summarization },
+    compaction: { ...DEFAULT_CONTEXT_POLICY.compaction, ...input.compaction },
     mustKeep: { ...DEFAULT_CONTEXT_POLICY.mustKeep, ...input.mustKeep },
     workingMemory: mergeWorkingMemoryPolicy(input.workingMemory),
-    checkpoint: { ...DEFAULT_CONTEXT_POLICY.checkpoint, ...input.checkpoint },
-    reasoningRetention: { ...DEFAULT_CONTEXT_POLICY.reasoningRetention, ...input.reasoningRetention },
     tokenEstimation: { ...DEFAULT_CONTEXT_POLICY.tokenEstimation, ...input.tokenEstimation },
     systemReminder: {
       ...DEFAULT_CONTEXT_POLICY.systemReminder,

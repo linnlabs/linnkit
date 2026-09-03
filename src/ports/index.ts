@@ -1,7 +1,9 @@
-export type { AgentInvocationRequest } from './agent-invocation';
+export type { AgentContextInjection, AgentInvocationRequest } from './agent-invocation';
 export type {
   CanonicalCompletedToolCall,
   CanonicalAssistantReplayPart,
+  CanonicalInferenceCacheAnchor,
+  CanonicalInferenceCachePolicy,
   CanonicalInferenceContentBlock,
   CanonicalInferenceEvent,
   CanonicalInferenceFailureKind,

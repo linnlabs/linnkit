@@ -4,7 +4,7 @@
  */
 
 import type { MessageProcessingState } from '../base';
-import type { ToolInteractionGroup } from '../../../utils/toolInteractionGroup';
+import type { ToolInteractionGroup } from '../../../../../shared/toolInteractionGroup';
 
 /**
  * 工具对适配结果

@@ -41,7 +41,6 @@ function createStats(): TestStats {
       original: 1,
       afterCoreContext: 0,
       afterWorkingMemory: 0,
-      afterSummarization: 0,
     },
   };
 }

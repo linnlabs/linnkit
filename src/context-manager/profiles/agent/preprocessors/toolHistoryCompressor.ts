@@ -9,7 +9,7 @@ import {
   buildToolInteractionGroupsFromMessages,
   findCurrentRunStartIndex,
   type ToolInteractionGroup,
-} from '../utils/toolInteractionGroup';
+} from '../../../shared/toolInteractionGroup';
 import type { AiMessage } from '../../../../contracts';
 import {
   ContextProviderError,
@@ -17,7 +17,6 @@ import {
 } from '../../../shared/providers/base';
 import { PREPROCESSOR_PRIORITY } from '../../../shared/preprocessors/priority';
 
-const CHECKPOINT_TOOL_NAME = 'context_checkpoint';
 const DEFAULT_KEEP_LATEST_TOOL_PAIRS = 2;
 const DEFAULT_KEEP_LATEST_RUNS = 1;
 const DEFAULT_MAX_INTERACTION_GROUPS = 12;
@@ -209,8 +208,6 @@ export class ToolHistoryCompressorPreprocessor extends BasePreprocessor {
     completeGroups: Array<ToolInteractionGroup<AiMessage>>,
   ): Array<ToolInteractionGroup<AiMessage>> {
     const keepAnchorIds = new Set<string>();
-    const latestCheckpointGroup = findLatestCheckpointGroup(completeGroups);
-
     if (this.options.strategy === 'none') {
       for (const group of completeGroups) {
         keepAnchorIds.add(group.anchorId);
@@ -227,16 +224,11 @@ export class ToolHistoryCompressorPreprocessor extends BasePreprocessor {
         }
       }
     } else {
-      const nonCheckpointGroups = completeGroups.filter((group) => !group.isCheckpointGroup);
       if (this.options.keepLatestToolPairs > 0) {
-        for (const group of nonCheckpointGroups.slice(-this.options.keepLatestToolPairs)) {
+        for (const group of completeGroups.slice(-this.options.keepLatestToolPairs)) {
           keepAnchorIds.add(group.anchorId);
         }
       }
-    }
-
-    if (latestCheckpointGroup) {
-      keepAnchorIds.add(latestCheckpointGroup.anchorId);
     }
 
     return completeGroups.filter((group) => keepAnchorIds.has(group.anchorId));
@@ -259,11 +251,7 @@ export class ToolHistoryCompressorPreprocessor extends BasePreprocessor {
       });
     }
 
-    const latestCheckpointGroup = findLatestCheckpointGroup(groupsToKeep);
     const selectedAnchorIds = new Set<string>();
-    if (latestCheckpointGroup) {
-      selectedAnchorIds.add(latestCheckpointGroup.anchorId);
-    }
 
     const sortedByLatestAction = [...groupsToKeep].sort((left, right) => right.endIndex - left.endIndex);
     for (const group of sortedByLatestAction) {
@@ -311,7 +299,6 @@ export class ToolHistoryCompressorPreprocessor extends BasePreprocessor {
         compressedToolCallIds: group.toolCallIds,
         compressedToolNames: group.toolNames,
         toolInteractionGroupSize: group.items.length,
-        containsCheckpoint: group.isCheckpointGroup,
       },
     };
   }
@@ -322,13 +309,4 @@ function normalizeNonNegativeInteger(value: number | undefined, fallback: number
     return fallback;
   }
   return Math.max(0, Math.floor(value));
-}
-
-function findLatestCheckpointGroup<T>(
-  groups: Array<ToolInteractionGroup<T>>,
-): ToolInteractionGroup<T> | undefined {
-  return groups
-    .filter((group) => group.isCheckpointGroup)
-    .sort((left, right) => left.endIndex - right.endIndex)
-    .at(-1);
 }

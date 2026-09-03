@@ -26,7 +26,7 @@ import type { DebugFn } from './working-memory';
 import {
   buildToolInteractionGroupsFromStates,
   findLastUserInputOriginalIndex,
-} from '../../utils/toolInteractionGroup';
+} from '../../../../shared/toolInteractionGroup';
 
 /**
  * Agent专用工作记忆填充层Provider

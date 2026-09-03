@@ -1,8 +1,3 @@
-import type { SystemReminderContext } from './types';
-export { DEFAULT_CONTEXT_CHECKPOINT_TOOL_NAME } from '../../shared/checkpointMarker';
-
-import { DEFAULT_CONTEXT_CHECKPOINT_TOOL_NAME } from '../../shared/checkpointMarker';
-
 export function readNonEmptyStrings(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return value
@@ -12,13 +7,6 @@ export function readNonEmptyStrings(value: unknown): string[] {
 
 export function toDisplayStep(nodeSwitches: number): number {
   return Math.ceil(nodeSwitches / 2);
-}
-
-export function readContextCheckpointToolName(ctx: SystemReminderContext): string {
-  const configured = ctx.executorLocal?.contextCheckpointToolName;
-  return typeof configured === 'string' && configured.trim().length > 0
-    ? configured.trim()
-    : DEFAULT_CONTEXT_CHECKPOINT_TOOL_NAME;
 }
 
 function isRuntimeEventLike(value: unknown): value is { type: unknown } {

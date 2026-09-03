@@ -49,7 +49,6 @@ describe('GraphAgentExecutor context usage', () => {
             { role: 'system', content: '<available_skills>catalog</available_skills>' },
             { role: 'user', content: '继续' },
           ],
-          summaryEvents: [],
           promptBudget: {
             effectiveWindowTokens: 1_200,
             outputLimitTokens: 200,

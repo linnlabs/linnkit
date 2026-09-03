@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { AgentInvocationRequest } from '../../../ports/agent-invocation';
+import type { LlmRequestMessage, TokenizerPort } from '../../../ports';
 import type {
   EngineState,
   GraphNode,
@@ -8,6 +9,8 @@ import type {
 } from '../../graph-engine/types';
 import { EventBus, EventSequencer, RuntimeEventPublisher } from '../../execution';
 import { ChildRunInvoker } from '../childRunInvoker';
+import { GraphAgentExecutor } from '../../graph-engine/executor';
+import { LlmNode } from '../../graph-engine/nodes/llmNode';
 import {
   ensureToolContextRuntimeCapability,
   getToolContextRuntimeBinding,
@@ -23,7 +26,12 @@ import type { ToolExecutionContext } from '../../tools/toolExecutionContext';
 import type { AuditEnvelope } from '../../../contracts/audit';
 import type { RuntimeEvent, UserInputEvent } from '../../../contracts';
 import { DEFAULT_MAX_CHILD_RUN_DEPTH } from '../types';
-import { RunIdSchema, ToolCallIdSchema } from '../../../contracts';
+import {
+  createHistorySummaryEvent,
+  DEFAULT_CONTEXT_COMPACTION_POLICY,
+  RunIdSchema,
+  ToolCallIdSchema,
+} from '../../../contracts';
 
 const noopObservationPreview: ObservationPreviewPort = {
   async truncateObservation({ text }) {
@@ -55,6 +63,223 @@ function createChildRuntimeEventSink(publishedEvents?: RuntimeEvent[]): RuntimeE
 }
 
 describe('ChildRunInvoker', () => {
+  it('独立历史策略下仍把 Host 冻结的环境注入透传给 child 请求', async () => {
+    const capturedRequests: AgentInvocationRequest[] = [];
+    const llmNode: GraphNode = {
+      id: 'llm',
+      async run(state: EngineState): Promise<NodeResult> {
+        const request = isAgentInvocationRequest(state.local?.request)
+          ? state.local.request
+          : undefined;
+        if (request) capturedRequests.push(request);
+        return { kind: 'yield', events: [] };
+      },
+    };
+    const childRunContextInjections = [{
+      kind: 'project-context',
+      content: 'project name: test\nproject files:\n1. report.md',
+    }];
+    const invoker = new ChildRunInvoker({
+      modelResolver: { resolveModelId: () => 'child-model' },
+      createLlmNode: () => llmNode,
+      toolRuntime: noopToolRuntime,
+      observationPreview: noopObservationPreview,
+      eventToMessageConverter: vi.fn(() => []),
+    });
+
+    await invoker.invoke({
+      agentConfig: { id: 'context-child-agent', promptKey: 'default' },
+      userMessage: 'inspect project',
+      parentToolContext: { childRunContextInjections },
+      conversationId: 'child-context-conversation',
+      runtimeEventSink: createChildRuntimeEventSink(),
+    });
+
+    expect(capturedRequests[0]?.conversationHistory).toBeUndefined();
+    expect(capturedRequests[0]?.fences).toEqual(childRunContextInjections);
+    expect(capturedRequests[0]?.fences).not.toBe(childRunContextInjections);
+  });
+
+  it('把 child lifecycle 的 RuntimeEvent 提交端口原样注入 Graph local', async () => {
+    const runtimeEventCommitPort = vi.fn(async () => undefined);
+    let capturedCommitPort: unknown;
+    const llmNode: GraphNode = {
+      id: 'llm',
+      async run(state: EngineState): Promise<NodeResult> {
+        capturedCommitPort = state.local?.runtimeEventCommitPort;
+        return { kind: 'yield', events: [] };
+      },
+    };
+    const invoker = new ChildRunInvoker({
+      modelResolver: { resolveModelId: () => 'child-model' },
+      createLlmNode: () => llmNode,
+      toolRuntime: noopToolRuntime,
+      observationPreview: noopObservationPreview,
+      eventToMessageConverter: vi.fn(() => []),
+    });
+
+    await invoker.invoke({
+      agentConfig: { id: 'commit-port-child-agent', promptKey: 'default' },
+      userMessage: '继续',
+      parentToolContext: {},
+      conversationId: 'child-commit-port-conversation',
+      runtimeEventSink: createChildRuntimeEventSink(),
+      runtimeEventCommitPort,
+    });
+
+    expect(capturedCommitPort).toBe(runtimeEventCommitPort);
+    expect(runtimeEventCommitPort).not.toHaveBeenCalled();
+  });
+
+  it('child 自动压缩先持久化摘要，再通过 child admission 发布并调用主模型', async () => {
+    const publishedEvents: RuntimeEvent[] = [];
+    const order: string[] = [];
+    const summaryEvent = createHistorySummaryEvent(
+      'child-summary-1',
+      'child-summary-conversation',
+      'child-summary-turn',
+      'child checkpoint',
+      ['child-old-1'],
+      1,
+      1,
+      { compression_ratio: 0.2 },
+    );
+    const promptBudget = {
+      effectiveWindowTokens: 120,
+      outputLimitTokens: 20,
+      inputBudgetTokens: 100,
+      toolDefinitionTokens: 0,
+      messageBudgetTokens: 100,
+    };
+    const estimateMessage = (message: LlmRequestMessage): number => {
+      const content = 'content' in message && typeof message.content === 'string'
+        ? message.content
+        : '';
+      if (content === 'MAIN') return 85;
+      if (content === 'REBUILT') return 40;
+      if (content === 'compact-control') return 3;
+      if (content === 'old facts') return 4;
+      return 0;
+    };
+    const tokenizer: TokenizerPort = {
+      estimateText: () => 0,
+      estimateMessage,
+    };
+    const reasoner = new GraphAgentExecutor({
+      llmCaller: {
+        call: vi.fn(async () => {
+          order.push('compaction-call');
+          return { content: 'child checkpoint' };
+        }),
+        callWithRetries: vi.fn(async () => {
+          order.push('main-call');
+          return { content: 'child done' };
+        }),
+      },
+      toolRuntime: {
+        getToolSchemas: () => [],
+        getToolDefinition: () => undefined,
+      },
+      contextBuilder: {
+        build: async () => ({
+          llmMessages: [{ role: 'user', content: 'MAIN' }],
+          promptBudget,
+          promptUsageMeasurementPolicy: {
+            remote_count_enabled: false,
+            remote_count_failure_behavior: 'use-local-estimate',
+          },
+          contextCompactionPolicy: DEFAULT_CONTEXT_COMPACTION_POLICY,
+          contextCompactionCandidate: {
+            plan: {
+              fingerprint: 'child-plan',
+              sourceMessageIds: ['child-root', 'child-goal', 'child-old-1'],
+              replacedMessageIds: ['child-old-1'],
+              originalMessageCount: 1,
+              includedOldSummary: false,
+              nextSummarySeq: 1,
+              sourceTokenEstimate: 40,
+              replacedTokenEstimate: 100,
+              replacedToolGroupCount: 1,
+              keptToolGroupCount: 2,
+              replaceableRangeExhausted: true,
+            },
+            policy: DEFAULT_CONTEXT_COMPACTION_POLICY,
+            reminder: 'compact-control',
+          },
+        }),
+        applyCompaction: async () => ({
+          kind: 'ready' as const,
+          rebuiltContext: {
+            llmMessages: [{ role: 'user', content: 'REBUILT' }],
+            promptBudget,
+            promptUsageMeasurementPolicy: {
+              remote_count_enabled: false,
+              remote_count_failure_behavior: 'use-local-estimate' as const,
+            },
+          },
+          pendingSummaryEvent: summaryEvent,
+          compressionRatio: 0.2,
+          summaryTokenEstimate: 20,
+        }),
+      },
+      modelCatalog: {
+        getModelById: () => ({
+          id: 'child-model',
+          enabled: true,
+          capabilities: ['chat'],
+          inference_route: {
+            context_window_tokens: 120,
+            max_output_tokens: 20,
+          },
+        }),
+        getModelsByCapability: () => [],
+        getModelsByUIVisibility: () => [],
+      },
+      modelResolver: { resolveModelId: () => 'child-model' },
+      tokenizer,
+    });
+    const invoker = new ChildRunInvoker({
+      modelResolver: { resolveModelId: () => 'child-model' },
+      createLlmNode: () => new LlmNode({ reasoner }),
+      toolRuntime: noopToolRuntime,
+      observationPreview: noopObservationPreview,
+      eventToMessageConverter: vi.fn(() => []),
+    });
+
+    const childSink = createChildRuntimeEventSink(publishedEvents);
+    const runtimeEventCommitPort = vi.fn(async () => {
+      order.push('durable-commit');
+    });
+
+    await invoker.invoke({
+      agentConfig: {
+        id: 'summary-child-agent',
+        promptKey: 'default',
+      },
+      userMessage: '继续',
+      parentToolContext: {},
+      conversationId: 'child-summary-conversation',
+      runtimeEventSink: (event, source) => {
+        if (event.type === 'history_summary') order.push('summary-event');
+        return childSink(event, source);
+      },
+      runtimeEventCommitPort,
+    });
+
+    expect(publishedEvents.filter(event => event.type === 'history_summary')).toEqual([
+      expect.objectContaining({
+        id: 'child-summary-1',
+        conversation_id: 'child-summary-conversation',
+      }),
+    ]);
+    expect(order).toEqual([
+      'compaction-call',
+      'durable-commit',
+      'summary-event',
+      'main-call',
+    ]);
+  });
+
   it('默认模型兜底应显式走 ModelResolver，而不是借道 LlmCaller', async () => {
     const capturedRequests: AgentInvocationRequest[] = [];
     const modelResolver = {

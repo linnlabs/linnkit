@@ -46,6 +46,8 @@ export interface ToolExecutionResult {
   success: boolean;
   result?: string;
   error?: string;
+  /** 工具 owner 声明的稳定业务错误码；不得从自然语言错误文本反推。 */
+  errorCode?: string;
   errorKind?: 'protocol' | 'execution' | 'capability';
   durationMs: number;
   idempotency?: { key: string; cacheHit: boolean };

@@ -1,10 +1,10 @@
 import type {
   AiMessage,
+  ContextCompactionCandidate,
   ContextBuildTokenEstimate,
   ContextTokenComponent,
-  InternalLlmCallUsage,
   PromptUsageMeasurementPolicy,
-  RuntimeEvent,
+  ResolvedContextCompactionPolicy,
   TokenCountConfidence,
   TokenCountSource,
 } from '../../contracts';
@@ -13,8 +13,6 @@ import type { ImageInputAdmissionEvidence } from '../../ports';
 
 export interface RecommendationStats {
   phaseTokenUsage: Record<PropertyKey, { used: number; percentage: number }>;
-  summarizationTriggered: boolean;
-  summarizedCount?: number;
   documentTruncated: boolean;
   totalTime: number;
 }
@@ -37,12 +35,12 @@ export interface BuildContextResultOptions<TBuildStats> {
   inputBudgetTokens?: number;
   toolDefinitionTokens?: number;
   promptUsageMeasurementPolicy: PromptUsageMeasurementPolicy;
-  events?: RuntimeEvent[];
   contextTrace?: ContextTrace;
   tokenEstimate?: ContextBuildTokenEstimate;
   tokenComponents?: ContextTokenComponent[];
-  internalLlmCalls?: InternalLlmCallUsage[];
   imageInputAdmissionEvidence?: ImageInputAdmissionEvidence;
+  contextCompactionPolicy: ResolvedContextCompactionPolicy;
+  contextCompactionCandidate?: ContextCompactionCandidate;
 }
 
 export function buildContextResult<TBuildStats>(
@@ -63,12 +61,12 @@ export function buildContextResult<TBuildStats>(
     inputBudgetTokens = totalBudget,
     toolDefinitionTokens = 0,
     promptUsageMeasurementPolicy,
-    events = [],
     contextTrace,
     tokenEstimate,
     tokenComponents,
-    internalLlmCalls,
     imageInputAdmissionEvidence,
+    contextCompactionPolicy,
+    contextCompactionCandidate,
   } = options;
 
   const tokenDistribution = calculateTokenDistribution(
@@ -109,12 +107,12 @@ export function buildContextResult<TBuildStats>(
       applied: strategiesApplied,
       recommendations,
     },
-    events,
     ...(contextTrace ? { contextTrace } : {}),
     ...(tokenEstimate ? { tokenEstimate } : {}),
     ...(tokenComponents ? { tokenComponents } : {}),
-    ...(internalLlmCalls && internalLlmCalls.length > 0 ? { internalLlmCalls } : {}),
     ...(imageInputAdmissionEvidence ? { imageInputAdmissionEvidence } : {}),
+    contextCompactionPolicy,
+    ...(contextCompactionCandidate ? { contextCompactionCandidate } : {}),
   };
 }
 
@@ -123,7 +121,6 @@ export function generateContextRecommendations(
   options: {
     totalBudget: number;
     processingTimeoutMs: number;
-    largeSummarizationWarningThreshold?: number;
   },
 ): string[] {
   const recommendations: string[] = [];
@@ -141,15 +138,6 @@ export function generateContextRecommendations(
     recommendations.push('文档片段被截断，建议分批处理或增加文档片段预算');
   }
 
-  const summaryWarningThreshold =
-    options.largeSummarizationWarningThreshold ?? 10;
-  if (
-    stats.summarizationTriggered &&
-    (stats.summarizedCount || 0) > summaryWarningThreshold
-  ) {
-    recommendations.push('大量历史消息被摘要，建议定期清理对话历史');
-  }
-
   if (stats.totalTime > options.processingTimeoutMs) {
     recommendations.push('上下文构建耗时较长，建议优化消息预处理流程');
   }
@@ -165,7 +153,7 @@ function calculateTokenDistribution(
   const tokenDistribution: Record<string, number> = {
     core_context: 0,
     working_memory: 0,
-    summarization: 0,
+    history_summary: 0,
   };
   const lastUserIndex = finalMessages
     .map(message => message.type)
@@ -174,7 +162,7 @@ function calculateTokenDistribution(
   finalMessages.forEach((message, index) => {
     const token = estimateTokens(message);
     if (message.metadata?.messageType === 'summary') {
-      tokenDistribution.summarization += token;
+      tokenDistribution.history_summary += token;
     } else if (
       coreTypes.includes(message.type) ||
       (message.type === 'user_input' && index === lastUserIndex)

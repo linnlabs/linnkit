@@ -81,6 +81,29 @@ describe('eventGovernance contract', () => {
         status: 'loading',
         args: {},
       }),
+      context_usage_snapshot: createBaseEvent({
+        type: 'context_usage_snapshot',
+        id: 'context_usage_never_replay',
+        ephemeral: true,
+        user_message_id: 'user_1',
+        context_usage: {
+          basis: 'last_completed_llm_prompt',
+          budget_model_id: 'model_1',
+          used_tokens: 90,
+          components: {
+            system_prompt_tokens: 20,
+            conversation_tokens: 60,
+            tool_definition_tokens: 10,
+          },
+          component_attribution: 'normalized_local_estimate',
+          input_budget_tokens: 100,
+          remaining_tokens: 10,
+          output_limit_tokens: 20,
+          source: 'local-estimate',
+          confidence: 'estimate',
+          measured_at: 1,
+        },
+      }),
     } satisfies Record<typeof RUNTIME_EVENT_TYPES_NEVER_REPLAYED_TO_UI[number], RuntimeEvent>;
 
     for (const eventType of RUNTIME_EVENT_TYPES_NEVER_REPLAYED_TO_UI) {
@@ -113,7 +136,7 @@ describe('eventGovernance contract', () => {
     expect(shouldEnterAgentContext(event)).toBe(true);
   });
 
-  it('child parent-trace 事实应持久化，但不能回放进 conversation 主时间线', () => {
+  it('thought 只进入 UI / 审计投影，不作为独立消息进入模型上下文', () => {
     const foregroundThought = createBaseEvent({
       type: 'thought',
       id: 'foreground-thought',
@@ -127,9 +150,14 @@ describe('eventGovernance contract', () => {
       visibility: 'parent-trace',
     });
 
+    expect(shouldPersistRuntimeEvent(foregroundThought)).toBe(true);
+    expect(shouldReplayRuntimeEventToUi(foregroundThought)).toBe(true);
+    expect(shouldEmitRuntimeEventToSse(foregroundThought)).toBe(true);
+    expect(shouldEnterAgentContext(foregroundThought)).toBe(false);
+
     expect(shouldPersistRuntimeEvent(childThought)).toBe(true);
     expect(shouldReplayRuntimeEventToUi(childThought)).toBe(false);
-    expect(shouldEnterAgentContext(childThought)).toBe(true);
+    expect(shouldEnterAgentContext(childThought)).toBe(false);
   });
 
   it('run_execution_metrics 应持久化/可回放/实时一致，但不进入 Agent 上下文', () => {
@@ -145,6 +173,54 @@ describe('eventGovernance contract', () => {
     expect(shouldReplayRuntimeEventToUi(event)).toBe(true);
     expect(shouldEmitRuntimeEventToSse(event)).toBe(true);
     expect(shouldEnterAgentContext(event)).toBe(false);
+  });
+
+  it('history_summary 先持久化后仍必须由 EventBus 实时投影同一事实', () => {
+    const event = createBaseEvent({
+      type: 'history_summary',
+      id: 'summary_realtime_1',
+      content: 'durable summary',
+      original_message_count: 4,
+      replaced_message_ids: ['message_1', 'message_2'],
+      summary_seq: 1,
+    });
+
+    expect(shouldPersistRuntimeEvent(event)).toBe(true);
+    expect(shouldReplayRuntimeEventToUi(event)).toBe(true);
+    expect(shouldEmitRuntimeEventToSse(event)).toBe(true);
+    expect(shouldEnterAgentContext(event)).toBe(true);
+  });
+
+  it('context_usage_snapshot 只实时展示，不持久化、回放或进入 Agent 上下文', () => {
+    const event = createBaseEvent({
+      type: 'context_usage_snapshot',
+      id: 'context_usage_1',
+      ephemeral: true,
+      user_message_id: 'user_1',
+      context_usage: {
+        basis: 'last_completed_llm_prompt',
+        budget_model_id: 'model_1',
+        used_tokens: 90,
+        components: {
+          system_prompt_tokens: 20,
+          conversation_tokens: 60,
+          tool_definition_tokens: 10,
+        },
+        component_attribution: 'normalized_local_estimate',
+        input_budget_tokens: 100,
+        remaining_tokens: 10,
+        output_limit_tokens: 20,
+        source: 'local-estimate',
+        confidence: 'estimate',
+        measured_at: 1,
+      },
+    });
+
+    expect(shouldPersistRuntimeEvent(event)).toBe(false);
+    expect(shouldReplayRuntimeEventToUi(event)).toBe(false);
+    expect(shouldEmitRuntimeEventToSse(event)).toBe(true);
+    expect(shouldEnterAgentContext(event)).toBe(false);
+    expect(getRuntimeEventUiProjectionKind(event)).toBe('context_usage_snapshot');
   });
 
   it('error 应持久化/可回放/可实时展示，但不应进入下一轮 agent 上下文', () => {
@@ -247,25 +323,6 @@ describe('eventGovernance contract', () => {
     expect(shouldEmitRuntimeEventToSse(chunkEvent)).toBe(true);
     expect(shouldReplayRuntimeEventToUi(chunkEvent)).toBe(false);
     expect(getRuntimeEventUiProjectionKind(chunkEvent)).toBe('final_answer_chunk');
-  });
-
-  it('checkpoint history_summary 应进入历史回放，但不走实时 SSE', () => {
-    const checkpointSummary = createBaseEvent({
-      type: 'history_summary',
-      id: 'summary_1',
-      content: 'checkpoint summary',
-      original_message_count: 3,
-      compression_ratio: 0.5,
-      replaced_message_ids: ['msg_1', 'msg_2'],
-      summary_seq: 1,
-      metadata: {
-        summary_kind: 'checkpoint',
-      },
-    });
-
-    expect(shouldReplayRuntimeEventToUi(checkpointSummary)).toBe(true);
-    expect(shouldEmitRuntimeEventToSse(checkpointSummary)).toBe(false);
-    expect(getRuntimeEventUiProjectionKind(checkpointSummary)).toBe('checkpoint_history_summary');
   });
 
   it('audit_envelope 应只持久化，不进 UI / 上下文 / SSE', () => {

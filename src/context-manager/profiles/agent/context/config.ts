@@ -1,9 +1,9 @@
 /**
  * @file src/agent/context/config.ts
- * @description Agent上下文构建策略配置 - Agent专用三阶段智能填充配置中心
+ * @description Agent上下文构建策略配置 - Agent Provider pipeline 配置中心
  * 
  * 🎯 目的: 为Agent的ContextManager提供所有策略参数的可配置中心
- * 📖 详情: 实现Agent README中描述的3阶段上下文构建策略，专注于工具交互优化
+ * 📖 详情: 实现 Agent README 中描述的 Provider pipeline，专注于工具交互优化
  * 🔧 特色: P1-P3优先级填充策略，工具调用配对保留机制
  */
 
@@ -35,16 +35,9 @@ export const AGENT_CONTEXT_BUILDER_CONFIG = {
   /**
    * 工作记忆填充目标百分比
    * - **基准**: 可用上下文总预算
-   * - **说明**: Agent工作记忆层会尽力填充到此百分比，为摘要预留空间
+   * - **说明**: Agent 工作记忆层会尽力填充到此百分比
    */
   WORKING_MEMORY_BUDGET_PERCENTAGE: 0.70,
-  
-  /**
-   * 摘要触发阈值百分比
-   * - **基准**: 可用上下文总预算
-   * - **说明**: 当已用Token总量超过此百分比时，将触发摘要机制
-   */
-  SUMMARIZATION_TRIGGER_THRESHOLD: 0.70,
   
   // === Agent专用优先级配置 ===
   
@@ -68,27 +61,6 @@ export const AGENT_CONTEXT_BUILDER_CONFIG = {
    * - 仍然需要配对保留
    */
   P3_HISTORICAL_TOOL_PRIORITY: 3,
-  
-  /**
-   * P2优先级：工作记忆中保留的最近'thought'消息数量
-   */
-  MAX_THOUGHTS_TO_KEEP: 1,
-  
-  // === 摘要策略设置 ===
-  
-  /**
-   * 摘要消息长度上限百分比
-   * - **基准**: 可用上下文总预算
-   * - **说明**: AI生成的摘要文本Token长度限制
-   */
-  SUMMARY_BUDGET_PERCENTAGE: 0.12,
-  
-  /**
-   * 选取摘要候选消息的比例
-   * - **基准**: 符合摘要条件的消息数量
-   * - **说明**: 选取最老的多少比例消息进行摘要
-   */
-  SUMMARY_OLDEST_MESSAGES_PERCENTAGE: 0.75,
   
   // === 工具交互特殊配置 ===
   
@@ -177,17 +149,11 @@ export interface AgentContextBuilderConfig {
   
   // === Agent专用工作记忆填充策略 ===
   WORKING_MEMORY_BUDGET_PERCENTAGE: number;
-  SUMMARIZATION_TRIGGER_THRESHOLD: number;
   
   // === Agent专用优先级配置 ===
   P1_TOOL_INTERACTION_PRIORITY: number;
   P2_TEXT_CONVERSATION_PRIORITY: number;
   P3_HISTORICAL_TOOL_PRIORITY: number;
-  MAX_THOUGHTS_TO_KEEP: number;
-  
-  // === 摘要策略设置 ===
-  SUMMARY_BUDGET_PERCENTAGE: number;
-  SUMMARY_OLDEST_MESSAGES_PERCENTAGE: number;
   
   // === 工具交互特殊配置 ===
   TOOL_PAIRING_SEARCH_RANGE: number;
@@ -223,10 +189,7 @@ export enum AgentBuildPhase {
   CORE_CONTEXT = 1,
   
   /** 阶段2: 工作记忆填充层 (P1-P4优先级) */
-  WORKING_MEMORY = 2,
-  
-  /** 阶段3: 历史摘要触发层 */
-  SUMMARIZATION = 3
+  WORKING_MEMORY = 2
 }
 
 /**
@@ -264,7 +227,6 @@ export interface AgentContextBuildStats {
     original: number;
     afterCoreContext: number;
     afterWorkingMemory: number;
-    afterSummarization: number;
   };
   
   /** 优先级处理统计 */
@@ -282,12 +244,6 @@ export interface AgentContextBuildStats {
     unpairedToolCalls: number;
     toolPairingSuccessRate: number;
   };
-  
-  /** 是否触发了摘要机制 */
-  summarizationTriggered: boolean;
-  
-  /** 被摘要的消息数量 */
-  summarizedCount?: number;
   
   /** 文档片段是否被截断 */
   documentTruncated: boolean;
@@ -319,19 +275,6 @@ export function getAgentAvailableTokenBudget(totalBudget?: number): number {
 }
 
 /**
- * Agent专用摘要触发条件检查函数
- */
-export function shouldTriggerAgentSummarization(
-  currentTokenUsage: number, 
-  totalBudget: number, 
-  config?: AgentContextBuilderConfig
-): boolean {
-  const activeConfig = config || AGENT_CONTEXT_BUILDER_CONFIG;
-  const threshold = totalBudget * activeConfig.SUMMARIZATION_TRIGGER_THRESHOLD;
-  return currentTokenUsage >= threshold;
-}
-
-/**
  * 检查工具交互是否需要配对保留
  */
 export function shouldPairToolInteraction(
@@ -359,16 +302,6 @@ export function validateAgentConfig(config: AgentContextBuilderConfig): boolean 
   // 检查百分比配置是否合理
   if (config.WORKING_MEMORY_BUDGET_PERCENTAGE <= 0 || config.WORKING_MEMORY_BUDGET_PERCENTAGE > 1) {
     logger.warn('WORKING_MEMORY_BUDGET_PERCENTAGE should be between 0 and 1');
-    return false;
-  }
-  
-  if (config.SUMMARIZATION_TRIGGER_THRESHOLD <= 0 || config.SUMMARIZATION_TRIGGER_THRESHOLD > 1) {
-    logger.warn('SUMMARIZATION_TRIGGER_THRESHOLD should be between 0 and 1');
-    return false;
-  }
-  
-  if (config.SUMMARY_BUDGET_PERCENTAGE <= 0 || config.SUMMARY_BUDGET_PERCENTAGE > 0.5) {
-    logger.warn('SUMMARY_BUDGET_PERCENTAGE should be between 0 and 0.5');
     return false;
   }
   

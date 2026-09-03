@@ -33,7 +33,3 @@ export type {
   MessageRole,
   MessageType,
 } from './shared/contracts/chatLineMessage';
-export type {
-  SummaryGenerationRequest,
-  SummaryGenerationResponse,
-} from './shared/contracts/summaryGeneration';

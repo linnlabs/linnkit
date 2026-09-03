@@ -12,6 +12,8 @@ import type { PromptUsageMeasurer } from '../../orchestration/measurePromptUsage
 import type { ModelCatalogLike } from '../../../llm/modelCatalog';
 import { evaluateFallbackPromptCapacity } from '../../../llm/functions/evaluateFallbackPromptCapacity';
 import { estimatePromptUsageComponentWeights } from '../../functions/promptUsageComponents';
+import { evaluatePrimaryPromptCapacity } from '../../functions/evaluatePrimaryPromptCapacity';
+import { PrimaryPromptCapacityError } from '../../definitions/primaryPromptCapacityError';
 
 export interface ExecuteLlmStageDependencies {
   llmCaller: Pick<LlmCaller, 'callWithRetries'>;
@@ -100,23 +102,25 @@ export function createExecuteLlmStage(dependencies: ExecuteLlmStageDependencies)
             ...(promptBudget && promptUsageMeasurementPolicy
               ? {
                   measurePromptUsage: async (activeModelId, messages) => {
-                    if (activeModelId === ctx.modelId && ctx.promptUsageCandidate) {
-                      return ctx.promptUsageCandidate;
+                    const candidate = activeModelId === ctx.modelId && ctx.promptUsageCandidate
+                      ? ctx.promptUsageCandidate
+                      : await dependencies.promptUsageMeasurer({
+                          budgetModelId: ctx.modelId,
+                          servedModelId: activeModelId,
+                          messages,
+                          llmOptions: ctx.llmOptions,
+                          promptBudget,
+                          measurementPolicy: promptUsageMeasurementPolicy,
+                          imageInputTokens: ctx.imageInputAdmissionEvidence?.attachments.reduce(
+                            (total, attachment) => total + attachment.estimatedTokens,
+                            0,
+                          ) ?? 0,
+                          signal: ctx.signal,
+                        });
+                    if (!evaluatePrimaryPromptCapacity(candidate).admitted) {
+                      throw new PrimaryPromptCapacityError(candidate);
                     }
-                    const imageInputTokens = ctx.imageInputAdmissionEvidence?.attachments.reduce(
-                      (total, attachment) => total + attachment.estimatedTokens,
-                      0,
-                    ) ?? 0;
-                    return dependencies.promptUsageMeasurer({
-                      budgetModelId: ctx.modelId,
-                      servedModelId: activeModelId,
-                      messages,
-                      llmOptions: ctx.llmOptions,
-                      promptBudget,
-                      measurementPolicy: promptUsageMeasurementPolicy,
-                      imageInputTokens,
-                      signal: ctx.signal,
-                    });
+                    return candidate;
                   },
                   evaluateFallbackPromptCapacity: candidateModelId => {
                     const route = dependencies.modelCatalog.getModelById(candidateModelId)?.inference_route;

@@ -6,16 +6,12 @@ export type FinalStepPolicy = NonNullable<ExecutorLocalState['finalStepPolicy']>
 export interface GraphStepPreparationInput {
   state: EngineState;
   maxSteps: number;
-  cycleStepCount: number;
-  checkpointCount: number;
+  stepCount: number;
 }
 
 export interface GraphStepPreparationResult {
   state: EngineState;
   executorLocal: Record<string, unknown>;
-  forcedToLlm: boolean;
-  forceReason?: string;
-  fromNodeId?: string;
 }
 
 function readExecutorLocal(value: unknown): Record<string, unknown> {
@@ -28,56 +24,55 @@ function resolveFinalStepPolicy(value: unknown): FinalStepPolicy {
   return value === 'force_tools' || value === 'final_answer' ? value : 'final_answer';
 }
 
+function resolveStepPhase(input: {
+  nodeId: string;
+  finalStepPolicy: FinalStepPolicy;
+  remainingSteps: number;
+  currentPhase: unknown;
+}): unknown {
+  if (input.nodeId !== 'llm') {
+    return input.currentPhase ?? 'running';
+  }
+
+  if (input.finalStepPolicy === 'force_tools') {
+    if (input.remainingSteps === 0) {
+      return 'force_final_answer';
+    }
+    if (input.remainingSteps <= 2) {
+      return 'force_tools';
+    }
+  }
+
+  if (input.finalStepPolicy === 'final_answer' && input.remainingSteps < 2) {
+    return 'force_final_answer';
+  }
+
+  return input.currentPhase ?? 'running';
+}
+
 export function prepareGraphStep(input: GraphStepPreparationInput): GraphStepPreparationResult {
-  const isLastStep = input.cycleStepCount >= input.maxSteps;
   const rawLocal = input.state.local && typeof input.state.local === 'object' ? input.state.local : {};
   const localForStep: Record<string, unknown> = { ...(rawLocal as Record<string, unknown>) };
 
   const executorLocalForStep = readExecutorLocal(localForStep.executorLocal);
   executorLocalForStep.maxSteps = input.maxSteps;
-  executorLocalForStep.stepCount = input.cycleStepCount;
-  executorLocalForStep.remainingSteps = input.maxSteps - input.cycleStepCount;
-  executorLocalForStep.checkpointCount = input.checkpointCount;
+  executorLocalForStep.stepCount = input.stepCount;
+  executorLocalForStep.remainingSteps = input.maxSteps - input.stepCount;
 
   const finalStepPolicy = resolveFinalStepPolicy(executorLocalForStep.finalStepPolicy);
-  const isPenultimateStep = input.cycleStepCount === input.maxSteps - 1;
-  if (finalStepPolicy === 'force_tools') {
-    executorLocalForStep.phase = isPenultimateStep
-      ? 'force_tools'
-      : (executorLocalForStep.phase ?? 'running');
-  } else {
-    executorLocalForStep.phase = isLastStep ? 'force_final_answer' : (executorLocalForStep.phase ?? 'running');
-  }
+  executorLocalForStep.phase = resolveStepPhase({
+    nodeId: input.state.nodeId,
+    finalStepPolicy,
+    remainingSteps: input.maxSteps - input.stepCount,
+    currentPhase: executorLocalForStep.phase,
+  });
   localForStep.executorLocal = executorLocalForStep;
-
-  const shouldForceToLlm =
-    finalStepPolicy === 'force_tools'
-      ? isPenultimateStep
-      : isLastStep;
 
   let nextState: EngineState = {
     ...input.state,
     schemaVersion: input.state.schemaVersion ?? ENGINE_STATE_SCHEMA_VERSION,
     local: localForStep,
   };
-  let forcedToLlm = false;
-  let forceReason: string | undefined;
-  let fromNodeId: string | undefined;
-
-  if (shouldForceToLlm && input.state.nodeId !== 'wait_user' && input.state.nodeId !== 'answer') {
-    delete localForStep.pendingToolCalls;
-    delete localForStep.pendingInteractionSpec;
-    delete localForStep.lastToolResult;
-    if (input.state.nodeId !== 'llm') {
-      forceReason =
-        finalStepPolicy === 'force_tools'
-          ? 'force tools before maxSteps'
-          : 'force final answer at maxSteps';
-      fromNodeId = input.state.nodeId;
-      forcedToLlm = true;
-      nextState = { ...input.state, schemaVersion: nextState.schemaVersion, nodeId: 'llm', local: localForStep };
-    }
-  }
 
   const invocationState = decideLlmInvocationState({
     nodeId: nextState.nodeId,
@@ -93,8 +88,5 @@ export function prepareGraphStep(input: GraphStepPreparationInput): GraphStepPre
   return {
     state: nextState,
     executorLocal: executorLocalForStep,
-    forcedToLlm,
-    forceReason,
-    fromNodeId,
   };
 }

@@ -25,6 +25,9 @@ import { createBuildContextStage } from './tick-pipeline/stages/buildContextStag
 import { createBuildDecisionStage } from './tick-pipeline/stages/buildDecisionStage';
 import { createExecuteLlmStage } from './tick-pipeline/stages/executeLlmStage';
 import { createMeasurePromptUsageStage } from './tick-pipeline/stages/measurePromptUsageStage';
+import { createAdmitPromptCapacityStage } from './tick-pipeline/stages/admitPromptCapacityStage';
+import { createCompactContextStage } from './tick-pipeline/stages/compactContextStage';
+import { createCommitContextCompactionStage } from './tick-pipeline/stages/commitContextCompactionStage';
 import { createPrepareCallStage } from './tick-pipeline/stages/prepareCallStage';
 import type {
   TickAroundMiddleware,
@@ -46,10 +49,14 @@ export interface GraphAgentExecutorOptions {
   modelResolver?: Pick<ModelResolverLike, 'resolveModelId'>;
 }
 
-export interface GraphAgentExecutorToolRuntime
-  extends Pick<ToolCatalogPort, 'getToolSchemas' | 'getToolDefinition'> {}
+export type GraphAgentExecutorToolRuntime = Pick<
+  ToolCatalogPort,
+  'getToolSchemas' | 'getToolDefinition'
+>;
 
-export interface GraphAgentExecutorLlmCaller extends Pick<LlmCaller, 'callWithRetries'> {}
+export interface GraphAgentExecutorLlmCaller
+  extends Pick<LlmCaller, 'callWithRetries'>,
+  Partial<Pick<LlmCaller, 'call'>> {}
 
 export interface GraphAgentExecutorDependencies extends GraphAgentExecutorOptions {
   llmCaller: GraphAgentExecutorLlmCaller;
@@ -110,6 +117,14 @@ export class GraphAgentExecutor {
       }),
       createApplySystemReminderStage(),
       createMeasurePromptUsageStage({ promptUsageMeasurer }),
+      createCompactContextStage({
+        llmCaller: this.llmCaller,
+        modelCatalog: this.modelCatalog,
+        contextBuilder: this.contextBuilder,
+        promptUsageMeasurer,
+      }),
+      createAdmitPromptCapacityStage(),
+      createCommitContextCompactionStage(),
       createExecuteLlmStage({
         llmCaller: this.llmCaller,
         promptUsageMeasurer,
@@ -130,6 +145,7 @@ export class GraphAgentExecutor {
       forceFinalAnswer: input.forceFinalAnswer === true,
       executorLocal: input.executorLocal,
       summarizationCallbacks: input.summarizationCallbacks,
+      runtimeEventCommitPort: input.runtimeEventCommitPort,
       modelId: '',
       toolSchemas: [],
       toolCallStreamingPolicies: {},

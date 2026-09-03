@@ -133,7 +133,7 @@ describe('agent/utils/eventConverter.convertEventsToAiMessages', () => {
         turn_id: 't1',
         timestamp: Date.now(),
         version: 1,
-        tool_name: 'context_checkpoint',
+        tool_name: 'workspace_read',
         tool_call_id: 'call_x',
         phase: 'start',
         status: 'loading',
@@ -142,7 +142,7 @@ describe('agent/utils/eventConverter.convertEventsToAiMessages', () => {
             {
               id: 'call_x',
               type: 'function',
-              function: { name: 'context_checkpoint', arguments: '{}' },
+              function: { name: 'workspace_read', arguments: '{}' },
             },
           ],
         },
@@ -154,7 +154,7 @@ describe('agent/utils/eventConverter.convertEventsToAiMessages', () => {
         turn_id: 't1',
         timestamp: Date.now(),
         version: 1,
-        tool_name: 'context_checkpoint',
+        tool_name: 'workspace_read',
         tool_call_id: 'call_x',
         phase: 'start',
         status: 'loading',
@@ -163,7 +163,7 @@ describe('agent/utils/eventConverter.convertEventsToAiMessages', () => {
             {
               id: 'call_x',
               type: 'function',
-              function: { name: 'context_checkpoint', arguments: '{}' },
+              function: { name: 'workspace_read', arguments: '{}' },
             },
           ],
         },
@@ -176,10 +176,10 @@ describe('agent/utils/eventConverter.convertEventsToAiMessages', () => {
         turn_id: 't1',
         timestamp: Date.now(),
         version: 1,
-        tool_name: 'context_checkpoint',
+        tool_name: 'workspace_read',
         tool_call_id: 'call_x',
         status: 'success',
-        observation: 'checkpoint complete',
+        observation: 'read complete',
         data: { ok: true },
       }),
     ];
@@ -194,7 +194,7 @@ describe('agent/utils/eventConverter.convertEventsToAiMessages', () => {
     expect(toolCalls[0].id).toBe('d_llm');
   });
 
-  it('会过滤空的 thought / final_answer，避免下一轮上下文出现空白 assistant 消息', () => {
+  it('会过滤全部 thought 与空 final_answer，避免形成重复或空白 assistant 消息', () => {
     const events: RuntimeEvent[] = [
       RuntimeEventSchema.parse({
         type: 'user_input',
@@ -504,10 +504,14 @@ describe('agent/utils/eventConverter.convertEventsToAiMessages', () => {
 
   it('工具调用封口正文只通过 tool_call_decision 进入一次 Context', () => {
     const replayParts = [
+      { type: 'reasoning' as const, text: '需要先读取文件。' },
       { type: 'text' as const, text: '我先读取。' },
       { type: 'tool_call' as const, tool_call_id: 'call_once' },
     ];
     const events: RuntimeEvent[] = [
+      createThoughtEvent('thought_once', 'c1', 't1', '需要先读取文件。', {
+        is_complete: true,
+      }),
       createFinalAnswerEvent('answer_once', 'c1', 't1', '我先读取。', {
         completion_reason: 'tool_call',
         assistant_replay_parts: replayParts,

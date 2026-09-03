@@ -1,6 +1,5 @@
 import type { RuntimeEventSink } from '../graph-engine/types';
 import type { SubRunTraceEnvelope, SubRunTracePublisher } from './subrunTrace.types';
-import { Logger } from '../../shared/logger';
 import {
   createSubRunTraceEvent,
   generateRuntimeEventId,
@@ -8,8 +7,6 @@ import {
   toSerializableJsonValue,
 } from '../../contracts';
 import type { SubRunTraceEvent, ToolCallId } from '../../contracts';
-
-const logger = new Logger('SubRunTracePublisher');
 
 export interface RuntimeEventSubRunTracePublisherOptions {
   runtimeEventSink: RuntimeEventSink;
@@ -91,8 +88,23 @@ export class RuntimeEventSubRunTracePublisher implements SubRunTracePublisher {
       ...('tool_calls' in envelope ? { tool_calls: [...envelope.tool_calls] } : {}),
       ...('args' in envelope ? { args: toSerializableJsonRecord(envelope.args) } : {}),
       ...('output' in envelope ? { output: toSerializableJsonValue(envelope.output) } : {}),
+      ...('attachments' in envelope && envelope.attachments !== undefined
+        ? { attachments: [...envelope.attachments] }
+        : {}),
       ...('duration_ms' in envelope && envelope.duration_ms !== undefined
         ? { duration_ms: envelope.duration_ms }
+        : {}),
+      ...('original_message_count' in envelope
+        ? { original_message_count: envelope.original_message_count }
+        : {}),
+      ...('replaced_message_ids' in envelope
+        ? { replaced_message_ids: [...envelope.replaced_message_ids] }
+        : {}),
+      ...('compression_ratio' in envelope && envelope.compression_ratio !== undefined
+        ? { compression_ratio: envelope.compression_ratio }
+        : {}),
+      ...('included_old_summary' in envelope && envelope.included_old_summary !== undefined
+        ? { included_old_summary: envelope.included_old_summary }
         : {}),
       meta: toSerializableJsonRecord(envelope.meta),
 

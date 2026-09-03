@@ -2,7 +2,8 @@ import type { ToolContextConversationView } from './conversationView';
 import type { SubRunTracePublisher } from '../child-run-trace/subrunTrace.types';
 import type { ChildRunInvokerPort } from '../child-runs/types';
 import type { RunId, ToolCallId } from '../../contracts';
-import type { ToolModelInputAdmission } from './model-input';
+import type { AgentContextInjection } from '../../ports';
+import type { ToolModelInputAdmission } from './model-input/definitions/toolModelInputPolicy';
 
 /**
  * runtime-owned 工具执行上下文最小合同
@@ -51,6 +52,14 @@ export interface ToolExecutionContext {
    * - 这是通用执行期信号，不表达具体产品 workflow。
    */
   childRunDepth?: number;
+
+  /**
+   * root admission 冻结的 child-run 环境上下文。
+   *
+   * 中文备注：runtime 只透传通用注入，不解释项目、文档或插件视图等 Host 语义。
+   * 它与父会话历史继承相互独立。
+   */
+  childRunContextInjections?: ReadonlyArray<AgentContextInjection>;
 
   /**
    * 🔥 取消信号（贯穿一次对话请求）

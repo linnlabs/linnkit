@@ -1,7 +1,6 @@
 import { generateToolCallId } from '../../../contracts';
 import { splitConcatenatedJsonObjects, tryParseJsonRecord } from '../../llm/toolCallUtils';
 import type { ToolExecutionContext } from '../../tools/toolExecutionContext';
-import type { PendingContextRuntimeEvent } from '../executorContextBuilder';
 import type { StandardToolCall } from '../types';
 import type { LlmCallResponse, TickPipelineContext } from './types';
 import type { ToolCall } from '../../../ports';
@@ -12,7 +11,6 @@ import type {
   ProviderContinuation,
   RuntimeEvent,
 } from '../../../contracts';
-import { RuntimeEvent as RuntimeEventSchema } from '../../../contracts';
 
 export function readNonEmptyString(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined;
@@ -36,22 +34,6 @@ export function extractResponseText(response: LlmCallResponse | undefined): stri
     return response;
   }
   return typeof response.content === 'string' ? response.content : '';
-}
-
-export function buildHistorySummaryRuntimeEvent(
-  event: PendingContextRuntimeEvent,
-  conversationId: string,
-  turnId: string
-): RuntimeEvent {
-  return RuntimeEventSchema.parse({
-    ...(event as Record<string, unknown>),
-    conversation_id: conversationId,
-    turn_id: turnId,
-  });
-}
-
-export function isHistorySummaryEvent(event: PendingContextRuntimeEvent): boolean {
-  return event.type === 'history_summary';
 }
 
 export function normalizeToolCalls(rawCalls: ToolCall[]): ToolCall[] {

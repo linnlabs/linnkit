@@ -125,10 +125,10 @@ export class HistoryPurificationPreprocessor extends BasePreprocessor {
         return false;
       }
 
-      const sourceIds = msg.metadata?.replacementSourceIds as string[] | undefined;
-      if (sourceIds && Array.isArray(sourceIds)) {
+      const sourceIds = msg.metadata?.replacementSourceIds;
+      if (Array.isArray(sourceIds)) {
         for (const sourceId of sourceIds) {
-          if (idsToRemove.has(sourceId)) {
+          if (typeof sourceId === 'string' && idsToRemove.has(sourceId)) {
             removedMessages.push(msg);
             return false;
           }

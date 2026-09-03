@@ -109,6 +109,7 @@ interface AgentSpecContextPolicy {
   };
 
   summarization?: {
+    enabled?: boolean;
     triggerThreshold?: number;
     budgetPercentage?: number;
     oldestMessagesPercentage?: number;

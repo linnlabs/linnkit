@@ -14,12 +14,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.31.0] - 2026-09-03
+
 ### Added
 
+- Added ordered durable attachment refs to successful child `tool_output` parent-trace projections. Runtime→SSE mapping preserves the refs for Host compact history and full Subrun UI admission without copying resource bytes or exposing them to the parent Agent context.
 - Added explicit tool model-input delivery semantics. `required` remains the default, while `when_supported` keeps the main tool operation available to incompatible models and exposes the active-model admission decision through `ToolExecutionContext.modelInputAdmission` before tools create temporary attachment grants.
+- Added the ephemeral `context_usage_snapshot` Runtime/SSE contract. `LlmNode` publishes one snapshot through the existing RuntimeEventSink after every successful Provider attempt, while final durable recovery remains owned by `run_execution_metrics.context_usage`.
+- Added unified automatic context compaction. `contextPolicy.compaction` resolves the trigger/target ratios, retained tool groups, summary output cap, and per-run commit limit; Context Manager exposes pure plan/validate/rebuild contracts while Graph owns the internal current-model call, remeasurement, admission, and `history_summary` commit.
+- Added typed `llm.context.compaction_failed` / `llm.context.compaction_insufficient` errors, `context_compaction` telemetry (including Provider-attempt index and raw compression ratio), and run terminal step facts for observing soft suppression, hard-limit recovery, token release, duration, cache usage, and step-budget exhaustion.
+- Added `RuntimeEventCommitPort` so root and child Graph runs can durably commit a pending `history_summary` before realtime fan-out. After Host ack, Graph emits summarization end and publishes the same fact through the existing RuntimeEvent publisher; persistence consumers deduplicate by fact ID. Durable commit is the non-rollback boundary: only commit failure emits summarization error, while production progress callbacks are no-throw and post-commit fan-out failure preserves the committed summary.
+- Added canonical inference cache breakpoints at the end of the system prompt and latest history summary. Provider adapters may project these stable anchors to native prompt-cache controls without changing request semantics.
 
 ### Changed
 
+- Context projection now treats ordered Assistant replay as the sole model-facing owner of canonical reasoning. Complete thought events remain durable for UI and audit but never become a second model message; all replay reasoning stays in its original Assistant order until formal compaction. Local token estimation now follows that same replay shape.
 - Replaced the product-shaped tool Schema context with `ToolSchemaBuildRequest`. Linnkit now forwards the generic invocation to the Host schema provider without naming or projecting Host model-purpose fields.
 - Replaced the OpenAI-shaped `AgentAiEngine` callbacks with the structured `CanonicalInferencePort`; `LlmCaller`, retry/fallback, quickstart and testkit now share the same canonical request/event stream.
 - Renamed the scripted provider fixture to `createScriptedInferenceHarness` and changed quickstart configuration from `llm` to `inference`.
@@ -29,14 +38,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Graph now measures the final reminder-applied messages and prepared tools through the active token route. Every successful provider attempt produces a strict `ContextUsageSnapshot` with normalized System prompt, Conversation, and Tool definitions attribution; failed attempts do not commit snapshots.
 - Policy and quota fallback candidates are rejected before provider execution when their route cannot hold the active Prompt and output limit. A successful fallback is remeasured against its own route, tokenizer calibration, and served model identity.
 - The latest successful Prompt snapshot is stored in Graph local checkpoint state so Host projections can rebuild it without replaying tokenization.
+- Context build is now side-effect free with respect to LLM calls and durable facts. A compaction candidate contains only serializable plan data and formatted anchors; `applyCompaction()` validates a fixed-format checkpoint, rebuilds through the normal Context Manager pipeline, and returns a pending summary draft.
+- Automatic compaction uses the run-locked main model, sampling/reasoning settings, stable tool schema order, and `tool_choice=none`; Provider or route differences remain confined to canonical inference adapters rather than creating alternate compaction algorithms.
+- Graph step accounting now has one `maxSteps` limit. Context compaction no longer resets or expands the step budget, and wait-user resume preserves only the current run's compaction attempt count, committed count, and last committed fingerprint while reassembling execution-scoped policy.
+
+### Removed
+
+- Removed the legacy Summary pipeline and its dedicated model surface: `SummarizationProvider`, `AISummaryGenerator`, candidate/trigger helpers, `CheckpointSummarizationProvider`, `SummaryGenerationRequest` / `SummaryGenerationResponse`, and the context-build `summaryEvents` / `internalLlmCalls` sidecars.
+- Removed `AgentSpec.contextPolicy.summarization`, `AgentSpec.contextPolicy.checkpoint`, the `budget-warning` reminder trigger and `budgetWarningRatio`; use the new `contextPolicy.compaction` group.
+- Removed `ContextCheckpointTool` / `createContextCheckpointTool`, checkpoint marker exports, `GraphExecutorConfig.maxCheckpoints`, and checkpoint-driven step-reset behavior.
+- Removed `contextPolicy.reasoningRetention`, `keepLatestThoughts`, and `MAX_THOUGHTS_TO_KEEP`; UI thought projection is no longer a model-context retention policy.
+- Removed `InternalLlmCallUsage`; context-internal compaction calls now emit the normal `llm_call` telemetry and token-ledger usage directly from the Graph stage that performs the call.
 
 ### Compatibility
 
 - `ToolSchemaContext` and `AgentInvocationRequest.imageGenerationModelId` were removed. Host `ToolCatalogPort` implementations must accept `ToolSchemaBuildRequest`, validate their own invocation extensions, and derive concrete-tool Schema context outside Linnkit.
 - This is an intentional breaking Host contract change. `AgentAiEngine`, its callback stream types, `createScriptedAiEngineHarness`, and `LinnkitQuickstartConfig.llm` were removed without aliases or a dual-port bridge. Hosts must implement `CanonicalInferencePort` and migrate tests/configuration in the same upgrade.
-- The source version is bumped to `0.30.0` because contracts add `ContextUsageSnapshot`, Graph context/output types expose Prompt measurement data, model catalog entries expose narrow capacity routes, LLM fallback observers may receive the successful snapshot, and the public prompt-budget resolver now accepts sparse capacity sources.
+- The source version is bumped to `0.31.0` because the automatic compaction contracts and durable commit port change the public Context Manager, Graph, and Host integration surfaces. This Unreleased train also includes the route-driven Prompt budget and final usage snapshot changes prepared after `0.28.0`.
 - Hosts that previously relied on Linnkit's implicit 232K context / 2.4K response policy defaults must provide real model-route capacities. With a default `256000 / 16384` route and no Agent caps, the provider output limit is `16384` and the pre-tool input budget is `239616`.
 - `contextPolicy.budget.reservedForResponse` must now be positive. `AgentProcessingResult.metadata` no longer duplicates context token usage; consumers must read `contextBuildResult.tokenUsage` for build-time messages and the Graph `contextUsage` snapshot for the final successful Prompt.
+- This compaction convergence is an intentional breaking `0.x` minor change. Hosts must replace `summarization` / `checkpoint` policy fields with `compaction`, provide the new context-builder apply port and durable-before-fanout `RuntimeEventCommitPort`, and remove manual checkpoint tool registration. The superseded `RuntimeEventCommitBarrier` is removed without an alias; no migration adapter or dual-read path is provided.
 
 ## [0.28.0] - 2026-08-09
 

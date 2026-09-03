@@ -102,7 +102,7 @@ describe('quickstart helpers', () => {
     const result = await runAgent(agent, {
       input: 'hi',
       inference: createScriptedInference('hello back'),
-      maxSteps: 1,
+      maxSteps: 2,
     });
 
     expect(result.finalAnswer).toBe('hello back');
@@ -124,7 +124,7 @@ describe('quickstart helpers', () => {
       modelId: 'scripted',
       contextPolicy: {
         budget: { maxTokens: 1024 },
-        summarization: { triggerThreshold: 0.5 },
+        compaction: { triggerRatio: 0.8, targetRatio: 0.5 },
         contextTrace: { enabled: true },
       },
     });
@@ -140,7 +140,7 @@ describe('quickstart helpers', () => {
         executed: false,
         declaredUnsupportedFields: expect.arrayContaining([
           'budget',
-          'summarization',
+          'compaction',
           'contextTrace',
         ]),
       },

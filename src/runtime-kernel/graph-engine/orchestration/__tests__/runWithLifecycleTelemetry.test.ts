@@ -25,9 +25,13 @@ describe('runWithLifecycleTelemetry', () => {
 
     const result = await runWithLifecycleTelemetry({
       checkpointKey: 'checkpoint-1',
+      maxSteps: 8,
       telemetryPort: { emit },
       loadInitialState: vi.fn().mockResolvedValue(initialState),
-      run: vi.fn().mockResolvedValue({ result: 'ok', finalState }),
+      run: vi.fn().mockImplementation(async (_state, reportStepsUsed) => {
+        reportStepsUsed(3);
+        return { result: 'ok', finalState, terminalReason: 'completed' };
+      }),
     });
 
     expect(result).toBe('ok');
@@ -44,6 +48,9 @@ describe('runWithLifecycleTelemetry', () => {
     expect(emit.mock.calls[1][0]).toMatchObject({
       kind: 'run_lifecycle',
       runId: 'checkpoint-1',
+      stepsUsed: 3,
+      maxSteps: 8,
+      terminalReason: 'completed',
       scope: {
         conversationId: 'conv-1',
         runId: 'checkpoint-1',
@@ -61,9 +68,14 @@ describe('runWithLifecycleTelemetry', () => {
 
     await runWithLifecycleTelemetry({
       checkpointKey: 'checkpoint-1',
+      maxSteps: 8,
       telemetryPort: { emit },
       loadInitialState: vi.fn().mockResolvedValue(state),
-      run: vi.fn().mockResolvedValue({ result: 'ok', finalState: state }),
+      run: vi.fn().mockResolvedValue({
+        result: 'ok',
+        finalState: state,
+        terminalReason: 'completed',
+      }),
     });
 
     expect(emit.mock.calls.map(call => call[0].runId)).toEqual(['run-real', 'run-real']);
@@ -78,6 +90,7 @@ describe('runWithLifecycleTelemetry', () => {
     await expect(
       runWithLifecycleTelemetry({
         checkpointKey: 'checkpoint-1',
+        maxSteps: 8,
         telemetryPort: { emit },
         loadInitialState: vi.fn().mockResolvedValue(createState()),
         run: vi.fn().mockRejectedValue(error),
@@ -85,6 +98,11 @@ describe('runWithLifecycleTelemetry', () => {
     ).rejects.toBe(error);
 
     expect(emit.mock.calls.map(call => call[0].phase)).toEqual(['spawned', 'failed']);
+    expect(emit.mock.calls[1][0]).toMatchObject({
+      stepsUsed: 0,
+      maxSteps: 8,
+      terminalReason: 'failed',
+    });
   });
 
   it('AbortError 发送 cancelled 并继续抛出原错误', async () => {
@@ -95,6 +113,7 @@ describe('runWithLifecycleTelemetry', () => {
     await expect(
       runWithLifecycleTelemetry({
         checkpointKey: 'checkpoint-1',
+        maxSteps: 8,
         telemetryPort: { emit },
         loadInitialState: vi.fn().mockResolvedValue(createState()),
         run: vi.fn().mockRejectedValue(error),
@@ -102,6 +121,7 @@ describe('runWithLifecycleTelemetry', () => {
     ).rejects.toBe(error);
 
     expect(emit.mock.calls.map(call => call[0].phase)).toEqual(['spawned', 'cancelled']);
+    expect(emit.mock.calls[1][0]).toMatchObject({ terminalReason: 'cancelled' });
   });
 
   it('初始状态加载失败时使用 checkpointKey 和空 scope 发送 spawned + failed', async () => {
@@ -112,6 +132,7 @@ describe('runWithLifecycleTelemetry', () => {
     await expect(
       runWithLifecycleTelemetry({
         checkpointKey: 'checkpoint-1',
+        maxSteps: 8,
         telemetryPort: { emit },
         loadInitialState: vi.fn().mockRejectedValue(error),
         run,
@@ -130,8 +151,36 @@ describe('runWithLifecycleTelemetry', () => {
         kind: 'run_lifecycle',
         runId: 'checkpoint-1',
         phase: 'failed',
+        stepsUsed: 0,
+        maxSteps: 8,
+        terminalReason: 'failed',
         scope: {},
       },
     ]);
+  });
+
+  it('容量错误保留真实步数并投影为 capacity_failed', async () => {
+    const emit = vi.fn();
+    const error = Object.assign(new Error('over budget'), {
+      errorCode: 'llm.prompt.input_budget_exceeded',
+    });
+
+    await expect(runWithLifecycleTelemetry({
+      checkpointKey: 'checkpoint-1',
+      maxSteps: 8,
+      telemetryPort: { emit },
+      loadInitialState: vi.fn().mockResolvedValue(createState()),
+      run: vi.fn().mockImplementation(async (_state, reportStepsUsed) => {
+        reportStepsUsed(4);
+        throw error;
+      }),
+    })).rejects.toBe(error);
+
+    expect(emit.mock.calls[1][0]).toMatchObject({
+      phase: 'failed',
+      stepsUsed: 4,
+      maxSteps: 8,
+      terminalReason: 'capacity_failed',
+    });
   });
 });

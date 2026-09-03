@@ -1,16 +1,9 @@
 import type {
-  SummaryGenerationRequest,
-  SummaryGenerationResponse,
-} from '../contracts/summaryGeneration';
-import type {
   AiMessage,
-  InternalLlmCallUsage,
-  RuntimeEvent,
   TokenCountConfidence,
   TokenCountSource,
   TokenRoute,
   TokenUsageCalibrationTrace,
-  SummarizationCallbacks,
 } from '../../../contracts';
 import { Logger } from '../../../shared/logger';
 
@@ -32,7 +25,7 @@ export interface RemoteTokenCountTrace {
 export interface MessageProcessingState {
   readonly message: AiMessage;
   readonly originalIndex: number;
-  action: 'keep_core' | 'keep_working_memory' | 'summarize' | 'skip';
+  action: 'keep_core' | 'keep_working_memory' | 'skip';
   tokens: number;
   tokenCalibration?: TokenUsageCalibrationTrace;
   overrideContent?: string;
@@ -41,8 +34,6 @@ export interface MessageProcessingState {
   phase?: string;
   replacementSourceIds?: string[];
 }
-
-export type { SummarizationCallbacks } from '../../../contracts';
 
 export interface ProviderContext<TConfig = unknown> {
   totalBudget: number;
@@ -54,11 +45,6 @@ export interface ProviderContext<TConfig = unknown> {
     tokenCalibration?: TokenUsageCalibrationTrace;
   };
   remoteTokenCount?: RemoteTokenCountTrace;
-  summarizationCallbacks?: SummarizationCallbacks;
-  /** Host 注入的注册式摘要入口；framework 不持有 prompt，也不直接调用模型。 */
-  generateSummary?: (
-    request: SummaryGenerationRequest,
-  ) => Promise<SummaryGenerationResponse>;
 }
 
 export interface ProviderResult {
@@ -70,17 +56,13 @@ export interface ProviderResult {
     skippedCount: number;
     addedCount: number;
   };
-  events?: RuntimeEvent[];
-  internalLlmCalls?: InternalLlmCallUsage[];
 }
 
 export const TOOL_HISTORY_OVERFLOW_ERROR_CODE = 'TOOL_HISTORY_OVERFLOW' as const;
-export const SUMMARIZATION_FAILED_ERROR_CODE = 'SUMMARIZATION_FAILED' as const;
 export const TOOL_REPLAY_PROTOCOL_ERROR_CODE = 'TOOL_REPLAY_PROTOCOL_INVALID' as const;
 
 export type ContextProviderErrorCode =
   | 'context_provider_failed'
-  | typeof SUMMARIZATION_FAILED_ERROR_CODE
   | typeof TOOL_HISTORY_OVERFLOW_ERROR_CODE
   | typeof TOOL_REPLAY_PROTOCOL_ERROR_CODE;
 
@@ -101,16 +83,25 @@ export interface ContextProviderErrorOptions {
  */
 export class ContextProviderError extends Error {
   readonly code: ContextProviderErrorCode;
+  readonly errorCode: ContextProviderErrorCode;
+  readonly recoverable: boolean;
   readonly fatal: boolean;
   readonly providerName: string;
+  readonly metadata: Readonly<{ providerName: string; fatal: boolean }>;
   readonly cause?: unknown;
 
   constructor(options: ContextProviderErrorOptions) {
     super(options.message);
     this.name = 'ContextProviderError';
     this.code = options.code;
+    this.errorCode = options.code;
     this.fatal = options.fatal ?? false;
+    this.recoverable = !this.fatal;
     this.providerName = options.providerName;
+    this.metadata = {
+      providerName: options.providerName,
+      fatal: this.fatal,
+    };
     this.cause = options.cause;
   }
 }
@@ -174,16 +165,12 @@ export abstract class BaseContextProvider<TConfig = unknown>
     tokensUsed = 0,
     strategiesApplied: string[] = [],
     stats = { processedCount: 0, skippedCount: 0, addedCount: 0 },
-    events: RuntimeEvent[] = [],
-    internalLlmCalls: InternalLlmCallUsage[] = [],
   ): ProviderResult {
     return {
       states,
       tokensUsed,
       strategiesApplied,
       stats,
-      ...(events.length > 0 && { events }),
-      ...(internalLlmCalls.length > 0 ? { internalLlmCalls } : {}),
     };
   }
 }

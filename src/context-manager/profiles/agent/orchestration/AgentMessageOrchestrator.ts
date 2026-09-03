@@ -1,7 +1,6 @@
 import type { AgentProfileRequest } from '../contracts';
 import {
   AgentContextManager,
-  type AgentBuildPhase,
   type ContextBuildResult,
 } from '../context';
 import type { ContextManagerBaseOptions } from '../../../shared/context-manager-base';
@@ -9,7 +8,6 @@ import {
   AGENT_CONTEXT_BUILDER_CONFIG,
   type AgentContextBuilderConfig,
 } from '../context/config';
-import type { SummarizationCallbacks } from '../context/providers/base';
 import type { ContextProviderRegistry } from '../context/providers';
 import {
   type PreprocessorPipeline,
@@ -20,18 +18,20 @@ import {
 import { ToolManager } from '../tools/ToolManager';
 import type { AgentTaskResolver } from '../tasks/base';
 import { convertEventsToAiMessages } from '../utils/eventConverter';
-import type {
-  SummaryGenerationRequest,
-  SummaryGenerationResponse,
-} from '../../../shared/contracts/summaryGeneration';
 import { recordBeforeContextManager } from '../../../../shared/llmAuditRecorder';
 import type {
   AgentSpecContextPolicy,
   AiMessage,
+  ContextCompactionPlan,
+  HistorySummaryEvent,
   RuntimeEvent,
   TokenRoute,
   TokenUsageCalibrationSample,
 } from '../../../../contracts';
+import {
+  validateContextCompactionRebuild,
+  type ContextCheckpointValidationFailure,
+} from '../../../features/context-compaction';
 import type {
   LlmImageInputEstimatorPort,
   TokenCounterPort,
@@ -112,6 +112,29 @@ export interface AgentProcessingResult {
   };
 }
 
+export type AgentContextCompactionApplyResult =
+  | {
+      readonly kind: 'ready';
+      readonly processingResult: AgentProcessingResult;
+      readonly pendingSummaryEvent: HistorySummaryEvent;
+      readonly compressionRatio: number;
+      readonly summaryTokenEstimate: number;
+    }
+  | {
+      readonly kind: 'invalid';
+      readonly reason:
+        | ContextCheckpointValidationFailure
+        | 'replacement_survived'
+        | 'orphan_tool_output';
+      readonly tokenEstimate?: number;
+      readonly messageId?: string;
+    }
+  | {
+      readonly kind: 'ineffective';
+      readonly compressionRatio: number;
+      readonly summaryTokenEstimate: number;
+    };
+
 interface RequestContextAssembly {
   contextBuilderConfig: Partial<AgentContextBuilderConfig>;
   contextManager: AgentContextManager;
@@ -141,9 +164,6 @@ export class AgentMessageOrchestrator {
       DEFAULT_MAX_TOKENS: options.tokenBudget.maxTokens,
       RESERVED_FOR_RESPONSE: options.tokenBudget.reservedForResponse,
       WORKING_MEMORY_BUDGET_PERCENTAGE: AGENT_CONTEXT_BUILDER_CONFIG.WORKING_MEMORY_BUDGET_PERCENTAGE,
-      SUMMARIZATION_TRIGGER_THRESHOLD: AGENT_CONTEXT_BUILDER_CONFIG.SUMMARIZATION_TRIGGER_THRESHOLD,
-      SUMMARY_BUDGET_PERCENTAGE: AGENT_CONTEXT_BUILDER_CONFIG.SUMMARY_BUDGET_PERCENTAGE,
-      SUMMARY_OLDEST_MESSAGES_PERCENTAGE: AGENT_CONTEXT_BUILDER_CONFIG.SUMMARY_OLDEST_MESSAGES_PERCENTAGE,
     };
     this.baseAgentContextManager = this.createAgentContextManager({
       debugMode: options.processing.debugMode,
@@ -250,11 +270,7 @@ export class AgentMessageOrchestrator {
     request: AgentProfileRequest,
     history: RuntimeEvent[],
     toolManager: ToolManager,
-    callbacks?: SummarizationCallbacks,
     extraOptions?: {
-      generateSummary?: (
-        request: SummaryGenerationRequest,
-      ) => Promise<SummaryGenerationResponse>;
       promptBudgetLimits: {
         modelContextWindowTokens: number;
         modelMaxOutputTokens: number;
@@ -325,9 +341,6 @@ export class AgentMessageOrchestrator {
         contextManager,
         request,
         preprocessResult.messages,
-        callbacks,
-        undefined,
-        extraOptions?.generateSummary,
         contextPolicy,
         promptBudget,
       );
@@ -369,6 +382,64 @@ export class AgentMessageOrchestrator {
     }
   }
 
+  /**
+   * 把通过校验的 checkpoint 作为 pending history fact 注入，并重跑正常上下文链路。
+   *
+   * 中文备注：这里不发布摘要。Graph 必须先对 rebuilt Prompt 重新计量并通过 admission，
+   * 才能提交 pendingSummaryEvent。
+   */
+  async applyContextCompaction(
+    request: AgentProfileRequest,
+    history: RuntimeEvent[],
+    toolManager: ToolManager,
+    input: {
+      id: string;
+      conversationId: string;
+      turnId: string;
+      timestamp: number;
+      checkpointContent: string;
+      plan: ContextCompactionPlan;
+      maxOutputTokens: number;
+      promptBudgetLimits: {
+        modelContextWindowTokens: number;
+        modelMaxOutputTokens: number;
+        toolDefinitionTokens: number;
+      };
+    },
+  ): Promise<AgentContextCompactionApplyResult> {
+    const contextPolicy = this.resolveContextPolicy(request);
+    const { contextManager } = this.assembleRequestContext(request, contextPolicy);
+    const draft = contextManager.prepareContextCompactionDraft(input);
+    if (draft.kind !== 'ready') return draft;
+
+    const processingResult = await this.processAgentConversation(
+      request,
+      [...history, draft.event],
+      toolManager,
+      { promptBudgetLimits: input.promptBudgetLimits },
+    );
+    const rebuildValidation = validateContextCompactionRebuild({
+      messages: processingResult.messages,
+      pendingSummaryId: draft.message.id,
+      plan: input.plan,
+    });
+    if (!rebuildValidation.valid) {
+      return {
+        kind: 'invalid',
+        reason: rebuildValidation.reason,
+        messageId: rebuildValidation.messageId,
+      };
+    }
+
+    return {
+      kind: 'ready',
+      processingResult,
+      pendingSummaryEvent: draft.event,
+      compressionRatio: draft.compressionRatio,
+      summaryTokenEstimate: draft.summaryTokenEstimate,
+    };
+  }
+
   private buildCompleteMessageList(request: AgentProfileRequest, historyMessages: AiMessage[]): AiMessage[] {
     const task = this.taskResolver(request.promptKey);
     return task.buildMessages(request, historyMessages);
@@ -385,11 +456,6 @@ export class AgentMessageOrchestrator {
     contextManager: AgentContextManager,
     request: AgentProfileRequest,
     messages: AiMessage[],
-    callbacks?: SummarizationCallbacks,
-    phaseOverride?: AgentBuildPhase,
-    generateSummary?: (
-      request: SummaryGenerationRequest,
-    ) => Promise<SummaryGenerationResponse>,
     contextPolicy?: AgentSpecContextPolicy,
     promptBudget?: EffectivePromptBudget,
   ): Promise<ContextBuildResult> {
@@ -401,9 +467,6 @@ export class AgentMessageOrchestrator {
       request,
       messages,
       resolvedTotalBudget,
-      callbacks,
-      phaseOverride,
-      generateSummary,
       {
         policy: contextPolicy?.contextTrace,
         effectiveContextPolicy: contextPolicy,

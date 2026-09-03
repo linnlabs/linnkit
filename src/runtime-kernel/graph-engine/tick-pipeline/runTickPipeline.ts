@@ -17,6 +17,7 @@ const tickPipelineContextKeys = [
   'executorLocal',
   'executorLocalPatch',
   'summarizationCallbacks',
+  'runtimeEventCommitPort',
   'modelId',
   'toolSchemas',
   'toolModelInputRequirement',
@@ -29,6 +30,9 @@ const tickPipelineContextKeys = [
   'contextUsage',
   'llmMessages',
   'imageInputAdmissionEvidence',
+  'contextCompactionCandidate',
+  'contextCompactionPolicy',
+  'pendingContextCompaction',
   'conversationId',
   'turnId',
   'llmCallStartedAt',
@@ -63,7 +67,14 @@ export function applyTickStagePatch(
     }
   }
 
-  Object.assign(ctx, patch);
+  const { executorLocalPatch, ...contextPatch } = patch;
+  Object.assign(ctx, contextPatch);
+  if (executorLocalPatch) {
+    ctx.executorLocalPatch = {
+      ...(ctx.executorLocalPatch ?? {}),
+      ...executorLocalPatch,
+    };
+  }
 }
 
 export function applyTickMiddlewarePatch(

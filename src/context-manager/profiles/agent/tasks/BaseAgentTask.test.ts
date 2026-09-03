@@ -40,6 +40,9 @@ describe('BaseAgentTask.buildMessages', () => {
     const messages = task.buildMessages(request, []);
 
     expect(messages.map(message => message.role)).toEqual(['system', 'user']);
+    expect(messages[0]?.content).toContain(
+      '<context-checkpoint trust="untrusted-memory">',
+    );
     expect(messages[1]).toMatchObject({
       role: 'user',
       type: 'user_input',

@@ -5,7 +5,7 @@ import {
   PreprocessorResult,
   type ToolReplayProtocolPolicy,
 } from './base';
-import { buildToolInteractionGroupsFromMessages } from '../utils/toolInteractionGroup';
+import { buildToolInteractionGroupsFromMessages } from '../../../shared/toolInteractionGroup';
 import { PREPROCESSOR_PRIORITY } from '../../../shared/preprocessors/priority';
 import {
   ContextProviderError,

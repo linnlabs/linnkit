@@ -3,7 +3,7 @@ import type { ToolPairFitResult } from './types';
 import {
   buildToolInteractionGroupsFromStates,
   type ToolInteractionGroup,
-} from '../../../utils/toolInteractionGroup';
+} from '../../../../../shared/toolInteractionGroup';
 import type { AiMessage } from '../../../../../../contracts';
 
 /**

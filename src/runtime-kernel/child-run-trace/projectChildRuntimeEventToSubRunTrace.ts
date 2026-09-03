@@ -46,26 +46,36 @@ export function projectChildRuntimeEventToSubRunTrace(
         args: event.args,
       };
     case 'tool_output':
+      if (event.status === 'success') {
+        return {
+          kind: 'tool_output',
+          source_event_id: event.id,
+          tool_name: event.tool_name,
+          tool_call_id: event.tool_call_id,
+          status: 'success',
+          output: {
+            data: event.data ?? null,
+            observation: event.observation,
+            ...(typeof event.metadata?.presentation === 'object'
+              && event.metadata.presentation !== null
+              && !Array.isArray(event.metadata.presentation)
+              ? event.metadata.presentation
+              : {}),
+          },
+          ...(event.attachments === undefined ? {} : { attachments: event.attachments }),
+          ...(event.duration_ms === undefined ? {} : { duration_ms: event.duration_ms }),
+        };
+      }
       return {
         kind: 'tool_output',
         source_event_id: event.id,
         tool_name: event.tool_name,
         tool_call_id: event.tool_call_id,
-        status: event.status,
-        output: event.status === 'success'
-          ? {
-              data: event.data ?? null,
-              observation: event.observation,
-              ...(typeof event.metadata?.presentation === 'object'
-                && event.metadata.presentation !== null
-                && !Array.isArray(event.metadata.presentation)
-                ? event.metadata.presentation
-                : {}),
-            }
-          : {
-              observation: event.observation,
-              ...(event.error === undefined ? {} : { error: event.error }),
-            },
+        status: 'error',
+        output: {
+          observation: event.observation,
+          ...(event.error === undefined ? {} : { error: event.error }),
+        },
         ...(event.duration_ms === undefined ? {} : { duration_ms: event.duration_ms }),
       };
     case 'final_answer_chunk':
@@ -84,6 +94,19 @@ export function projectChildRuntimeEventToSubRunTrace(
         answer_id: event.answer_id,
         content: event.content,
         completion_reason: event.completion_reason,
+      };
+    case 'history_summary':
+      return {
+        kind: 'history_summary',
+        source_event_id: event.id,
+        original_message_count: event.original_message_count,
+        replaced_message_ids: event.replaced_message_ids,
+        ...(event.compression_ratio === undefined
+          ? {}
+          : { compression_ratio: event.compression_ratio }),
+        ...(event.included_old_summary === undefined
+          ? {}
+          : { included_old_summary: event.included_old_summary }),
       };
     default:
       return null;

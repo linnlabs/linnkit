@@ -2,7 +2,6 @@ export { eventMapper } from './eventMappers';
 export {
   describeRuntimeEventLifecycle,
   getRuntimeEventUiProjectionKind,
-  isCheckpointHistorySummaryEvent,
   isConversationUiRuntimeEvent,
   isToolCallDecisionEvent,
   RUNTIME_EVENT_TYPES_NEVER_REPLAYED_TO_UI,

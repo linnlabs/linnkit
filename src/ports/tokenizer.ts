@@ -20,7 +20,9 @@ export interface TokenizerPort {
   /**
    * 估算一条 LLM message 的 token 数。
    *
-   * 自定义实现应包含 message overhead、tool_call overhead 和 tool_call_id 开销；
+   * 自定义实现应包含 message overhead、assistant_replay_parts 中的 canonical
+   * text/reasoning、tool_call overhead 和 tool_call_id 开销；存在 replay parts 时
+   * 不应再次计算同一条 Assistant 的投影 content；
    * 否则上下文预算会系统性低估。
    */
   estimateMessage(message: LlmRequestMessage, modelId?: string): number;

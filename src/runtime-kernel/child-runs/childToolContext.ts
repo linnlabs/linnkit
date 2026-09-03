@@ -77,6 +77,9 @@ export function createChildRunToolContext(params: {
     userQuery: params.userQuery,
     modelId: params.modelId,
     childRunDepth: depthDecision.nextDepth,
+    ...(params.parentToolContext.childRunContextInjections
+      ? { childRunContextInjections: params.parentToolContext.childRunContextInjections }
+      : {}),
     abortSignal: params.abortSignal ?? params.parentToolContext.abortSignal,
   };
 

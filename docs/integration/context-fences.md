@@ -10,6 +10,8 @@
 >
 > **不要**自己在 system prompt 里手工拼 `<my_tag>...</my_tag>`——会被 boundary guard 拦下，且生命周期治理失控。
 
+> **当前预算边界**：placement、lifetime 与 formatter 已接线；`FenceDescriptor.mustKeep` / `maxBudgetFraction` 目前只表达注册意图并校验字段取值，尚未自动转成 `MustKeepPolicy` 或运行时容量裁决。当前轮 system/user fence 又会先组装进 `system_prompt` / 最新 `user_input`，因此 per-kind `truncationRules` 无法再按 `metadata.fenceKind` 命中。现在真正生效的硬约束只有整份最终 Prompt 的容量门禁；不要把 descriptor 上的比例当成已生效的 per-fence 上限。
+
 ## 1. 为什么有 fence 机制
 
 linnkit 设计原则：
@@ -49,7 +51,7 @@ export function createMyFenceDescriptors(): FenceDescriptor[] {
       llmRole: 'user',                         // 物理 role（注入时挂到 user 还是 system）
       placement: 'before-current-user',        // 在 system 后 / 当前 user 前 / 当前 user 后 / 上一组 tool result 后
       lifetime: 'turn-only',                   // 'turn-only' 只在本轮；'persisted' 进 history
-      maxBudgetFraction: 0.2,                  // 可选：按总 token 预算上限
+      maxBudgetFraction: 0.2,                  // 当前仅声明预算意图，尚未形成运行时硬上限
       formatter: (content, attrs) =>
         `<memory-context source="${attrs.source ?? 'unknown'}">\n${content}\n</memory-context>`,
     },
@@ -58,7 +60,7 @@ export function createMyFenceDescriptors(): FenceDescriptor[] {
       llmRole: 'system',
       placement: 'after-system',
       lifetime: 'persisted',
-      mustKeep: true,                          // 自动 must-keep（不会被 working memory 裁掉）
+      mustKeep: true,                          // 当前仅声明必保留意图，尚未自动接入 MustKeepPolicy
       formatter: (content) => `<system-event>\n${content}\n</system-event>`,
     },
     // 想要多少类就声明多少类
@@ -73,7 +75,7 @@ export const myFenceRegistry = createMyFenceRegistry();
 - `kind` 必须 kebab-case（`/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/`）
 - `placement` 当前枚举：`'after-system'` / `'before-current-user'` / `'after-current-user'` / `'after-last-tool-result'`
 - 同一个 `kind` 在同一个 registry 不能重复 register
-- `maxBudgetFraction` 必须落在 `(0, 1]`
+- `maxBudgetFraction` 必须落在 `(0, 1]`；当前只做注册校验，不执行截断或拒绝
 
 当前轮 user-side fence 会按实际注入内容组装到同一条 user request。比如 host 注册了 `document-fragment`：
 
@@ -226,7 +228,8 @@ const llmMessages = formatAgentLlmMessages(processingResult.messages, {
 
 - `lifetime: 'persisted'` 的 fence kind，多半也想 must-keep → 加进 `alwaysKeepFenceKinds`
 - `lifetime: 'turn-only'` 的 fence kind，本身就只在本轮，**不要**加进 `alwaysKeepFenceKinds`
-- 想限量截断（不丢但只保留预算的 X%）：用 `truncationRules`
+- `truncationRules` 只会匹配仍保有 `metadata.fenceKind` 的独立消息；当前轮已组装进 system/user 的 fence 不会命中 per-kind 规则
+- 当前若要限制生产者输入，应由 Host 在请求 admission 前自行校验；框架级 per-fence 硬预算仍待接线
 
 推荐把全局业务默认放进 host fallback，把单个 agent 的差异写在 `AgentDefinition.config.contextPolicy`：
 
@@ -287,7 +290,7 @@ CanonicalInferencePort.stream(canonicalRequest)
 
 - 单测 1：注册 fence → `BaseAgentTask` 能展开成 `context_injection` 消息（断言"3 类 fence 注入后，最终 LLM messages 第 N 条是 system 角色 + 包含 `<my_tag>`"）
 - 单测 2：`lifetime: 'turn-only'` 的 fence 在 history 里能被自动剥离
-- 单测 3：`mustKeep` 或 `alwaysKeepFenceKinds` 列出的 fence 在 working memory 抽稀时不被裁
+- 单测 3：仍保持独立消息身份、且被 `alwaysKeepFenceKinds` 列出的 fence 在 working memory 抽稀时不被裁
 
 ## 10. 设计原理（深度参考）
 

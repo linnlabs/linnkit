@@ -4,7 +4,7 @@ import type { ToolPairMatcher } from './ToolPairMatcher';
 import type { DebugFn, WorkingMemoryRetentionResult } from './types';
 
 /**
- * P2：普通文本、历史摘要与 thought 保留策略。
+ * P2：普通文本与历史摘要保留策略。
  *
  * 中文备注：
  * - 这里不处理原始工具组，它们属于 P1/P3；
@@ -31,7 +31,6 @@ export function processTextConversations(params: {
   let tokensUsed = 0;
   let processedCount = 0;
   const strategiesApplied: string[] = [];
-  let thoughtsKeptCount = 0;
 
   for (let i = skippedStates.length - 1; i >= 0; i -= 1) {
     const state = skippedStates[i];
@@ -45,6 +44,12 @@ export function processTextConversations(params: {
     }
 
     if (state.action !== 'skip' || processedIds.has(state.message.id)) {
+      continue;
+    }
+
+    // thought 只服务 UI / 审计；模型侧 canonical reasoning 随 Assistant replay
+    // 一起保留并由正式压缩统一淘汰，不作为独立工作记忆消息。
+    if (state.message.type === 'thought') {
       continue;
     }
 
@@ -90,24 +95,6 @@ export function processTextConversations(params: {
       state.message.type !== 'tool_calls'
     ) {
       if (matcher.isCompressedToolHistoryMessage(state.message)) {
-        continue;
-      }
-
-      if (state.message.type === 'thought') {
-        if (thoughtsKeptCount < config.MAX_THOUGHTS_TO_KEEP) {
-          if (currentTokens + tokensUsed + state.tokens <= budgetLimit) {
-            markWorkingMemory(state);
-            tokensUsed += state.tokens;
-            processedCount++;
-            thoughtsKeptCount++;
-            strategiesApplied.push('thought_processing');
-            debug('✅ P2保留thought消息', {
-              id: state.message.id,
-              tokens: state.tokens,
-              totalTokens: currentTokens + tokensUsed,
-            });
-          }
-        }
         continue;
       }
 

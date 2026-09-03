@@ -2,6 +2,7 @@ export * from './messages';
 export { RuntimeResourceRef, RuntimeResourceRefs } from './resource-ref';
 export * from './json';
 export * from './contextPolicy';
+export * from './contextCompaction';
 export * from './agentSpec';
 export * from './audit';
 export * from './events';

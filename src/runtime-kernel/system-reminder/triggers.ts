@@ -1,6 +1,6 @@
 import type { AgentSpecSystemReminderTrigger } from '../../contracts';
-import { countToolCallsInCurrentRequest, readContextCheckpointToolName } from './helpers';
-import type { SystemReminderContext, SystemReminderTriggerEvaluator } from './types';
+import { countToolCallsInCurrentRequest } from './helpers';
+import type { SystemReminderTriggerEvaluator } from './types';
 
 function readNumber(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
@@ -45,21 +45,6 @@ export const toolCallStreakTrigger: SystemReminderTriggerEvaluator = (ctx, trigg
   return trigger.moduloStep === false ? true : count % threshold === 0;
 };
 
-export const budgetWarningTrigger: SystemReminderTriggerEvaluator = (ctx, trigger) => {
-  const toolName = readString(trigger.toolName) ?? readContextCheckpointToolName(ctx);
-  const tools = ctx.request.availableTools;
-  if (!Array.isArray(tools) || !tools.includes(toolName)) return false;
-
-  const stepCount = readNumber(ctx.executorLocal?.stepCount);
-  const maxSteps = readNumber(ctx.executorLocal?.maxSteps);
-  const ratio = readNumber(trigger.ratio) ?? 0.9;
-  if (stepCount === undefined || maxSteps === undefined || maxSteps <= 0) return false;
-  if (ctx.executorLocal?.phase === 'force_final_answer') return false;
-
-  const threshold = Math.floor(maxSteps * ratio);
-  return stepCount >= threshold && stepCount < threshold + 4;
-};
-
 export const agentHasToolTrigger: SystemReminderTriggerEvaluator = (ctx, trigger) => {
   const toolName = readString(trigger.toolName) ?? readString(trigger.value);
   if (!toolName || !Array.isArray(ctx.request.availableTools)) return false;
@@ -71,6 +56,5 @@ export const BUILTIN_SYSTEM_REMINDER_TRIGGERS: Record<string, SystemReminderTrig
   'remaining-steps-leq': remainingStepsLeqTrigger,
   'step-count-modulo': stepCountModuloTrigger,
   'tool-call-streak': toolCallStreakTrigger,
-  'budget-warning': budgetWarningTrigger,
   'agent-has-tool': agentHasToolTrigger,
 };

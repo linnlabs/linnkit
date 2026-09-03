@@ -1,4 +1,5 @@
 import { get_encoding, Tiktoken } from 'tiktoken';
+import type { AssistantReplayPart } from '../contracts';
 import type { LlmRequestMessage } from '../ports';
 import { Logger } from './logger';
 
@@ -89,23 +90,26 @@ export class TokenCalculator {
   ): number {
     let totalTokens = this.OVERHEAD_PER_MESSAGE;
 
+    const replayParts = this.extractAssistantReplayPartsForTokenEstimate(message);
+    const toolCalls = this.extractToolCallsForTokenEstimate(message);
+    if (replayParts) {
+      for (const part of replayParts) {
+        if (part.type === 'text' || part.type === 'reasoning') {
+          totalTokens += this.estimateTokens(part.text, options);
+          continue;
+        }
+        const toolCall = toolCalls.find(call => this.readToolCallId(call) === part.tool_call_id);
+        totalTokens += this.estimateToolCallTokens(toolCall, options);
+      }
+      return totalTokens;
+    }
+
     if (message.content) {
       totalTokens += this.estimateTokens(String(message.content), options);
     }
 
-    const toolCalls = this.extractToolCallsForTokenEstimate(message);
-    const toolCallOverhead = normalizeNonNegativeInteger(options.toolCallOverhead, this.OVERHEAD_PER_TOOL_CALL);
     for (const toolCall of toolCalls) {
-      totalTokens += toolCallOverhead;
-      if (!toolCall || typeof toolCall !== 'object' || Array.isArray(toolCall)) {
-        continue;
-      }
-      const fn = (toolCall as Record<string, unknown>)['function'];
-      if (fn && typeof fn === 'object' && !Array.isArray(fn)) {
-        const fnRecord = fn as Record<string, unknown>;
-        totalTokens += this.estimateTokens(String(fnRecord['name'] ?? ''), options);
-        totalTokens += this.estimateTokens(String(fnRecord['arguments'] ?? ''), options);
-      }
+      totalTokens += this.estimateToolCallTokens(toolCall, options);
     }
 
     const toolCallId = this.extractToolCallIdForTokenEstimate(message);
@@ -139,6 +143,45 @@ export class TokenCalculator {
     const metadataRecord = metadata as Record<string, unknown>;
     const metadataToolCalls = metadataRecord['tool_calls'];
     return Array.isArray(metadataToolCalls) ? metadataToolCalls : [];
+  }
+
+  private static extractAssistantReplayPartsForTokenEstimate(
+    message: LlmRequestMessage,
+  ): readonly AssistantReplayPart[] | undefined {
+    const direct = 'assistant_replay_parts' in message
+      ? message.assistant_replay_parts
+      : undefined;
+    if (direct?.length) return direct;
+
+    const metadata = 'metadata' in message ? message.metadata : undefined;
+    return metadata?.assistant_replay_parts?.length
+      ? metadata.assistant_replay_parts
+      : undefined;
+  }
+
+  private static estimateToolCallTokens(
+    toolCall: unknown,
+    options: TokenEstimateOptions,
+  ): number {
+    const overhead = normalizeNonNegativeInteger(
+      options.toolCallOverhead,
+      this.OVERHEAD_PER_TOOL_CALL,
+    );
+    if (!this.isRecord(toolCall)) return overhead;
+    const fn = toolCall['function'];
+    if (!this.isRecord(fn)) return overhead;
+    return overhead
+      + this.estimateTokens(String(fn['name'] ?? ''), options)
+      + this.estimateTokens(String(fn['arguments'] ?? ''), options);
+  }
+
+  private static readToolCallId(toolCall: unknown): string | undefined {
+    if (!this.isRecord(toolCall)) return undefined;
+    return typeof toolCall['id'] === 'string' ? toolCall['id'] : undefined;
+  }
+
+  private static isRecord(value: unknown): value is Record<string, unknown> {
+    return !!value && typeof value === 'object' && !Array.isArray(value);
   }
 
   private static extractToolCallIdForTokenEstimate(message: LlmRequestMessage): string | undefined {

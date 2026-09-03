@@ -23,7 +23,7 @@ linnkit has no built-in LLM provider, no database binding, no UI, and no opinion
 
 ## Why use linnkit?
 
-**Fine-grained context control** — Describe your entire context strategy declaratively with `AgentSpec.contextPolicy`. Configure token budget, tool history retention, summarization triggers, must-keep rules, checkpoint compression, reasoning retention, system reminder injection, observation truncation with full-copy archiving, provider sidecar replay, and custom tokenizer. The context sent to the model is not a hand-assembled `messages[]` array — it's a rule-driven, recorded build process.
+**Fine-grained context control** — Describe your context strategy declaratively with `AgentSpec.contextPolicy`: token budgets, tool-history retention, must-keep rules, system reminders, observation governance, and tokenization. Canonical reasoning is replayed once in its original Assistant part order and retained until formal compaction. Long single-turn runs use one default-on automatic compaction pipeline: Context Manager selects and validates a replaceable range, while Graph uses the run-locked model to rebuild and durably commit one `history_summary` before the main call. There is no summary agent, checkpoint tool, or model-specific compaction algorithm. The context sent to the model is not a hand-assembled `messages[]` array — it is a rule-driven, observable build process.
 
 **ContextTrace observability** — Every context build produces a machine-readable trace: which messages were kept, which were trimmed, why, how many tokens each step consumed, and whether the final result exceeded the budget. When the model answers incorrectly, you don't need to guess whether context was lost — you can read the trace directly.
 
@@ -172,7 +172,7 @@ Child runs use the same fact pipeline. A child EventBus owns child persistence a
 
 - **Version**: see [`package.json`](./package.json)
 - **Distribution**: npmjs.com public registry
-- **Stability**: `0.x` — public sub-entrypoints are locked; Context Engineering API stable since 0.6.0
+- **Stability**: `0.x` — public sub-entrypoints are locked; minor versions may still make intentional protocol-breaking changes documented in the changelog
 - **Open source**: MIT-licensed source is available at <https://github.com/linnlabs/linnkit>
 
 ## License

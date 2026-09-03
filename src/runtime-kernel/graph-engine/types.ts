@@ -22,7 +22,6 @@ export interface ExecutorLocalState {
   lastStepsHintThreshold?: number;
   systemReminderPolicy?: AgentSpecSystemReminderPolicy;
   toolObservationPolicy?: AgentSpecToolObservationGovernancePolicy;
-  contextCheckpointToolName?: string;
   runLockedModelId?: string;
   /** 最近一次成功产生当前工具调用决策的真实 provider model。 */
   lastSuccessfulLlmModelId?: string;
@@ -39,7 +38,7 @@ export interface ExecutorLocalState {
    * GraphExecutor 内部维护的 LLM 调用次数。
    *
    * 中文备注：
-   * - 它用于跨 checkpoint reset / child-run 直接从 llm 启动时稳定推导 llmInvocationKind；
+   * - 它用于 child-run 直接从 llm 启动时稳定推导 llmInvocationKind；
    * - 业务逻辑不要直接修改它。
    */
   llmInvocationCount?: number;
@@ -51,10 +50,19 @@ export interface ExecutorLocalState {
    * - 为 true 时，LLM 层不得 policy switch，也不得走 cloud quota fallback。
    */
   lockRequestedModelId?: boolean;
+  /** 当前 run 的压缩调用次数、成功提交次数与最近已提交计划身份。 */
+  contextCompaction?: {
+    attemptCount: number;
+    committedCount: number;
+    lastCommittedFingerprint?: string;
+  };
 }
 
 export type ExecutorLocalPatch = Partial<
-  Pick<ExecutorLocalState, 'runLockedModelId' | 'lastSuccessfulLlmModelId'>
+  Pick<
+    ExecutorLocalState,
+    'runLockedModelId' | 'lastSuccessfulLlmModelId' | 'contextCompaction'
+  >
 >;
 
 export interface EngineLocalState extends Record<string, unknown> {
@@ -75,6 +83,8 @@ export interface EngineLocalState extends Record<string, unknown> {
   chunkSeq?: number;
   signal?: AbortSignal;
   runtimeEventSink?: RuntimeEventSink;
+  /** 在 fan-out 前请求 Host 持久化单个 durable fact。 */
+  runtimeEventCommitPort?: RuntimeEventCommitPort;
   runtimeFailureFactSink?: RuntimeFailureFactSink;
   summarizationCallbacks?: SummarizationCallbacks;
   /** 最近一次成功完成的 LLM Prompt 占用；可序列化并随 checkpoint 保留。 */
@@ -83,6 +93,14 @@ export interface EngineLocalState extends Record<string, unknown> {
 
 /** Graph 节点发布标准事实的唯一出口；返回值是 admission 附着身份后的同一事实。 */
 export type RuntimeEventSink = (event: RuntimeEvent, source: string) => RoutedRuntimeEvent;
+
+/**
+ * Graph 在 fan-out 前请求 Host 提交一条 durable RuntimeEvent。
+ *
+ * Host 必须先完成 run admission 与落盘，并标记随后的正常
+ * RuntimeEventSink publish 不重复写库；本 port 自身不做 realtime fan-out。
+ */
+export type RuntimeEventCommitPort = (event: RuntimeEvent, source: string) => Promise<void>;
 
 /** 已经通过 RuntimeEventSink admission 并发布的执行终态错误事实。 */
 export type RuntimeFailureFact = Extract<RoutedRuntimeEvent, { type: 'error' }> & {

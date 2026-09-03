@@ -1,5 +1,5 @@
 import type { MessageProcessingState } from '../base';
-import type { ToolInteractionGroup } from '../../../utils/toolInteractionGroup';
+import type { ToolInteractionGroup } from '../../../../../shared/toolInteractionGroup';
 import type { ToolPairMatcher } from './ToolPairMatcher';
 import type { DebugFn } from './types';
 

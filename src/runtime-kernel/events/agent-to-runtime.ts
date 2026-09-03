@@ -88,6 +88,9 @@ function mapAgentEventToRuntime(
               status: 'error',
               observation: observationEvent.observation,
               error: observationEvent.error ?? observationEvent.observation,
+              ...(observationEvent.error_code === undefined
+                ? {}
+                : { error_code: observationEvent.error_code }),
             },
         {
           timestamp,

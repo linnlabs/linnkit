@@ -107,4 +107,32 @@ describe('EventBusEventPersistence', () => {
 
     expect(writes).toEqual([]);
   });
+
+  it('commit-before-publish 先等待落盘，随后 fan-out 也不重复写入', async () => {
+    const writes: PersistedEvent[] = [];
+    let releaseWrite: (() => void) | undefined;
+    const writeGate = new Promise<void>((resolve) => {
+      releaseWrite = resolve;
+    });
+    const subject = createSubject(async event => {
+      writes.push(event);
+      await writeGate;
+    });
+    const observed: string[] = [];
+    subject.eventBus.on('event', envelope => observed.push(envelope.payload.id));
+    const committed = subject.publisher.route(answerEvent('answer-precommitted', '先落盘'));
+
+    const commit = subject.persistence.commitBeforePublish(committed);
+    await Promise.resolve();
+    expect(writes.map(item => item.event.id)).toEqual(['answer-precommitted']);
+    expect(observed).toEqual([]);
+
+    releaseWrite?.();
+    await commit;
+    subject.publisher.publishRouted(committed, 'durable');
+    await subject.persistence.drain();
+
+    expect(observed).toEqual(['answer-precommitted']);
+    expect(writes.map(item => item.event.id)).toEqual(['answer-precommitted']);
+  });
 });

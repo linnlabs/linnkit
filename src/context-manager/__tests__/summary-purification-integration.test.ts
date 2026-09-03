@@ -88,7 +88,6 @@ describe('摘要历史净化集成测试', () => {
         content: '[历史对话摘要 - 压缩了5条消息]\\n\\n这是摘要内容',
         original_message_count: 5,
         compression_ratio: 0.8,
-        generated_by: 'SummarizationProvider',
         included_old_summary: false,
         replaced_message_ids: ['msg-001', 'msg-002', 'msg-003', 'msg-004', 'msg-005'],
         summary_seq: 1,

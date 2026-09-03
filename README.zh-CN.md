@@ -23,7 +23,7 @@ linnkit 不内置 LLM provider，不绑定数据库，不提供 UI，也不替�
 
 ## 为什么选 linnkit？
 
-**精细化上下文控制** — 用 `AgentSpec.contextPolicy` 声明式地描述完整上下文策略：token 预算与预留回答空间、工具历史保留方式、摘要触发时机、必须保留的消息类型、checkpoint 压缩、推理内容保留、system reminder 注入、observation 截断与完整副本落盘、provider sidecar replay、自定义 tokenizer。发给模型的上下文不是手拼出来的 `messages[]`，而是一套有规则、有记录的构建过程。
+**精细化上下文控制** — 用 `AgentSpec.contextPolicy` 声明 token 预算、工具历史保留、must-keep、system reminder、observation 治理与 tokenizer；canonical reasoning 按 Assistant 原始 part 顺序只回放一次，并一直保留到正式压缩。长单 turn 统一走默认开启的自动压缩：Context Manager 选择并校验可替换区段，Graph 使用当前 run 已锁定的模型重建上下文，并在主调用前提交唯一 durable `history_summary`。没有专用 Summary Agent、checkpoint 工具或按模型分叉的压缩算法。发给模型的上下文不是手拼的 `messages[]`，而是一套有规则、可观察的构建过程。
 
 **ContextTrace 可观测性** — 每次上下文构建都会产出一份机器可读的 trace：哪些消息被保留、哪些被裁、为什么裁、每一步消耗多少 token、最终是否超过预算。模型答错时，不用猜"是不是上下文丢了"，直接看 trace。
 
@@ -171,7 +171,7 @@ console.log(result.finalAnswer);
 
 - 当前版本：以 [package.json](./package.json) 为准。
 - 当前发布：npmjs.com 公开发布。
-- 稳定性：仍是 `0.x`，但公开子入口已经锁定；Context Engineering API 自 0.6.0 起基本稳定。
+- 稳定性：仍是 `0.x`，公开子入口已经锁定；minor 版本仍可能包含更新日志明确记录的协议级 breaking change。
 - 开源状态：已按 MIT 协议开源，源码仓为 <https://github.com/linnlabs/linnkit>。
 
 ## License

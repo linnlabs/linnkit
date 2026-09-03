@@ -55,7 +55,6 @@ export class QuickstartContextBuilder implements GraphExecutorContextBuilder {
         ...historyMessages,
         { role: 'user', content: input.request.query },
       ],
-      summaryEvents: [],
       contextTrace: buildQuickstartContextTrace({
         agentId: this.agent.spec.id,
         messageCount: historyMessages.length + 2,

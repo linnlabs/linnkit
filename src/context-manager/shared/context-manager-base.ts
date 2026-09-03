@@ -127,6 +127,14 @@ export abstract class ContextManagerBase<
     );
   }
 
+  protected estimateTextTokens(text: string): number {
+    const localEstimateTokens = this.tokenizer.estimateText(text, this.tokenizerModelId);
+    return calibrateTokenEstimate({
+      localEstimateTokens,
+      state: this.tokenCalibrationState,
+    }).tokens;
+  }
+
   protected estimateTokensWithCalibrationTrace(message: AiMessage): {
     tokens: number;
     calibrationTrace: ReturnType<typeof calibrateTokenEstimate>['trace'];
