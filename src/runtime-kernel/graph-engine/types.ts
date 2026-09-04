@@ -12,6 +12,9 @@ import type {
 
 export type ExecutorLlmInvocationKind = 'user_initiated' | 'continuation';
 
+/** 工具批次全部结算后的 Graph 路由策略；缺省继续交还 LLM。 */
+export type ToolBatchCompletionMode = 'continue_to_llm' | 'yield_after_batch';
+
 export interface ExecutorLocalState {
   stepCount: number;
   phase?: 'running' | 'force_final_answer' | 'force_tools' | string;
@@ -76,6 +79,13 @@ export interface EngineLocalState extends Record<string, unknown> {
   newEvents?: RuntimeEvent[];
   executorLocal?: ExecutorLocalState;
   pendingToolCalls?: StandardToolCall[];
+  /**
+   * 当前工具批次全部产生 terminal tool_output 后的执行策略。
+   *
+   * Host 确定工具结果本身就是调用结果时，可选择 yield_after_batch；普通 Agent
+   * 调用保持缺省行为，由 LLM 继续消费工具结果。该策略不改变工具自身的 control。
+   */
+  toolBatchCompletionMode?: ToolBatchCompletionMode;
   pendingInteractionSpec?: Record<string, unknown>;
   lastToolResult?: Record<string, unknown>;
   finalAnswer?: string;

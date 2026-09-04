@@ -696,6 +696,19 @@ export class ToolNode implements GraphNode {
       return { kind: 'yield', events: context.bridge.getRuntimeEvents() };
     }
 
+    if (
+      remainingCalls.length === 0
+      && context.local.toolBatchCompletionMode === 'yield_after_batch'
+    ) {
+      logger.info('[ToolNode] 工具批次已结算，按 Host 策略直接 yield', {
+        toolName: context.toolName,
+        toolCallId: context.toolCallId,
+        conversationId: context.conversationId,
+        turnId: context.turnId,
+      });
+      return { kind: 'yield', events: context.bridge.getRuntimeEvents() };
+    }
+
     return {
       kind: 'route',
       nextNodeId: remainingCalls.length > 0 ? 'tool' : 'llm',
@@ -788,6 +801,13 @@ export class ToolNode implements GraphNode {
 
     if (fuse.shouldFuse && remainingCalls.length === 0) {
       throw createToolProtocolFuseError(fuse.nextCount, context.exec.error);
+    }
+
+    if (
+      remainingCalls.length === 0
+      && context.local.toolBatchCompletionMode === 'yield_after_batch'
+    ) {
+      return { kind: 'yield', events: context.bridge.getRuntimeEvents() };
     }
 
     return {

@@ -14,6 +14,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.32.0] - 2026-09-04
+
+### Added
+
+- Added the host-controlled `yield_after_batch` tool completion mode. Host-originated
+  runs can now return a fully settled tool batch without invoking the LLM or changing
+  the reusable tool's own `terminateRun` semantics.
+
 ## [0.31.1] - 2026-09-03
 
 ### Fixed

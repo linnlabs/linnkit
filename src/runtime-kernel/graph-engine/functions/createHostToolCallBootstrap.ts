@@ -6,6 +6,7 @@ import {
   ToolCallIdSchema,
 } from '../../../contracts';
 import type { StandardToolCall } from '../types';
+import type { ToolBatchCompletionMode } from '../types';
 
 export interface HostToolCallBootstrapInput {
   readonly eventId: string;
@@ -19,6 +20,8 @@ export interface HostToolCallBootstrapInput {
   readonly metadata?: SerializableJsonRecord;
   readonly decisionMeta?: SerializableJsonRecord;
   readonly parentToolCallId?: string;
+  /** 工具批次完成后继续交还 LLM，或直接把执行权交还 Host。 */
+  readonly completionMode?: ToolBatchCompletionMode;
 }
 
 export interface HostToolCallBootstrapLocalPatch {
@@ -26,6 +29,7 @@ export interface HostToolCallBootstrapLocalPatch {
   readonly turnId: string;
   readonly history: RuntimeEvent[];
   readonly pendingToolCalls: StandardToolCall[];
+  readonly toolBatchCompletionMode?: ToolBatchCompletionMode;
 }
 
 export interface HostToolCallBootstrap {
@@ -113,6 +117,9 @@ export function createHostToolCallBootstrap(
       turnId,
       history: [...(input.history ?? []), decisionEvent],
       pendingToolCalls: [toolCall],
+      ...(input.completionMode === undefined
+        ? {}
+        : { toolBatchCompletionMode: input.completionMode }),
     },
   };
 }

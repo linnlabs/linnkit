@@ -19,6 +19,11 @@ Host-originated tool 指由产品中的确定性动作直接发起、而不是�
 
 该 helper 只构造协议事实，不执行工具。
 
+当工具输出本身就是 Host 请求的结果时，传入
+`completionMode: 'yield_after_batch'`。ToolNode 仍会完整执行并结算批次中的每个
+调用，最后直接 yield，不再进入 LLM。缺省值是 `continue_to_llm`；普通 Agent 调用
+以及需要自然语言收尾的 Host 调用都保持这一缺省行为。
+
 ## 3. Host 仍然负责
 
 - 生成 conversation、turn、run、event 和 tool call 身份。
@@ -48,6 +53,9 @@ ToolNode 产生的 process/output 事件继续由 Graph runtime 返回和分发�
 5. 若工具完成后需要 LLM 收尾，run 的 step 预算必须覆盖 tool 与后续 llm。
 6. 需要自然生成单一 final answer 的工具不得设置 `terminateRun` 或 `control.finalAnswer`。
 7. 系统专用工具是否暴露给 Agent 是 host 的产品策略；使用 bootstrap 不会自动注册或暴露工具。
+8. `yield_after_batch` 是本次执行的 Host 路由策略，不得通过修改普通工具的
+   `control.terminateRun` 来模拟。工具成功或失败都会先产生 terminal `tool_output`，
+   协议熔断等 Runtime 失败仍按原规则失败。
 
 ## 6. 与其它入口的区别
 
@@ -73,5 +81,6 @@ Host 接入时至少验证：
 - decision 先于 tool output 发布并持久化。
 - ToolNode 实际收到预期参数。
 - 工具成功或失败后按 Graph 策略进入后续 LLM。
+- `yield_after_batch` 下工具成功或失败均不进入 LLM，且批次中的调用已经全部配对。
 - reload 后 provider 历史仍能重建合法的工具调用对。
 - 取消、审计、遥测与普通 Graph run 使用同一通道。

@@ -530,6 +530,49 @@ describe('ToolNode - 单元测试', () => {
       expect(state.local?.history?.filter(event => event.type === 'tool_output')).toHaveLength(2);
     });
 
+    it('yield_after_batch 应先结算成功和失败调用，再把执行权交还 Host', async () => {
+      executeToolMock
+        .mockResolvedValueOnce({
+          success: false,
+          error: 'Root path is a directory',
+          errorKind: 'execution',
+        })
+        .mockResolvedValueOnce({
+          success: true,
+          result: structuredToolResult('read result'),
+        });
+
+      const state: EngineState = {
+        nodeId: 'tool',
+        local: {
+          conversationId: 'conv_1',
+          turnId: 'turn_1',
+          runtimeEventSink: createRuntimeEventAdmissionSink('conv_1', 'run_batch_yield'),
+          toolBatchCompletionMode: 'yield_after_batch',
+          pendingToolCalls: [
+            {
+              id: ToolCallIdSchema.parse('call_1'),
+              type: 'function' as const,
+              function: { name: 'list_files', arguments: '{"path":"/"}' },
+            },
+            {
+              id: ToolCallIdSchema.parse('call_2'),
+              type: 'function' as const,
+              function: { name: 'read_file', arguments: '{"path":"/notes.md"}' },
+            },
+          ],
+          toolContext: {},
+        },
+      };
+
+      const result = await toolNode.run(state);
+
+      expect(result.kind).toBe('yield');
+      expect(state.local?.pendingToolCalls).toEqual([]);
+      expect(executeToolMock).toHaveBeenCalledTimes(2);
+      expect(state.local?.history?.filter(event => event.type === 'tool_output')).toHaveLength(2);
+    });
+
     it('批量工具调用中连续 protocol error 达到熔断阈值时，应先消费剩余工具调用', async () => {
       executeToolMock.mockResolvedValue({
         success: true,

@@ -41,6 +41,7 @@ export type {
   ExecutorLlmInvocationKind,
   ExecutorLocalPatch,
   ExecutorLocalState,
+  ToolBatchCompletionMode,
   GraphNode,
   RuntimeEventCommitPort,
   RuntimeEventSink,

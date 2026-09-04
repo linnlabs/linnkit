@@ -138,6 +138,53 @@ describe('createHostToolCallBootstrap', () => {
     ]);
   });
 
+  it('按 Host 策略在工具批次完成后直接 yield，不调用 llm', async () => {
+    const executeTool = vi.fn<ToolRuntimePort['executeTool']>(async () => ({
+      success: true,
+      result: JSON.stringify({ observation: 'workspace read completed', data: { ok: true } }),
+      durationMs: 1,
+    }));
+    const toolRuntime: Pick<ToolRuntimePort, 'getToolDefinition' | 'executeTool'> = {
+      getToolDefinition: () => ({ parameters: { type: 'object', properties: {} } }),
+      executeTool,
+    };
+    const observationPreview: ObservationPreviewPort = {
+      truncateObservation: async ({ text }) => ({ truncated: false, preview: text }),
+    };
+    const llmNode: GraphNode = { id: 'llm', run: vi.fn() };
+    const executor = new GraphExecutor(new MemoryCheckpointer(), { maxSteps: 4 });
+    executor.registerNode(new ToolNode({ toolRuntime, observationPreview }));
+    executor.registerNode(llmNode);
+    const bootstrap = createHostToolCallBootstrap({
+      eventId: 'event-cli-decision',
+      conversationId: 'conversation-cli',
+      turnId: 'turn-cli',
+      toolName: 'read_file',
+      toolCallId: 'call-cli',
+      args: { locator: 'workspace:/notes.md' },
+      completionMode: 'yield_after_batch',
+    });
+    const sequencer = new execution.EventSequencer('conversation-cli');
+    const eventBus = new execution.EventBus(sequencer.getExecutionId());
+    const publisher = new execution.RuntimeEventPublisher(eventBus, sequencer, {
+      run_id: RunIdSchema.parse('run-cli'),
+      lane: 'foreground',
+      visibility: 'conversation',
+    });
+    const runtimeEventSink: RuntimeEventSink = (event, source) => publisher.publish(event, source);
+
+    await executor.prime(
+      'checkpoint-cli',
+      { ...bootstrap.localPatch, toolContext: {}, runtimeEventSink },
+      bootstrap.nodeId,
+    );
+    const result = await executor.runUntilYield('checkpoint-cli');
+
+    expect(result.stepCount).toBe(1);
+    expect(result.events.some(event => event.type === 'tool_output')).toBe(true);
+    expect(llmNode.run).not.toHaveBeenCalled();
+  });
+
   it('拒绝缺失稳定身份的 host 起点', () => {
     expect(() =>
       createHostToolCallBootstrap({
