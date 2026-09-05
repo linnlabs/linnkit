@@ -19,7 +19,7 @@ jobs:
         with:
           node-version: '24'
           package-manager-cache: false
-      - run: npm install --no-audit --no-fund
+      - run: npm ci --no-audit --no-fund
       - name: Verify Linnkit core
         run: |
           npm run typecheck

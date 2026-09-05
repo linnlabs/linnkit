@@ -10,7 +10,7 @@ linnkit is an open-source project licensed under MIT. Contributions of all kinds
 
 **Requirements**
 
-- Node.js `>=20`
+- Node.js `24` for development and release builds (runtime bundles still target Node.js 20)
 - npm `>=9`
 
 **Getting started**
@@ -21,7 +21,7 @@ git clone https://github.com/linnlabs/linnkit.git
 cd linnkit
 
 # Install dependencies
-npm install --no-audit --no-fund
+npm ci --no-audit --no-fund
 
 # Verify the setup
 npm run test:smoke
@@ -34,7 +34,7 @@ npm run test:smoke
 | Command | What it runs |
 |---------|-------------|
 | `npm run test:smoke` | Package shell smoke test — verifies exports and sub-entrypoints resolve correctly |
-| `npm run test:smoke:dist` | Runtime import + browser-safe events seam test against the built dist |
+| `npm run test:smoke:dist` | Runtime import, browser-safe events seam and strict package-consumer declaration tests against built dist |
 | `npm run test` | Full vitest suite |
 | `npm run typecheck` | TypeScript type check (no emit) |
 | `npm run build` | Build dist (required before `test:smoke:dist`) |
@@ -46,6 +46,26 @@ npm run typecheck && npm run build && npm run test
 ```
 
 All three must pass.
+
+### Declaration build and release boundary
+
+`build/packageEntries.ts` owns the entry map used by both JavaScript and declaration builds.
+tsup only builds JavaScript; `build/declarations.ts` uses the pinned `rollup-plugin-dts`
+with `preserveModules` to keep one declaration module graph. Do not merge declarations
+back into shared chunks: cross-chunk namespace re-exports can lose type members, while
+independently bundling each entry can duplicate class and branded-type identities.
+Do not repair generated declarations with text replacements or consumer-side assertions.
+
+`__tests__/fixtures/package-consumer/tsconfig.json` deliberately does not inherit source
+aliases. It resolves the package's public `exports` to `dist`, checks every public entry
+with `skipLibCheck: false`, and exercises nested namespaces, class identity, generic
+child-run contracts and invalid Host input in Bundler and NodeNext modes. Source-only
+typechecks and JavaScript import tests cannot replace this release gate.
+
+Commit `package-lock.json` with build dependency changes; CI and release use `npm ci`.
+After verification, a version-matching `v*` tag triggers the existing npm Trusted
+Publishing workflow. Fixes that restore existing declarations without adding exports
+or changing contracts use a patch version; new public contracts still require a minor.
 
 ---
 

@@ -39,5 +39,5 @@
       "@linnlabs/linnkit/quickstart": ["./src/quickstart/index.ts"]
     }
   },
-  "include": ["__tests__/**/*.ts"]
+  "include": ["__tests__/**/*.ts", "build/**/*.ts", "tsup.config.ts"]
 }

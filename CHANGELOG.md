@@ -14,6 +14,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.32.1] - 2026-09-05
+
+### Fixed
+
+- Preserve type and value exports inside published namespaces, including nested
+  `runtimeKernel.graph`, generic child-run contracts and Host ports. The previous
+  declaration bundler emitted some imported types as value-only aliases, causing
+  downstream TypeScript errors despite valid source contracts.
+- Preserve one declaration module graph with pinned `rollup-plugin-dts`, independently
+  of tsup's JavaScript bundles; avoid cross-chunk namespace flattening and duplicate
+  class identities. Public entrypoints and runtime behavior are unchanged.
+- Verify all public declaration entrypoints with strict Bundler and NodeNext consumers,
+  without source aliases or `skipLibCheck`, in CI and the release gate.
+
 ## [0.32.0] - 2026-09-04
 
 ### Added

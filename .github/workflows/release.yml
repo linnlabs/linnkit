@@ -36,7 +36,7 @@ jobs:
           npm install -g npm@11.17.0
           node --version
           npm --version
-      - run: npm install --no-audit --no-fund
+      - run: npm ci --no-audit --no-fund
       - name: Verify Linnkit core
         run: |
           npm run typecheck

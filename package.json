@@ -1,6 +1,6 @@
 {
   "name": "@linnlabs/linnkit",
-  "version": "0.32.0",
+  "version": "0.32.1",
   "type": "module",
   "description": "A fine-grained context engineering framework for Agent applications — control every token sent to the model, with clear run lifecycle, audit records, and testable protocol boundaries.",
   "license": "MIT",
@@ -77,7 +77,7 @@
     "./package.json": "./package.json"
   },
   "scripts": {
-    "build": "tsup",
+    "build": "tsup && node build/declarations.ts",
     "build:clean": "rm -rf dist",
     "prepublishOnly": "npm run build:clean && npm run build && npm run test:smoke && npm run test:smoke:dist",
     "publish:npm": "npm publish",
@@ -85,7 +85,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.src.json && tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
     "test:smoke": "vitest run __tests__/package.shell.test.ts",
-    "test:smoke:dist": "vitest run __tests__/package.runtime-import.test.ts __tests__/package.events-browser-safe.test.ts"
+    "test:smoke:dist": "vitest run __tests__/package.runtime-import.test.ts __tests__/package.events-browser-safe.test.ts __tests__/package.declarations.test.ts"
   },
   "dependencies": {
     "eventsource-parser": "^3.1.0",
@@ -102,12 +102,14 @@
   },
   "devDependencies": {
     "@types/node": "^24.3.0",
+    "rollup": "4.63.1",
+    "rollup-plugin-dts": "6.5.1",
     "tsup": "^8.0.0",
     "typescript": "^5.5.4",
     "vitest": "^3.2.4"
   },
   "linnkit": {
-    "phase": "development (0.32.0 — host tool batch completion policy)",
+    "phase": "development (0.32.1 — preserve published namespace types)",
     "sourceOfTruth": "CHANGELOG.md",
     "notes": [
       "子入口 ./runtime-kernel/events 是 browser-safe slim seam：仅暴露 events governance 纯函数，禁止扩展任何 Node-only 依赖（如 node:async_hooks / crypto / fs）",
