@@ -65,7 +65,26 @@ export type LlmNodeAction =
       type: 'WAIT_USER_DECISION';
       spec: Record<string, unknown>;
       lastToolResult: Record<string, unknown>;
-    };
+  };
+
+/**
+ * 在发布 RuntimeEvent 前校验答案 chunk 序号，不推进任何状态。
+ *
+ * 中文备注：发布 sink 可能失败；校验与提交必须分开，避免失败的事实先消耗序号。
+ */
+export function assertLlmNodeStreamChunkSequence(
+  state: Pick<LlmNodeLocalState, 'answerId' | 'chunkSeq'>,
+  answerId: string,
+  seq: number,
+): void {
+  const answerChanged = state.answerId !== answerId;
+  const expectedSeq = answerChanged ? 0 : state.chunkSeq;
+  if (seq !== expectedSeq) {
+    throw new Error(
+      `final_answer_chunk sequence mismatch: answer=${answerId}, expected=${expectedSeq}, actual=${seq}`,
+    );
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Reducer
@@ -84,13 +103,9 @@ export function llmNodeReducer(
 ): LlmNodeLocalState {
   switch (action.type) {
     case 'STREAM_CHUNK_RECEIVED': {
+      assertLlmNodeStreamChunkSequence(state, action.answerId, action.seq);
       const answerChanged = state.answerId !== action.answerId;
       const expectedSeq = answerChanged ? 0 : state.chunkSeq;
-      if (action.seq !== expectedSeq) {
-        throw new Error(
-          `final_answer_chunk sequence mismatch: answer=${action.answerId}, expected=${expectedSeq}, actual=${action.seq}`,
-        );
-      }
       return {
         ...state,
         answerId: action.answerId,

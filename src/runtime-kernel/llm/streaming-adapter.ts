@@ -177,14 +177,17 @@ export async function callLlmStream(params: CallLlmStreamParams): Promise<LlmCal
       case 'answer_delta':
         emitThoughtComplete(thoughtSegmenter.onBoundary());
         fullResponse += event.text;
+        const seq = streamChunkSeq;
         emit({
           type: 'stream_chunk',
           timestamp: Date.now(),
           content: event.text,
           id: generateRuntimeEventId(),
           answer_id: streamAnswerId,
-          seq: streamChunkSeq++,
+          seq,
         });
+        // 序号表示已经被下游接纳的 chunk。回调失败时保留当前序号，避免下一次发布跳号。
+        streamChunkSeq += 1;
         return;
       case 'thought_delta': {
         const delta = thoughtSegmenter.onThoughtDelta(event.text);

@@ -14,6 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.32.2] - 2026-09-07
+
+### Fixed
+
+- Keep answer chunk sequence allocation transactional across the streaming adapter and Graph runtime event bridge. A failed downstream publish no longer consumes the current `final_answer_chunk.seq`, so a subsequent retry can publish the same chunk without creating a sequence gap.
+
 ## [0.32.1] - 2026-09-05
 
 ### Fixed

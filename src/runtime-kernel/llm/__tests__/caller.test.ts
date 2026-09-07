@@ -114,6 +114,25 @@ describe('LlmCaller canonical inference 主链', () => {
     expect(harness.requests[0]?.invocation.attempt_id).toMatch(/^inference-attempt-/);
   });
 
+  it('流式 adapter 在长答案中保持从 0 连续递增的 chunk 序号', async () => {
+    const chunkCount = 512;
+    const harness = createScriptedPort([async function* (request) {
+      yield { type: 'start', model_id: request.model_id, attempt_id: request.invocation.attempt_id };
+      for (let index = 0; index < chunkCount; index += 1) {
+        yield { type: 'answer_delta', text: `chunk-${index}` };
+      }
+      yield { type: 'finish', reason: 'stop' };
+    }]);
+    const caller = new LlmCaller({ inferencePort: harness.port, modelCatalog: modelCatalog() });
+    const events: AnyAgentEvent[] = [];
+
+    await caller.callStream('test-model', testMessages, {}, event => events.push(event));
+
+    const chunks = events.filter((event): event is Extract<AnyAgentEvent, { type: 'stream_chunk' }> => event.type === 'stream_chunk');
+    expect(chunks).toHaveLength(chunkCount);
+    expect(chunks.map(chunk => chunk.seq)).toEqual([...Array(chunkCount).keys()]);
+  });
+
   it('保持 answer/thought/tool/continuation/usage 的结构化边界', async () => {
     const replay = continuation();
     const canonicalUsage = {

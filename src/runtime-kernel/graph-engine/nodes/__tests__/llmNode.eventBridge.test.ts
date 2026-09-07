@@ -9,7 +9,8 @@ const identity = {
   visibility: 'conversation' as const,
 };
 
-function createSubject(options: { publishError?: Error } = {}) {
+function createSubject(options: { publishError?: Error; failPublishCount?: number } = {}) {
+  let remainingPublishFailures = options.failPublishCount ?? (options.publishError ? Infinity : 0);
   let state = initLlmNodeState({ answerId: undefined, chunkSeq: 0 });
   const published: RuntimeEvent[] = [];
   const failureFacts: RuntimeEvent[] = [];
@@ -21,7 +22,10 @@ function createSubject(options: { publishError?: Error } = {}) {
       state = llmNodeReducer(state, action);
     },
     runtimeEventSink: event => {
-      if (options.publishError) throw options.publishError;
+      if (options.publishError && remainingPublishFailures > 0) {
+        remainingPublishFailures -= 1;
+        throw options.publishError;
+      }
       const routed = routeRuntimeEvent(event, identity);
       published.push(routed);
       return routed;
@@ -285,5 +289,50 @@ describe('LlmNodeEventBridge runtime facts', () => {
       })
     ).toThrow(publishError);
     expect(actions.some(action => action.type === 'RUNTIME_EVENT_BUFFERED')).toBe(false);
+  });
+
+  it('答案 chunk 发布失败不会消耗序号，下一次仍可发布同一序号', () => {
+    const { bridge, published, actions, getState } = createSubject({
+      publishError: new Error('first publish failed'),
+      failPublishCount: 1,
+    });
+    const firstChunk: TickEvent = {
+      type: 'stream_chunk',
+      id: 'chunk_0',
+      timestamp: 1,
+      answer_id: 'answer_retryable',
+      seq: 0,
+      content: '第一块',
+    };
+
+    expect(() => emit(bridge, firstChunk)).toThrow('first publish failed');
+    expect(getState()).toMatchObject({ answerId: undefined, chunkSeq: 0 });
+    expect(actions.some(action => action.type === 'STREAM_CHUNK_RECEIVED')).toBe(false);
+    expect(published).toHaveLength(0);
+
+    emit(bridge, firstChunk);
+    expect(published).toHaveLength(1);
+    expect(published[0]).toMatchObject({ answer_id: 'answer_retryable', seq: 0 });
+    expect(getState()).toMatchObject({ answerId: 'answer_retryable', chunkSeq: 1 });
+  });
+
+  it('连续长流只为已发布 chunk 分配单调序号', () => {
+    const { bridge, published, getState } = createSubject();
+    const chunkCount = 512;
+
+    for (let seq = 0; seq < chunkCount; seq += 1) {
+      emit(bridge, {
+        type: 'stream_chunk',
+        id: `chunk_${seq}`,
+        timestamp: seq + 1,
+        answer_id: 'answer_long_stream',
+        seq,
+        content: String(seq),
+      });
+    }
+
+    expect(published).toHaveLength(chunkCount);
+    expect(published.every((event, index) => event.type === 'final_answer_chunk' && event.seq === index)).toBe(true);
+    expect(getState()).toMatchObject({ answerId: 'answer_long_stream', chunkSeq: chunkCount });
   });
 });

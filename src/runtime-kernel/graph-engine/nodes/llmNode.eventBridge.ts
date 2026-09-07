@@ -4,7 +4,11 @@ import {
   createStandaloneFinalAnswerChunk,
   FinalAnswerAssembler,
 } from '../../events/finalAnswerAssembler';
-import type { LlmNodeLocalState, LlmNodeAction } from './llmNode.state';
+import {
+  assertLlmNodeStreamChunkSequence,
+  type LlmNodeLocalState,
+  type LlmNodeAction,
+} from './llmNode.state';
 import {
   type FinalAnswerCompletionReason,
   type AssistantReplayPart,
@@ -74,12 +78,21 @@ export class LlmNodeEventBridge {
           throw new Error('final_answer did not map to a final_answer RuntimeEvent.');
         }
         const liveChunk = createStandaloneFinalAnswerChunk(finalAnswer);
+        assertLlmNodeStreamChunkSequence(
+          this.deps.getState(),
+          liveChunk.answer_id,
+          liveChunk.seq,
+        );
+        const publishedChunk = this.publish(liveChunk, 'LlmNode.final_answer_chunk.standalone');
+        if (publishedChunk.type !== 'final_answer_chunk') {
+          throw new Error('RuntimeEvent sink changed standalone final_answer_chunk type.');
+        }
         this.deps.dispatch({
           type: 'STREAM_CHUNK_RECEIVED',
-          answerId: liveChunk.answer_id,
-          seq: liveChunk.seq,
+          answerId: publishedChunk.answer_id,
+          seq: publishedChunk.seq,
         });
-        this.buffer(this.publish(liveChunk, 'LlmNode.final_answer_chunk.standalone'));
+        this.buffer(publishedChunk);
         this.buffer(this.publish(finalAnswer, 'LlmNode.final_answer'));
       }
       this.deps.dispatch({ type: 'FINAL_ANSWER_RECEIVED' });
@@ -107,15 +120,20 @@ export class LlmNodeEventBridge {
     if (!runtimeEvent || runtimeEvent.type !== 'final_answer_chunk') {
       throw new Error('stream_chunk did not map to final_answer_chunk.');
     }
-    this.deps.dispatch({
-      type: 'STREAM_CHUNK_RECEIVED',
-      answerId: runtimeEvent.answer_id,
-      seq: runtimeEvent.seq,
-    });
+    assertLlmNodeStreamChunkSequence(
+      this.deps.getState(),
+      runtimeEvent.answer_id,
+      runtimeEvent.seq,
+    );
     const published = this.publish(runtimeEvent, 'LlmNode.final_answer_chunk');
     if (published.type !== 'final_answer_chunk') {
       throw new Error('RuntimeEvent sink changed final_answer_chunk type.');
     }
+    this.deps.dispatch({
+      type: 'STREAM_CHUNK_RECEIVED',
+      answerId: published.answer_id,
+      seq: published.seq,
+    });
     this.assembler.push(published);
     this.buffer(published);
   }
