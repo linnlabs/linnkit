@@ -6,9 +6,11 @@ import { runTickPipeline } from '../runTickPipeline';
 const loggerWarnMock = vi.fn();
 
 vi.mock('../../../../shared/logger', () => ({
-  Logger: vi.fn().mockImplementation(() => ({
-    warn: loggerWarnMock,
-  })),
+  Logger: vi.fn().mockImplementation(function MockLogger() {
+    return {
+      warn: loggerWarnMock,
+    };
+  }),
 }));
 
 function createContext() {

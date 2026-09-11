@@ -14,6 +14,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.32.3] - 2026-09-11
+
+### Changed
+
+- Allow testkit consumers to use Vitest 4 while preserving compatibility with
+  existing Vitest 2 and 3 hosts.
+
 ## [0.32.2] - 2026-09-07
 
 ### Fixed

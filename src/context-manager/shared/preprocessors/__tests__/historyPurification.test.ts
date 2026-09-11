@@ -1,8 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const LoggerMock = vi.fn().mockImplementation(() => ({
-  debug: vi.fn(),
-}));
+const LoggerMock = vi.fn().mockImplementation(function MockLogger() {
+  return {
+    debug: vi.fn(),
+  };
+});
 
 vi.mock('../../../../shared/logger', () => ({
   Logger: LoggerMock,

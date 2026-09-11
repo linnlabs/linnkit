@@ -10,8 +10,8 @@
  *   1. 之前会炸的 4 个入口（runtime-kernel / context-manager / index）现在能干净 import
  *   2. browser-safe seam (runtime-kernel/events) 一直能 import
  *   3. 纯类型入口 (contracts / ports) 一直能 import
- *   4. testkit 入口 by-design 在 vitest 上下文外 throw 特定错误（受 AGENT-GUARD-10 约束，
- *      只能在 vitest run 内 import）—— 行为锁定，防止有人误以为它能在生产代码 import
+ *   4. testkit 的 ESM 入口可被 Vitest 4 在普通 Node 中解析，CJS 入口仍按 Vitest 合同拒绝；
+ *      生产代码禁用 testkit 由 AGENT-GUARD-10 守护，不依赖上游包的偶然 import 行为
  *   5. dist 文件里 tiktoken 必须以 require/import external 模式出现，不能 inline；
  *      并且 dist 不能含 tiktoken_bg.wasm 资源路径字符串
  *
@@ -192,29 +192,20 @@ describe('package.runtime-import — dist 子入口隔离 import 烟雾测试', 
     });
   });
 
-  describe('testkit 入口（AGENT-GUARD-10：只能在 vitest run 上下文 import）', () => {
-    const TESTKIT_ENTRIES = ['dist/testkit.js', 'dist/testkit.cjs'] as const;
+  describe('testkit 入口（AGENT-GUARD-10：生产代码禁止引用）', () => {
+    it('ESM 入口在普通 Node 中可解析，生产边界不依赖 Vitest 的隐式抛错', async () => {
+      const result = await nodeImport('dist/testkit.js');
+      expect(result.ok).toBe(true);
+      expect(result.stdout).toContain('ok');
+      expect(result.stderr).not.toContain('tiktoken_bg.wasm');
+    });
 
-    it.each(TESTKIT_ENTRIES)(
-      'import("./%s") 在普通 node 里应该 throw 跟 vitest 相关的错误（行为锁定，证明它必须在 vitest 上下文用）',
-      async (entry) => {
-        const result = await nodeImport(entry);
-        expect(result.ok).toBe(false);
-        // ESM 入口 throw "Vitest failed to access its internal state"
-        // CJS 入口 throw "Vitest cannot be imported in a CommonJS module using require()"
-        // 两者都证明 vitest 模块只能在 vitest 上下文 import；这是 by-design，
-        // AGENT-GUARD-10 已经在生产代码层禁止 import @linnlabs/linnkit/testkit
-        const isVitestContextError =
-          /Vitest failed to access its internal state/.test(result.stderr) ||
-          /Vitest cannot be imported in a CommonJS module/.test(result.stderr);
-        if (!isVitestContextError) {
-          throw new Error(
-            `${entry} 期望 throw vitest 上下文相关错误，实际:\n${result.stderr}`
-          );
-        }
-        expect(result.stderr).not.toContain('tiktoken_bg.wasm');
-      }
-    );
+    it('CJS 入口按 Vitest 4 合同拒绝 require', async () => {
+      const result = await nodeImport('dist/testkit.cjs');
+      expect(result.ok).toBe(false);
+      expect(result.stderr).toContain('Vitest cannot be imported in a CommonJS module');
+      expect(result.stderr).not.toContain('tiktoken_bg.wasm');
+    });
   });
 
   describe('结构性退化守卫', () => {

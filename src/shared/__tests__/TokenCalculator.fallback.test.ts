@@ -3,9 +3,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const loggerWarnMock = vi.fn();
 
 vi.mock('../logger', () => ({
-  Logger: vi.fn().mockImplementation(() => ({
-    warn: loggerWarnMock,
-  })),
+  Logger: vi.fn().mockImplementation(function MockLogger() {
+    return {
+      warn: loggerWarnMock,
+    };
+  }),
 }));
 
 vi.mock('tiktoken', () => ({

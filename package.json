@@ -1,6 +1,6 @@
 {
   "name": "@linnlabs/linnkit",
-  "version": "0.32.2",
+  "version": "0.32.3",
   "type": "module",
   "description": "A fine-grained context engineering framework for Agent applications — control every token sent to the model, with clear run lifecycle, audit records, and testable protocol boundaries.",
   "license": "MIT",
@@ -92,7 +92,7 @@
     "tiktoken": "^1.0.22"
   },
   "peerDependencies": {
-    "vitest": "^2.0.0 || ^3.0.0",
+    "vitest": "^2.0.0 || ^3.0.0 || ^4.0.0",
     "zod": "^3.22.0"
   },
   "peerDependenciesMeta": {
@@ -106,10 +106,10 @@
     "rollup-plugin-dts": "6.5.1",
     "tsup": "^8.0.0",
     "typescript": "^5.5.4",
-    "vitest": "^3.2.4"
+    "vitest": "^4.1.11"
   },
   "linnkit": {
-    "phase": "development (0.32.2 — transactional answer chunk sequence)",
+    "phase": "development (0.32.3 — Vitest 4 testkit compatibility)",
     "sourceOfTruth": "CHANGELOG.md",
     "notes": [
       "子入口 ./runtime-kernel/events 是 browser-safe slim seam：仅暴露 events governance 纯函数，禁止扩展任何 Node-only 依赖（如 node:async_hooks / crypto / fs）",

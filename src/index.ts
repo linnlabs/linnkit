@@ -16,8 +16,8 @@ export type {
 // 在源码顶层直接 `import { vi, expect } from 'vitest'`；这是测试专用依赖。
 // tsup/esbuild 处理 `export * as testkit from './testkit'` 时会把 testkit 整棵
 // 子树静态加入图，**即便消费侧从未使用 `testkit` namespace**，结果会把 vitest
-// runtime 拖入 backend production bundle，导致 electron main 启动时抛
-// "Vitest failed to access its internal state."。
+// runtime 拖入 backend production bundle；具体版本是否在加载时抛错并不稳定，
+// 不能把上游包的偶然失败行为当成生产边界。
 // 必须通过显式子入口 `import * as testkit from 'linnkit/testkit'` 使用，且
 // 该子入口只能在 testkit/test 文件里被引用（由 `npm run lint:codename` 守护）。
 export {
