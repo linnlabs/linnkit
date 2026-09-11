@@ -40,6 +40,7 @@ const handle = await supervisor.registerRun({
 - runner 生命周期必须显式写：启动前 `markRunning()`，正常结束 `markCompleted()`，异常结束 `markFailed()`。取消请求先由 `handle.cancel({ reason })` 写 `cancelled` 并触发 abort；执行器取得真实结果后，再用第二个 lifecycle patch 补全 `currentNode / iterationsUsed`。
 - `WaitUserNode` 创建的 `requires_user_interaction` 是正式 pause 事实。它必须经 `RuntimeEventPublisher` 附着正式 `run_id / lane / visibility`，与其他事实一起发布和持久化。host runner 在 persistence drain 成功后才能调用 `markAwaitingUser()`，不得从 Graph 返回值 cherry-pick 后补发第二份事件。
 - HITL 恢复使用 `claimResume(runId, interaction, eventBus, signal)`。返回的 `RunResumeClaim` 先原子占用一次性 interaction，但保持 `awaiting_user`；host 只有在响应事实持久化成功后才能调用 `activate()`，持久化前失败调用 `release()`。这样并发/重复提交只有一个能激活，也不会在 runner 启动前留下半恢复的 running run。
+- 可恢复 Host 通过 `activate({ executionId, inputEventIds, admissionCommit })` 把响应事实与激活状态放入同一事务。`metadata.resumeInputs` 保留已提交的响应引用及原 checkpoint revision；重启若 Graph 仍停在原等待边界，Host 读取这些事实完成原 response 的 resume，不能要求用户再次提交。只有瞬时能力在新 execution 中重新装配。
 - `RunResumeInteraction` 必须完整匹配 `interactionId / toolCallId / checkpointRevision / resumeToken`。host 必须让 GraphExecutor 用同一 `runId` 的 checkpoint 恢复，禁止注册替代 run 或按 conversation 查“最近 checkpoint”。
 - 多个 run 共享观察通道时，已发布事件必须带正式 `run_id`。`RunHandle.observe()` 只接收当前 run 的事实；缺少 run identity 是 publisher 边界错误，不能通过 metadata 别名或无差别透传补救。
 - `registerRun()` / `spawnDetached()` 会把 `AgentSpec` 与 request 作为注册时快照保存；`spawnDetached()` 的 executor 也读取这份快照。调用方后续修改原始对象不会改变已经注册的后台 run。
@@ -47,6 +48,8 @@ const handle = await supervisor.registerRun({
 - `spawnDetached()` 正常完成或失败后会释放 handle、abort controller 和 EventBus 监听。外部取消只先触发 abort；必须等 executor settlement 写入最终进度后，`waitForTerminal()` 才返回并释放资源。
 - `maxActiveRuns` 是拒绝式背压，不是队列。超限时 `registerRun()` / `spawnDetached()` 会抛 `RunConcurrencyLimitExceededError`，host 应在上层 orchestration 决定是提示用户、排队还是重试。
 - `concurrencyKey` 是 host 定义的进程内原子唯一键。适合表达 `conversation:<id>:foreground` 这类业务约束；允许并行的 auxiliary 不应复用 foreground key。禁止用“先 list/find、再 register”替代，因为两个请求可同时通过查询。
+- 已暂停运行被新请求替代时，`registerRun` 使用 `replacesPausedRun` 的原 run / execution / updatedAt 身份，以及 `admissionCommit`。Host 必须在一个事务中核对旧记录、提交旧 cancelled、新 pending 和新请求必要输入；提交失败保留旧暂停运行及其并发名额。不能先取消旧运行再尝试保存新输入。普通注册也可通过同一 `admissionCommit` 原子保存身份与输入。
+- 继续操作应同时提交 `expectedExecutionId` 与 `expectedUpdatedAt`；时间戳只表示暂停状态时间，不能独自防止同毫秒暂停、继续、再暂停后的旧命令重放。
 - transport `EventBus.close()` 不等于 run 终态。`awaiting_user` 会保留 handle/slot；恢复时 `claimResume.activate()` 把同一 RunHandle 换绑到新的 transport EventBus，并轮换 execution controller，`observeRun()` 可跨 transport 连续观察。同步 run 在 completed/failed/cancelled 后释放；detached 取消还必须等 executor settlement。
 - detached run 执行中如果 EventBus 提前 close，不会提前释放 active slot，避免后台 run 绕过并发限制；slot 会等 detached executor 终态 cleanup。
 - `pause()` 先持久化暂停意图，再以 `RunPauseRequested` 中断当前 attempt；此时 `status=paused` 且 `pausedAt` 缺失，表示仍在收口。Host 保存断点、收口当前 execution 后调用 `markPaused()`，才允许 `resumePausedRun()` 激活。它不创建用户消息，也不提交任何审批。

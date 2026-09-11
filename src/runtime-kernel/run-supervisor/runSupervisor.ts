@@ -10,6 +10,7 @@ import type {
   RunOutcome,
   RunRegistrationSpec,
   RunResumeClaim,
+  RunResumeActivation,
   RunResumeInteraction,
   RunSnapshot,
   RunSupervisor,
@@ -66,6 +67,7 @@ export type {
   RunOutcome,
   RunRegistrationSpec,
   RunResumeClaim,
+  RunResumeActivation,
   RunResumeInteraction,
   RunSnapshot,
   RunSupervisor,
@@ -141,6 +143,9 @@ export class DefaultRunSupervisor<TRequest extends RunRequestSnapshot = RunReque
   }
 
   async registerRun(spec: RunRegistrationSpec<TRequest>): Promise<RunHandle<TRequest>> {
+    if (spec.replacesPausedRun) {
+      return this.withRunControlLock(spec.replacesPausedRun.runId, () => this.registerPausedReplacement(spec));
+    }
     const runId = spec.runId ?? this.runIdFactory();
     if (this.handles.has(runId) || (await this.registryStore.load(runId))) {
       throw new RunAlreadyRegisteredError(runId);
@@ -154,12 +159,53 @@ export class DefaultRunSupervisor<TRequest extends RunRequestSnapshot = RunReque
     const record: RunRecord = createInitialRunRecord({ runId, spec, startedAt });
 
     try {
-      await this.registryStore.save(record);
+      if (spec.admissionCommit) await spec.admissionCommit(record);
+      else await this.registryStore.save(record);
     } catch (error) {
       this.releaseRunAdmission(runId);
       throw error;
     }
 
+    return this.attachRun(record, spec, controller);
+  }
+
+  private async registerPausedReplacement(spec: RunRegistrationSpec<TRequest>): Promise<RunHandle<TRequest>> {
+    const target = spec.replacesPausedRun;
+    if (!target || !spec.concurrencyKey || !spec.admissionCommit || !this.registryStore.compareAndSwap) {
+      throw new Error('Paused replacement requires concurrency identity and atomic admissionCommit');
+    }
+    this.getHandle(target.runId);
+    const previous = await this.registryStore.load(target.runId);
+    if (!previous || previous.status !== 'paused' || previous.pausedAt === undefined
+      || previous.updatedAt !== target.expectedUpdatedAt
+      || previous.metadata?.executionId !== target.expectedExecutionId
+      || previous.conversationId !== spec.conversationId || previous.parentRunId !== spec.parentRunId) {
+      throw new RunInteractionConflictError(target.runId, 'replacement does not match the settled pause');
+    }
+    const runId = spec.runId ?? this.runIdFactory();
+    if (this.handles.has(runId) || await this.registryStore.load(runId)) throw new RunAlreadyRegisteredError(runId);
+    // 同步转移并发名额；持久事务失败时归还原 owner。旧 run 的 continue/cancel 同时受控制锁保护。
+    this.runConcurrencyKeys.transfer(previous.runId, runId, spec.concurrencyKey);
+    this.runSlotLimiter.release(previous.runId);
+    this.runSlotLimiter.acquire(runId);
+    const now = this.now();
+    const record = createInitialRunRecord({ runId, spec, startedAt: now });
+    const next: RunRecord = {
+      ...previous, status: 'cancelled', updatedAt: now,
+      errorIfAny: { errorCode: 'RUN_REPLACED', message: 'Replaced by a newly accepted request', recoverable: false },
+    };
+    try {
+      await spec.admissionCommit(record, { previous, next });
+    } catch (error) {
+      this.runSlotLimiter.release(runId);
+      this.runSlotLimiter.acquire(previous.runId);
+      this.runConcurrencyKeys.transfer(runId, previous.runId, spec.concurrencyKey);
+      throw error;
+    }
+    this.cleanupRunResources(previous.runId);
+    this.notifyTerminalWaiters(previous.runId);
+    const controller = new AbortController();
+    forwardParentAbortSignal(controller, spec.parentSignal);
     return this.attachRun(record, spec, controller);
   }
 
@@ -319,7 +365,8 @@ export class DefaultRunSupervisor<TRequest extends RunRequestSnapshot = RunReque
       const handle = this.getHandle(input.runId);
       const record = await this.registryStore.load(input.runId);
       if (!record || record.status !== 'paused' || record.pausedAt === undefined
-        || record.updatedAt !== input.expectedUpdatedAt) {
+        || record.updatedAt !== input.expectedUpdatedAt
+        || (input.expectedExecutionId !== undefined && record.metadata?.executionId !== input.expectedExecutionId)) {
         throw new RunInteractionConflictError(input.runId, 'run is not settled at the expected pause');
       }
       await persistRunTransition(this.registryStore, record, {
@@ -459,7 +506,7 @@ export class DefaultRunSupervisor<TRequest extends RunRequestSnapshot = RunReque
     runId: RunId,
     claimId: string,
     parentSignal?: AbortSignal,
-    execution?: { readonly executionId: import('../../contracts').ExecutionId },
+    execution?: RunResumeActivation,
   ): Promise<RunHandle<TRequest>> {
     return this.withRunControlLock(runId, async () => {
       const handle = this.getHandle(runId);
@@ -489,7 +536,7 @@ export class DefaultRunSupervisor<TRequest extends RunRequestSnapshot = RunReque
       }
       const awaitingUserWithoutClaim = { ...awaitingUser };
       Reflect.deleteProperty(awaitingUserWithoutClaim, 'resumeClaim');
-      await persistRunTransition(this.registryStore, record, {
+      const nextRecord: RunRecord = {
         ...record,
         status: 'running',
         updatedAt: this.now(),
@@ -499,6 +546,9 @@ export class DefaultRunSupervisor<TRequest extends RunRequestSnapshot = RunReque
         metadata: {
           ...(record.metadata ?? {}),
           ...(execution ? { executionId: execution.executionId } : {}),
+          ...(execution?.inputEventIds ? { resumeInputs: {
+            eventIds: [...execution.inputEventIds], checkpointRevision: pendingInteraction.checkpointRevision,
+          } } : {}),
           awaitingUser: {
             ...awaitingUserWithoutClaim,
             interaction: {
@@ -507,7 +557,9 @@ export class DefaultRunSupervisor<TRequest extends RunRequestSnapshot = RunReque
             },
           },
         },
-      });
+      };
+      if (execution?.admissionCommit) await execution.admissionCommit(record, nextRecord);
+      else await persistRunTransition(this.registryStore, record, nextRecord);
       // resume 是同一逻辑 run 的新 execution。只有 claim 激活后的新 transport
       // 才能取消它，旧 transport 的迟到 abort 不得跨 execution 传播。
       const executionController = new AbortController();

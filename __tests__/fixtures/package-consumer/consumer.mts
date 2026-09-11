@@ -13,6 +13,11 @@ const rootEventStore: runtimeKernel.graph.MemoryEventStore = eventStore;
 const events: graph.PersistedEvent[] = await rootEventStore.range('conversation-1');
 const replay: RuntimeEvent[] = events.map(entry => entry.event);
 void replay;
+const storedCheckpoint: graph.EngineState = graph.parseEngineCheckpoint({
+  nodeId: 'llm', schemaVersion: 1, revision: 3, executionStatus: 'ready',
+  local: { executorLocal: { stepCount: 2, maxSteps: 20 } },
+});
+void storedCheckpoint;
 
 // 泛型 parent context 必须贯穿 child-run 调用，不能退化为未检查的值。
 interface ParentContext extends tools.ToolExecutionContext {

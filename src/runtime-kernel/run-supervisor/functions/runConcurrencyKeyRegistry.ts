@@ -5,6 +5,7 @@ import type { RunId } from '../../../contracts';
 export interface RunConcurrencyKeyRegistry {
   acquire(runId: RunId, concurrencyKey: string | undefined): void;
   release(runId: RunId): void;
+  transfer(previous: RunId, next: RunId, concurrencyKey: string): void;
 }
 
 /**
@@ -37,5 +38,14 @@ export function createRunConcurrencyKeyRegistry(): RunConcurrencyKeyRegistry {
     }
   }
 
-  return { acquire, release };
+  function transfer(previous: RunId, next: RunId, concurrencyKey: string): void {
+    if (runIdByKey.get(concurrencyKey) !== previous || keyByRunId.has(next)) {
+      throw new RunConcurrencyKeyOccupiedError(concurrencyKey, runIdByKey.get(concurrencyKey) ?? previous, next);
+    }
+    keyByRunId.delete(previous);
+    keyByRunId.set(next, concurrencyKey);
+    runIdByKey.set(concurrencyKey, next);
+  }
+
+  return { acquire, release, transfer };
 }

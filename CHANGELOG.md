@@ -14,6 +14,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.34.0] - 2026-09-11
+
+### Added
+
+- Atomic Host admission hooks for initial requests, replacement of settled paused runs,
+  and human-interaction responses. Failed replacement leaves the original run resumable.
+- Paused activation can require the previous execution identity as well as the timestamp,
+  rejecting stale commands even when multiple transitions occur within one millisecond.
+- Public `graph.parseEngineCheckpoint` validates stored execution state without Host casts
+  or copied framework schemas, including budget, event and tool-call fields.
+
+### Clarified
+
+- Graph result `stepCount` is the current execution's increment; durable cumulative steps
+  remain in the checkpoint. A yielded checkpoint continues with zero new execution steps.
+
 ## [0.33.0] - 2026-09-11
 
 ### Added

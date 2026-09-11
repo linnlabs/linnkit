@@ -127,6 +127,7 @@ describe('durable graph continuation', () => {
       expectedRevision: (await f.checkpoint()).revision, capabilities: f.capabilities,
     });
     expect(result.stepCount).toBe(0);
+    expect(result.checkpoint.local?.executorLocal?.stepCount).toBeGreaterThan(0);
     expect(execute).toHaveBeenCalledTimes(2);
   });
 

@@ -37,6 +37,7 @@ export type {
   RunOutcome,
   RunRegistrationSpec,
   RunResumeClaim,
+  RunResumeActivation,
   RunResumeInteraction,
   RunSnapshot,
   RunSupervisor,

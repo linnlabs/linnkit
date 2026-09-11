@@ -16,6 +16,7 @@ export {
   PrimaryPromptCapacityError,
 } from './definitions/primaryPromptCapacityError';
 export { readCheckpointContextUsage } from './functions/engineStateSnapshot';
+export { parseEngineCheckpoint } from './functions/parseEngineCheckpoint';
 export { isRuntimeFailureFact } from './functions/runtimeFailureFact';
 export { ENGINE_STATE_SCHEMA_VERSION } from './types';
 export { RunPauseRequested, RunRecoveryBlockedError, isRunPauseSignal } from './definitions/runContinuation';

@@ -11,6 +11,7 @@
 ## 1. linnkit 给你的合同
 
 - `Checkpointer`（来自 `@linnlabs/linnkit/runtime-kernel`，在 `graph` namespace 下）：`load` / `save` / `clear` 三个必需方法 + `peekMeta` / `list` 两个可选。
+- JSON 持久化 adapter 使用 `graph.parseEngineCheckpoint` 解析读取结果，校验版本、执行位置、预算与事件合同并拒绝序列化能力对象；不能把 JSON 直接断言为 EngineState。Graph result 的 `stepCount` 是本 execution 增量，checkpoint `executorLocal.stepCount` 才是 durable run 的累计值；已 yielded 的继续返回零增量。
 - `Checkpointer` 的 key 参数叫 `checkpointKey`：它是 EngineState 快照索引。所有可独立运行的顶层、foreground、auxiliary、detached run 都必须使用稳定 `runId`；同步 child-run 使用自己的内部 run-scoped key。禁止用 `conversationId`，否则同会话并行 run 会互相覆盖。
 - `EventStore`（来自 `@linnlabs/linnkit/runtime-kernel`，在 `graph` namespace 下）：`append` / `range` / `latestEventStoreId` 三个必需 + `truncate` 可选。配套 `createMonotonicEventStoreIdFactory()` 帮你生成单调 storage cursor。
 - `RunRegistryStore`（来自 `@linnlabs/linnkit/runtime-kernel`，在 `runSupervisor` namespace 下）：run lifecycle 元数据落库。
