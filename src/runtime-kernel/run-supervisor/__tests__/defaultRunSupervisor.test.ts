@@ -172,6 +172,43 @@ async function registerOneRun() {
 }
 
 describe('DefaultRunSupervisor', () => {
+  it('Host 等待态 owner 不接纳未提交事件，持久提交后显式进入原审批', async () => {
+    const registryStore = new MemoryRunRegistryStore();
+    const supervisor = new DefaultRunSupervisor({ registryStore, awaitingUserStateOwner: 'host' });
+    const eventBus = new EventBus('host-execution');
+    const handle = await supervisor.registerRun({
+      runId: RunIdSchema.parse('host-wait'), conversationId: 'conv-1', agentSpec, request,
+      eventBus, eventStore: new MemoryEventStore(), costCollector: createCostCollector(),
+    });
+    await handle.markRunning();
+    eventBus.emit('event', wrapEvent(createWaitUserEvent(handle.runId), 1));
+    await nextTask();
+    expect((await handle.meta()).status).toBe('running');
+    await handle.markAwaitingUser({ eventId: 'wait-1', interaction: createResumeInteraction() });
+    eventBus.close();
+    await nextTask();
+    const claim = await supervisor.claimResume(handle.runId, createResumeInteraction(), new EventBus('response'));
+    await claim.activate();
+    expect((await handle.meta()).status).toBe('running');
+    await handle.markCompleted();
+  });
+
+  it('排在继续之后的旧暂停命令不能中断新 execution', async () => {
+    const { supervisor, handle } = await registerOneRun();
+    await handle.markRunning();
+    await supervisor.pause(handle.runId, 'pause', ExecutionIdSchema.parse('exec-1'));
+    await handle.markPaused();
+    const expectedUpdatedAt = (await handle.meta()).updatedAt;
+    const resumed = supervisor.resumePausedRun({ runId: handle.runId, expectedUpdatedAt,
+      expectedExecutionId: ExecutionIdSchema.parse('exec-1'), executionId: ExecutionIdSchema.parse('exec-2'),
+      eventBus: new EventBus('exec-2') });
+    const stalePause = supervisor.pause(handle.runId, 'late pause', ExecutionIdSchema.parse('exec-1'));
+    const results = await Promise.allSettled([resumed, stalePause]);
+    expect(results.map(result => result.status)).toEqual(['fulfilled', 'rejected']);
+    expect(handle.signal.aborted).toBe(false);
+    expect((await handle.meta()).status).toBe('running');
+  });
+
   it('重建原 run 后需显式继续；暂停收口前和竞争激活都被拒绝，旧 signal 隔离', async () => {
     const registryStore = new MemoryRunRegistryStore();
     const supervisor = new DefaultRunSupervisor({ registryStore });

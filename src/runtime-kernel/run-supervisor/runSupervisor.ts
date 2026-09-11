@@ -1,4 +1,4 @@
-import type { RunId, RuntimeEvent } from '../../contracts';
+import type { ExecutionId, RunId, RuntimeEvent } from '../../contracts';
 import type { AuditPort } from '../../ports';
 import { generateRunId, generateRunResumeClaimId } from '../../contracts';
 import { DefaultRunHandle } from './runHandle';
@@ -113,6 +113,7 @@ export class DefaultRunSupervisor<TRequest extends RunRequestSnapshot = RunReque
     this.runSlotLimiter = createRunSlotLimiter({ maxActiveRuns: options.maxActiveRuns });
     this.runConcurrencyKeys = createRunConcurrencyKeyRegistry();
     this.awaitingUserWatcher = createAwaitingUserWatcher({
+      stateOwner: options.awaitingUserStateOwner,
       markAwaitingUser: (runId, patch) => this.getHandle(runId).markAwaitingUser(patch),
       onDisposed: runId => {
         this.eventWatchDisposers.delete(runId);
@@ -356,8 +357,17 @@ export class DefaultRunSupervisor<TRequest extends RunRequestSnapshot = RunReque
     });
   }
 
-  async pause(runId: RunId, reason?: string): Promise<void> {
-    await this.withRunControlLock(runId, () => this.getHandle(runId).pause(reason));
+  async pause(runId: RunId, reason?: string, expectedExecutionId?: ExecutionId): Promise<void> {
+    await this.withRunControlLock(runId, async () => {
+      const handle = this.getHandle(runId);
+      if (expectedExecutionId !== undefined) {
+        const record = await this.registryStore.load(runId);
+        if (record?.metadata?.executionId !== expectedExecutionId) {
+          throw new RunInteractionConflictError(runId, 'pause execution ownership has changed');
+        }
+      }
+      await handle.pause(reason);
+    });
   }
 
   async resumePausedRun(input: Parameters<RunSupervisor<TRequest>['resumePausedRun']>[0]): Promise<RunHandle<TRequest>> {

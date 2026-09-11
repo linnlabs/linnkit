@@ -39,6 +39,7 @@ const handle = await supervisor.registerRun({
 - `AgentRunnerService.run()` 一类 host runner 应同步返回 `{ handle, result }`：UI 可以立刻拿 handle 做 cancel/observe/cost，执行结果继续等 `result`。
 - runner 生命周期必须显式写：启动前 `markRunning()`，正常结束 `markCompleted()`，异常结束 `markFailed()`。取消请求先由 `handle.cancel({ reason })` 写 `cancelled` 并触发 abort；执行器取得真实结果后，再用第二个 lifecycle patch 补全 `currentNode / iterationsUsed`。
 - `WaitUserNode` 创建的 `requires_user_interaction` 是正式 pause 事实。它必须经 `RuntimeEventPublisher` 附着正式 `run_id / lane / visibility`，与其他事实一起发布和持久化。host runner 在 persistence drain 成功后才能调用 `markAwaitingUser()`，不得从 Graph 返回值 cherry-pick 后补发第二份事件。
+- 默认 `awaitingUserStateOwner: 'supervisor'` 从实时事件观察等待状态。原子 checkpoint Host 必须选择 `'host'`，由 runner 在交互事实与等待断点提交后写 `markAwaitingUser`；实时事件还未提交时不得提前撤销 execution 写入权。重启若停在已提交等待断点而生命周期尚未写入，Host 用原交互身份重建等待；若原响应已原子接纳，则继续该响应，不重新打开审批。
 - HITL 恢复使用 `claimResume(runId, interaction, eventBus, signal)`。返回的 `RunResumeClaim` 先原子占用一次性 interaction，但保持 `awaiting_user`；host 只有在响应事实持久化成功后才能调用 `activate()`，持久化前失败调用 `release()`。这样并发/重复提交只有一个能激活，也不会在 runner 启动前留下半恢复的 running run。
 - 可恢复 Host 通过 `activate({ executionId, inputEventIds, admissionCommit })` 把响应事实与激活状态放入同一事务。`metadata.resumeInputs` 保留已提交的响应引用及原 checkpoint revision；重启若 Graph 仍停在原等待边界，Host 读取这些事实完成原 response 的 resume，不能要求用户再次提交。只有瞬时能力在新 execution 中重新装配。
 - `RunResumeInteraction` 必须完整匹配 `interactionId / toolCallId / checkpointRevision / resumeToken`。host 必须让 GraphExecutor 用同一 `runId` 的 checkpoint 恢复，禁止注册替代 run 或按 conversation 查“最近 checkpoint”。
@@ -53,6 +54,7 @@ const handle = await supervisor.registerRun({
 - transport `EventBus.close()` 不等于 run 终态。`awaiting_user` 会保留 handle/slot；恢复时 `claimResume.activate()` 把同一 RunHandle 换绑到新的 transport EventBus，并轮换 execution controller，`observeRun()` 可跨 transport 连续观察。同步 run 在 completed/failed/cancelled 后释放；detached 取消还必须等 executor settlement。
 - detached run 执行中如果 EventBus 提前 close，不会提前释放 active slot，避免后台 run 绕过并发限制；slot 会等 detached executor 终态 cleanup。
 - `pause()` 先持久化暂停意图，再以 `RunPauseRequested` 中断当前 attempt；此时 `status=paused` 且 `pausedAt` 缺失，表示仍在收口。Host 保存断点、收口当前 execution 后调用 `markPaused()`，才允许 `resumePausedRun()` 激活。它不创建用户消息，也不提交任何审批。
+- 面向异步客户端的暂停使用 `pause(runId, reason, expectedExecutionId)`；execution 身份在控制锁内核对，排队期间已经发生的继续不能被旧暂停命令中断。
 - `resumePausedRun({ runId, expectedUpdatedAt, executionId, eventBus })` 保留同一 run 并轮换 execution identity / signal。Host 必须先完成前一 execution 的收口，之后再启动 Graph `continueSession`。原本抛 NotImplementedError 的 `RunHandle.resume()` 已移除，避免把“改状态”误当成“调度 Graph”。`runTree/handleFailure` 仍未实现。
 
 ## 3. RunHandle 完整 API（截至 0.5.0）

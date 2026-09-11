@@ -152,7 +152,7 @@ export interface RunSupervisor<TRequest extends RunRequestSnapshot = RunRequestS
   ): Promise<RunSnapshot[]>;
   drain(opts?: RunWaitForTerminalOptions): Promise<RunOutcome[]>;
   recoverOnBoot(reason?: string): Promise<RunOutcome[]>;
-  pause(runId: RunId, reason?: string): Promise<void>;
+  pause(runId: RunId, reason?: string, expectedExecutionId?: ExecutionId): Promise<void>;
   resumePausedRun(input: {
     readonly runId: RunId;
     readonly expectedUpdatedAt: number;
@@ -180,6 +180,8 @@ export interface DefaultRunSupervisorOptions<
   runIdFactory?: () => RunId;
   now?: () => number;
   maxActiveRuns?: number;
+  /** 原子 checkpoint Host 在持久提交后自行写等待态，不能由未提交的实时事件提前写入。 */
+  awaitingUserStateOwner?: 'supervisor' | 'host';
   /** 仅识别具有 Host 恢复输入的 run；不在启动时执行它。旧 run 默认仍 abandoned。 */
   canRestoreRun?: (record: RunRecord) => Promise<boolean>;
 }

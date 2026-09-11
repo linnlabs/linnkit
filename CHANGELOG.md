@@ -14,6 +14,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.36.0] - 2026-09-11
+
+### Added
+
+- Explicit Host ownership of awaiting-user lifecycle for atomic checkpoint integrations.
+  Provisional interaction events no longer have to change execution ownership before commit.
+- Pause commands can fence the expected execution identity inside the Supervisor control
+  lock, so a queued stale pause cannot interrupt a newly continued execution.
+
 ## [0.35.1] - 2026-09-11
 
 ### Fixed

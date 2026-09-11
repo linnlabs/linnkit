@@ -10,6 +10,7 @@ export interface AwaitingUserWatcher {
 }
 
 export interface AwaitingUserWatcherOptions {
+  stateOwner?: 'supervisor' | 'host';
   markAwaitingUser: (runId: RunId, patch: RunAwaitingUserPatch) => Promise<void>;
   onDisposed?: (runId: RunId) => void;
 }
@@ -88,7 +89,8 @@ export function createAwaitingUserWatcher(
       dispose();
     };
 
-    eventBus.on('event', onEvent);
+    // Host 持久提交模式仍观察 close 以释放监听，只把状态写入权交回 Host。
+    if (options.stateOwner !== 'host') eventBus.on('event', onEvent);
     eventBus.on('close', onClose);
     return dispose;
   }
