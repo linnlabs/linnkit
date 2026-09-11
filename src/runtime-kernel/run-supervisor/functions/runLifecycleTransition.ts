@@ -2,7 +2,7 @@ import type { RunStatus } from '../runRegistryStorePort';
 
 export type RunLifecycleWriteStatus = Extract<
   RunStatus,
-  'running' | 'awaiting_user' | 'completed' | 'failed' | 'cancelled'
+  'running' | 'awaiting_user' | 'paused' | 'completed' | 'failed' | 'cancelled'
 >;
 
 export type RunLifecycleTransitionDecision =

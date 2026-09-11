@@ -14,6 +14,8 @@ import type {
 import type { EngineState } from '../../types';
 import { ToolNode } from '../toolNode';
 import { createRuntimeEventAdmissionSink } from './runtimeEventAdmissionFixture';
+import { MemoryEventStore } from '../../event-store/memoryEventStore';
+import { describeRuntimeEventLifecycle } from '../../../events';
 
 const imageRef: RuntimeResourceRef = {
   id: 'selection-1',
@@ -348,9 +350,15 @@ describe('ToolNode model input post-processing', () => {
     expect(output).toMatchObject({
       type: 'tool_output',
       status: 'success',
-      ephemeral: true,
       attachments: resolvedAttachments,
+      tool_call_id: 'call-1',
+      metadata: { idempotency: { key: idempotencyKey, cache_hit: true } },
     });
+    if (!output) throw new Error('missing tool terminal');
+    expect(describeRuntimeEventLifecycle(output).persist).toBe(true);
+    const store = new MemoryEventStore();
+    await store.append({ eventStoreId: 'cursor-1', event: output });
+    expect((await store.range('conv-model-input')).map(item => item.event)).toEqual([output]);
   });
 
   it('同进程 in-flight 合并只执行一次工具，两条结果各自走 resolver 并保持附件', async () => {

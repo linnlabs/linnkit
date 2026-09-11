@@ -36,6 +36,8 @@ export type RunRecord = {
 };
 
 export interface RunRegistryStore {
+  /** 仅当整条 previous 仍是当前记录时原子替换；恢复 Host 必须实现。 */
+  compareAndSwap?(previous: RunRecord, next: RunRecord): Promise<boolean>;
   save(record: RunRecord): Promise<void>;
   load(runId: RunId): Promise<RunRecord | null>;
   list(filter?: ListRunsFilter): Promise<{ runs: RunRecord[]; nextCursor?: string }>;

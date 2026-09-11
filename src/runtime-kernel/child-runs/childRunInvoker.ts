@@ -44,6 +44,10 @@ import {
   extractJudgeToolOutput,
 } from './childRunEvents';
 import { recoverChildRunEventsFromCheckpoint } from './checkpointRecovery';
+import type { Checkpointer } from '../graph-engine/checkpointer/base';
+import type { ExecutionCheckpointPort, ToolRecoveryPort } from '../graph-engine/definitions/runContinuation';
+import { readGraphAgentLocal } from '../graph-engine/graphLocal';
+import { parseRoutedRuntimeEvent } from '../../contracts';
 
 const logger = new Logger('ChildRunInvoker');
 
@@ -83,6 +87,13 @@ export interface ChildRunInvokeConfig {
   seedHistoryEvents?: RuntimeEvent[];
   maxSteps?: number;
   modelId?: string;
+  /** 由 Host 提供同一 child run 的持久断点与事务 writer；不再使用内存临时图。 */
+  persistence?: {
+    readonly checkpointer: Checkpointer;
+    readonly executionCheckpointPort: ExecutionCheckpointPort;
+    readonly toolRecoveryPort?: ToolRecoveryPort;
+    readonly expectedRevision?: number;
+  };
 }
 
 export interface ChildRunInvokeResult {
@@ -199,6 +210,9 @@ export class ChildRunInvoker {
       explicitConversationId: conversationId,
       parentToolContext,
     });
+    if (config.persistence?.expectedRevision !== undefined) {
+      return this.continueChild(config, childRunId, runtimeConversationId);
+    }
     const turnId = generateTurnId();
 
     logger.info(`启动 child-run: ${agentConfig.id}`, {
@@ -208,23 +222,8 @@ export class ChildRunInvoker {
       userMessage: userMessage.slice(0, 100) + (userMessage.length > 100 ? '...' : ''),
     });
 
-    const checkpointer = new MemoryCheckpointer();
-    const graphExecutor = new GraphExecutor(checkpointer, { maxSteps });
-
-    const llmNode = this.createLlmNode();
-    const toolNode = new ToolNode({
-      toolRuntime: this.toolRuntime,
-      observationPreview: this.observationPreview,
-      telemetryPort: this.telemetryPort,
-      auditPort: this.auditPort,
-      modelInputCapabilityValidator: this.modelInputCapabilityValidator,
-      modelInputResolver: this.modelInputResolver,
-    });
-    const waitUserNode = new WaitUserNode({ auditPort: this.auditPort });
-
-    graphExecutor.registerNode(llmNode);
-    graphExecutor.registerNode(toolNode);
-    graphExecutor.registerNode(waitUserNode);
+    const checkpointer = config.persistence?.checkpointer ?? new MemoryCheckpointer();
+    const graphExecutor = this.createGraph(checkpointer, maxSteps, config.persistence?.executionCheckpointPort);
 
     const childUserInput = createChildRunUserInput({
       id: generateRuntimeEventId(),
@@ -320,6 +319,7 @@ export class ChildRunInvoker {
         ? { executorLocal: executorLocalPolicy }
         : {}),
       runtimeEventSink,
+      toolRecoveryPort: config.persistence?.toolRecoveryPort,
       ...(runtimeEventCommitPort ? { runtimeEventCommitPort } : {}),
       systemPrompt,
     };
@@ -370,6 +370,8 @@ export class ChildRunInvoker {
         eventToMessageConverter: this.eventToMessageConverter,
       });
     } catch (err) {
+      // durable child 的 attempt 中断交回 Host 暂停与保留，不转成失败结果使父工具误结算。
+      if (config.persistence) throw err;
       const recoveredEvents = await recoverChildRunEventsFromCheckpoint({
         checkpointer,
         checkpointKey: internalCheckpointKey,
@@ -415,7 +417,7 @@ export class ChildRunInvoker {
       eventToMessageConverter: this.eventToMessageConverter,
     });
 
-    await checkpointer.clear(internalCheckpointKey);
+    if (!config.persistence) await checkpointer.clear(internalCheckpointKey);
 
     return {
       success: !error && !cancelled,
@@ -431,6 +433,53 @@ export class ChildRunInvoker {
       toolset,
       stepCount,
       error,
+    };
+  }
+
+  private createGraph(checkpointer: Checkpointer, maxSteps: number, executionCheckpointPort?: ExecutionCheckpointPort): GraphExecutor {
+    const graph = new GraphExecutor(checkpointer, { maxSteps, executionCheckpointPort });
+    graph.registerNode(this.createLlmNode());
+    graph.registerNode(new ToolNode({
+      toolRuntime: this.toolRuntime, observationPreview: this.observationPreview,
+      telemetryPort: this.telemetryPort, auditPort: this.auditPort,
+      modelInputCapabilityValidator: this.modelInputCapabilityValidator,
+      modelInputResolver: this.modelInputResolver,
+    }));
+    graph.registerNode(new WaitUserNode({ auditPort: this.auditPort }));
+    return graph;
+  }
+
+  private async continueChild(config: ChildRunInvokeConfig, runId: RunId, conversationId: string): Promise<ChildRunInvokeResult> {
+    const persistence = config.persistence;
+    if (!persistence || persistence.expectedRevision === undefined) throw new Error('Missing child continuation contract');
+    const checkpoint = await persistence.checkpointer.load(runId);
+    if (!checkpoint || checkpoint.local?.conversationId !== conversationId) throw new Error('Child checkpoint identity mismatch');
+    const local = readGraphAgentLocal({ ...checkpoint.local, runtimeEventSink: config.runtimeEventSink });
+    const request = local.request;
+    if (!request || !local.turnId || !request.model_id) throw new Error('Child recovery input is incomplete');
+    const context = createChildRunToolContext({
+      parentToolContext: config.parentToolContext, conversationId, turnId: local.turnId,
+      runId, parentRunId: config.parentRunId, userQuery: request.query, modelId: request.model_id,
+      seedHistory: local.history, abortSignal: config.abortSignal,
+    });
+    const graph = this.createGraph(persistence.checkpointer, request.maxSteps ?? 8, persistence.executionCheckpointPort);
+    const result = await graph.continueSession(runId, {
+      expectedRevision: persistence.expectedRevision,
+      capabilities: { toolContext: context, signal: config.abortSignal,
+        runtimeEventSink: config.runtimeEventSink, runtimeEventCommitPort: config.runtimeEventCommitPort,
+        toolRecoveryPort: persistence.toolRecoveryPort },
+    });
+    if (result.checkpoint.nodeId === 'wait_user') throw new Error('Interactive tools require a foreground run');
+    // 原 child 的完整结果来自同一 checkpoint / facts，不重发 history 到 EventBus。
+    const events = (result.checkpoint.local?.history ?? [])
+      .filter(event => event.run_id === runId && event.type !== 'user_input')
+      .map(event => parseRoutedRuntimeEvent(event));
+    const finalAnswer = extractFinalAnswer(events);
+    return { runId, parentRunId: config.parentRunId, subrunId: runId, success: true,
+      events, finalAnswer, lastProgress: finalAnswer ? undefined : extractLastProgress(events),
+      judgeToolOutput: extractJudgeToolOutput(events, config.agentConfig.judgeToolName ?? this.defaultJudgeToolName),
+      stepCount: result.checkpoint.local?.executorLocal?.stepCount ?? 0,
+      toolset: { availableTools: request.availableTools },
     };
   }
 }

@@ -4,7 +4,7 @@ import type { RoutedRuntimeEvent, RuntimeEvent } from '../../../contracts';
 import type { EventStore, PersistedEvent } from '../../graph-engine/event-store/base';
 import { EventBus } from '../event-bus';
 import { EventSequencer } from '../sequencer';
-import { EventBusEventPersistence } from '../eventBusEventPersistence';
+import { EventBusEventPersistence, type EventBusEventPersistenceOptions } from '../eventBusEventPersistence';
 import { RuntimeEventPublisher } from '../runtimeEventPublisher';
 import { RunIdSchema } from '../../../contracts';
 
@@ -23,7 +23,7 @@ function answerEvent(id: string, content: string): RuntimeEvent {
   };
 }
 
-function createSubject(append: (event: PersistedEvent) => Promise<void>) {
+function createSubject(append: (event: PersistedEvent) => Promise<void>, checkpointWriter?: EventBusEventPersistenceOptions['checkpointWriter']) {
   const sequencer = new EventSequencer('conversation-1');
   const eventBus = new EventBus(sequencer.getExecutionId());
   const publisher = new RuntimeEventPublisher(eventBus, sequencer, {
@@ -41,12 +41,31 @@ function createSubject(append: (event: PersistedEvent) => Promise<void>) {
     eventBus,
     eventStore,
     nextEventStoreId: () => `event-store-${cursor++}`,
+    checkpointWriter,
   });
   persistence.connect();
   return { eventBus, persistence, publisher };
 }
 
 describe('EventBusEventPersistence', () => {
+  it('checkpoint writer 在一个边界收到事实与断点；未提交 attempt 不进入 durable history', async () => {
+    const append = vi.fn(async () => undefined);
+    const writer = vi.fn(async () => undefined);
+    const subject = createSubject(append, writer);
+    const checkpoint = { nodeId: 'tool', revision: 2 };
+    const answer = subject.publisher.publish(answerEvent('committed', '已完成'), 'test');
+    await subject.persistence.drain();
+    expect(append).not.toHaveBeenCalled();
+    await subject.persistence.commitCheckpoint('run-1', checkpoint);
+    expect(writer).toHaveBeenCalledWith({ checkpointKey: 'run-1', checkpoint,
+      events: [{ eventStoreId: 'event-store-0', event: answer }] });
+    subject.publisher.publish(answerEvent('uncommitted', '未提交 attempt'), 'test');
+    subject.persistence.finishCheckpointWrites();
+    subject.publisher.publish(answerEvent('settlement', '收口事实'), 'test');
+    await subject.persistence.drain();
+    expect(append).toHaveBeenCalledOnce();
+    expect(append).toHaveBeenCalledWith(expect.objectContaining({ event: expect.objectContaining({ id: 'settlement' }) }));
+  });
   it('只把 durable facts 按 EventBus 顺序写入同一 EventStore', async () => {
     const writes: PersistedEvent[] = [];
     const subject = createSubject(async event => {

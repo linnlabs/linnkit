@@ -1,12 +1,14 @@
 import type { RunRecord, RunRegistryStore } from '../runRegistryStorePort';
 import type { RunOutcome } from '../definitions/runSupervisorContracts';
 import { runRecordToTerminalOutcome } from './runRecordProjection';
+import { persistRunTransition } from './persistRunTransition';
 
 export interface RecoverRunsOnBootOptions {
   registryStore: RunRegistryStore;
   reason: string;
   now: () => number;
   notifyTerminal: (outcome: RunOutcome) => void;
+  canRestoreRun?: (record: RunRecord) => Promise<boolean>;
 }
 
 export async function recoverRunsOnBoot(options: RecoverRunsOnBootOptions): Promise<RunOutcome[]> {
@@ -26,6 +28,24 @@ export async function recoverRunsOnBoot(options: RecoverRunsOnBootOptions): Prom
   // 必须先读完所有页再改状态；否则基于 offset 的 cursor 会因前页记录退出 active 集合而跳项。
   for (const record of activeRecords) {
     const updatedAt = options.now();
+    if (await options.canRestoreRun?.(record)) {
+      const metadata = { ...record.metadata };
+      const awaitingUser = metadata.awaitingUser;
+      if (awaitingUser && typeof awaitingUser === 'object' && !Array.isArray(awaitingUser)) {
+        const restored = { ...awaitingUser };
+        Reflect.deleteProperty(restored, 'resumeClaim');
+        metadata.awaitingUser = restored;
+      }
+      await persistRunTransition(options.registryStore, record, {
+        ...record,
+        status: record.status === 'awaiting_user' ? 'awaiting_user' : 'paused',
+        pausedAt: record.pausedAt ?? updatedAt,
+        pauseReason: record.pauseReason ?? options.reason,
+        updatedAt,
+        metadata,
+      });
+      continue;
+    }
     const nextRecord: RunRecord = {
       ...record,
       status: 'failed',
@@ -43,7 +63,7 @@ export async function recoverRunsOnBoot(options: RecoverRunsOnBootOptions): Prom
         },
       },
     };
-    await options.registryStore.save(nextRecord);
+    await persistRunTransition(options.registryStore, record, nextRecord);
     const outcome = runRecordToTerminalOutcome(nextRecord, updatedAt);
     options.notifyTerminal(outcome);
     outcomes.push(outcome);

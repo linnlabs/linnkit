@@ -11,6 +11,7 @@ import type { Checkpointer } from './checkpointer/base';
 import {
   ENGINE_STATE_SCHEMA_VERSION,
   type EngineState,
+  type EngineLocalState,
   type ExecutorLocalState,
   type GraphNode,
 } from './types';
@@ -22,6 +23,7 @@ import { runGraphNodeWithTelemetry } from './orchestration/runGraphNodeWithTelem
 import { runWithLifecycleTelemetry } from './orchestration/runWithLifecycleTelemetry';
 import { requireRuntimeEventSink } from './graphLocal';
 import { requireRuntimeIdentity } from './tick-pipeline/helpers';
+import type { ExecutionCheckpointPort } from './definitions/runContinuation';
 
 const logger = new Logger('GraphExecutor');
 
@@ -101,11 +103,20 @@ export interface GraphSessionExecutionOptions {
 
 export interface GraphExecutorConfig {
   maxSteps?: number;
+  executionCheckpointPort?: ExecutionCheckpointPort;
   /**
    * 可选：宿主提供的 TelemetryPort 实现。
    * 不传时使用 noopTelemetry（observability 默认关闭，零业务影响）。
    */
   telemetryPort?: TelemetryPort;
+}
+
+export interface GraphContinuationInput {
+  readonly expectedRevision: number;
+  /** 只能重建运行能力，不能覆盖持久请求、历史、模型或预算。 */
+  readonly capabilities: Pick<EngineLocalState,
+    'signal' | 'toolContext' | 'runtimeEventSink' | 'runtimeEventCommitPort'
+    | 'runtimeFailureFactSink' | 'summarizationCallbacks' | 'toolRecoveryPort'>;
 }
 
 export class GraphExecutor {
@@ -114,6 +125,7 @@ export class GraphExecutor {
   private checkpointQueues: Map<string, Promise<void>> = new Map();
   private readonly config: Required<Pick<GraphExecutorConfig, 'maxSteps'>>;
   private readonly telemetryPort: TelemetryPort;
+  private readonly executionCheckpointPort?: ExecutionCheckpointPort;
 
   constructor(
     private readonly checkpointer: Checkpointer,
@@ -123,6 +135,7 @@ export class GraphExecutor {
       maxSteps: config.maxSteps ?? DEFAULT_MAX_STEPS,
     };
     this.telemetryPort = config.telemetryPort ?? noopTelemetry;
+    this.executionCheckpointPort = config.executionCheckpointPort;
   }
 
   registerNode(node: GraphNode): void {
@@ -135,6 +148,7 @@ export class GraphExecutor {
 
   private sanitize(state: EngineState): EngineState {
     return {
+      ...state,
       nodeId: state.nodeId,
       revision: state.revision ?? 0,
       schemaVersion: state.schemaVersion ?? ENGINE_STATE_SCHEMA_VERSION,
@@ -160,8 +174,9 @@ export class GraphExecutor {
         throw new Error(`Graph checkpoint already exists: ${checkpointKey}`);
       }
       this.ephemeralLocals.set(checkpointKey, { ...local });
-      await this.checkpointer.save(checkpointKey, {
+      await this.commitCheckpoint(checkpointKey, {
         nodeId,
+        ...(this.executionCheckpointPort ? { executionStatus: 'ready' } : {}),
         revision: 1,
         schemaVersion: ENGINE_STATE_SCHEMA_VERSION,
         local: sanitizeCheckpointLocal(local),
@@ -170,6 +185,33 @@ export class GraphExecutor {
         checkpointKey,
         options.maxSteps ?? this.config.maxSteps,
       );
+    });
+  }
+
+  /** 从原提交边界继续，和提交 HITL response 的 resumeSession 是不同控制操作。 */
+  async continueSession(checkpointKey: string, input: GraphContinuationInput): Promise<GraphRunResult> {
+    if (!this.executionCheckpointPort) {
+      throw new Error('continueSession requires an ExecutionCheckpointPort');
+    }
+    return this.runWithCheckpointQueue(checkpointKey, async () => {
+      const current = await this.checkpointer.load(checkpointKey);
+      if (!current || current.revision !== input.expectedRevision) {
+        throw new Error(`Graph continuation checkpoint conflict: ${checkpointKey}`);
+      }
+      if (current.schemaVersion !== ENGINE_STATE_SCHEMA_VERSION || !current.executionStatus) {
+        throw new Error(`Graph checkpoint has no supported execution boundary: ${checkpointKey}`);
+      }
+      if (current.executionStatus === 'yielded' || current.executionStatus === 'awaiting_user') {
+        return { checkpoint: current, events: [], stepCount: 0 };
+      }
+      this.ephemeralLocals.set(checkpointKey, input.capabilities);
+      try {
+        return await this.runUntilYieldQueued(
+          checkpointKey, current.local?.executorLocal?.maxSteps ?? this.config.maxSteps,
+        );
+      } finally {
+        this.ephemeralLocals.delete(checkpointKey);
+      }
     });
   }
 
@@ -197,19 +239,25 @@ export class GraphExecutor {
       }
 
       const resumedLocal = mergeResumeSessionLocal(current.local, input.localPatch);
+      if (this.executionCheckpointPort && current.local?.executorLocal) {
+        resumedLocal.executorLocal = { ...current.local.executorLocal };
+      }
       // 同一份合并结果同时进入 durable checkpoint 与本 execution 的 ephemeral local。
       // 否则 runUntilYieldInternal 的 ephemeral overlay 会再次抹掉持久压缩进度。
       this.ephemeralLocals.set(checkpointKey, resumedLocal);
-      await this.checkpointer.save(checkpointKey, {
+      await this.commitCheckpoint(checkpointKey, {
         ...current,
         nodeId: input.nodeId ?? 'llm',
+        ...(this.executionCheckpointPort ? { executionStatus: 'ready' } : {}),
         revision: currentRevision + 1,
         local: sanitizeCheckpointLocal(resumedLocal),
       });
       const persistedMaxSteps = current.local?.executorLocal?.maxSteps;
       return this.runUntilYieldQueued(
         checkpointKey,
-        input.maxSteps ?? persistedMaxSteps ?? this.config.maxSteps,
+        this.executionCheckpointPort
+          ? (persistedMaxSteps ?? this.config.maxSteps)
+          : (input.maxSteps ?? persistedMaxSteps ?? this.config.maxSteps),
       );
     });
   }
@@ -323,8 +371,16 @@ export class GraphExecutor {
       ...state,
       revision: (state.revision ?? 0) + 1,
     });
-    await this.checkpointer.save(checkpointKey, checkpoint);
+    await this.commitCheckpoint(checkpointKey, checkpoint);
     return checkpoint;
+  }
+
+  private async commitCheckpoint(checkpointKey: string, checkpoint: EngineState): Promise<void> {
+    if (this.executionCheckpointPort) {
+      await this.executionCheckpointPort.commit(checkpointKey, checkpoint);
+    } else {
+      await this.checkpointer.save(checkpointKey, checkpoint);
+    }
   }
 
   private async saveCheckpointAndBuildResult(
@@ -350,6 +406,16 @@ export class GraphExecutor {
       schemaVersion: state.schemaVersion ?? ENGINE_STATE_SCHEMA_VERSION,
       local: { ...(state.local || {}), ...ephemeral },
     };
+    if (this.executionCheckpointPort) {
+      state.local = {
+        ...state.local,
+        commitExecutionBoundary: async boundary => {
+          const saved = await this.saveCheckpoint(checkpointKey, boundary);
+          // 保留当前 execution 的临时能力，只推进 durable revision。
+          boundary.revision = saved.revision;
+        },
+      };
+    }
 
     const isAbortSignal = (v: unknown): v is AbortSignal => {
       return v !== null && typeof v === 'object' && 'aborted' in v;
@@ -361,12 +427,13 @@ export class GraphExecutor {
     };
 
     let stepCount = 0;
+    const previousSteps = this.executionCheckpointPort ? (state.local?.executorLocal?.stepCount ?? 0) : 0;
     let allEvents: RoutedRuntimeEvent[] = [];
     logger.info('[GraphExecutor] 开始推理循环', {
       maxSteps,
     });
 
-    while (stepCount < maxSteps) {
+    while (previousSteps + stepCount < maxSteps) {
       stepCount += 1;
       reportStepsUsed(stepCount);
 
@@ -380,7 +447,7 @@ export class GraphExecutor {
       const stepPreparation = prepareGraphStep({
         state,
         maxSteps,
-        stepCount,
+        stepCount: previousSteps + stepCount,
       });
       state = stepPreparation.state;
 
@@ -390,6 +457,7 @@ export class GraphExecutor {
           maxSteps,
           stepCount,
         });
+        if (this.executionCheckpointPort) state.executionStatus = 'yielded';
         const result = await this.saveCheckpointAndBuildResult(checkpointKey, state, allEvents, stepCount);
         this.ephemeralLocals.delete(checkpointKey);
         return result;
@@ -401,6 +469,11 @@ export class GraphExecutor {
         nodeId: state.nodeId,
       });
 
+      if (this.executionCheckpointPort) {
+        state.executionStatus = 'executing';
+        const saved = await this.saveCheckpoint(checkpointKey, state);
+        state.revision = saved.revision;
+      }
       const result = await runGraphNodeWithTelemetry({
         node,
         state,
@@ -429,11 +502,14 @@ export class GraphExecutor {
           fromNodeId: stepResolution.action.fromNodeId,
           nextNodeId: stepResolution.action.nextNodeId,
         });
-        await this.saveCheckpoint(checkpointKey, state);
+        if (this.executionCheckpointPort) state.executionStatus = 'ready';
+        const saved = await this.saveCheckpoint(checkpointKey, state);
+        state.revision = saved.revision;
         continue;
       }
 
       if (stepResolution.action.kind === 'yield') {
+        if (this.executionCheckpointPort) state.executionStatus = 'yielded';
         logger.info('[GraphExecutor] 推理暂停，等待外部输入', {
           maxSteps,
           stepCount,
@@ -445,6 +521,7 @@ export class GraphExecutor {
         maxSteps,
         stepCount,
       });
+      if (this.executionCheckpointPort) state.executionStatus = 'awaiting_user';
       return await this.saveCheckpointAndBuildResult(checkpointKey, state, allEvents, stepCount);
     }
 
@@ -466,6 +543,7 @@ export class GraphExecutor {
       },
       retryable: false,
     }), 'GraphExecutor.engine_budget_exhausted'));
+    if (this.executionCheckpointPort) state.executionStatus = 'yielded';
     const result = await this.saveCheckpointAndBuildResult(checkpointKey, state, allEvents, stepCount);
     this.ephemeralLocals.delete(checkpointKey);
     return result;

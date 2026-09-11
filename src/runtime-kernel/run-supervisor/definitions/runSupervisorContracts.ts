@@ -113,6 +113,8 @@ export interface RunRegistrationSpec<TRequest extends RunRequestSnapshot = RunRe
 
 export interface RunSupervisor<TRequest extends RunRequestSnapshot = RunRequestSnapshot> {
   registerRun(spec: RunRegistrationSpec<TRequest>): Promise<RunHandle<TRequest>>;
+  /** Host 已校验 durable descriptor 后重建能力；不注册新 run、不覆盖持久身份。 */
+  restoreRun(spec: RunRegistrationSpec<TRequest> & { runId: RunId }): Promise<RunHandle<TRequest>>;
   spawnDetached(spec: RunRegistrationSpec<TRequest>): Promise<RunHandle<TRequest>>;
   observeRun(runId: RunId, filter?: RunObserveFilter): AsyncIterable<RuntimeEvent>;
   cancel(runId: RunId, opts: CancelOpts): Promise<void>;
@@ -134,7 +136,13 @@ export interface RunSupervisor<TRequest extends RunRequestSnapshot = RunRequestS
   ): Promise<RunSnapshot[]>;
   drain(opts?: RunWaitForTerminalOptions): Promise<RunOutcome[]>;
   recoverOnBoot(reason?: string): Promise<RunOutcome[]>;
-  pause(runId: RunId, reason?: string): Promise<never>;
+  pause(runId: RunId, reason?: string): Promise<void>;
+  resumePausedRun(input: {
+    readonly runId: RunId;
+    readonly expectedUpdatedAt: number;
+    readonly eventBus: EventBus;
+    readonly executionId: ExecutionId;
+  }): Promise<RunHandle<TRequest>>;
   claimResume(
     runId: RunId,
     interaction: RunResumeInteraction,
@@ -154,4 +162,6 @@ export interface DefaultRunSupervisorOptions<
   runIdFactory?: () => RunId;
   now?: () => number;
   maxActiveRuns?: number;
+  /** 仅识别具有 Host 恢复输入的 run；不在启动时执行它。旧 run 默认仍 abandoned。 */
+  canRestoreRun?: (record: RunRecord) => Promise<boolean>;
 }

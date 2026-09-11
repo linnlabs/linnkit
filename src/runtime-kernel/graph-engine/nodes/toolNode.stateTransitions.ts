@@ -100,27 +100,6 @@ export function extractToolControlInfo(parsed: unknown): ToolControlInfo | undef
   };
 }
 
-export function applyToolOutputIdempotencyMetadata(params: {
-  runtimeToolOutput: RuntimeEvent | null;
-  execIdempotency?: { key: string; cacheHit: boolean };
-}): void {
-  if (!params.runtimeToolOutput || !params.execIdempotency) {
-    return;
-  }
-
-  if (params.execIdempotency.cacheHit) {
-    params.runtimeToolOutput.ephemeral = true;
-  }
-
-  params.runtimeToolOutput.metadata = {
-    ...(params.runtimeToolOutput.metadata ?? {}),
-    idempotency: {
-      key: params.execIdempotency.key,
-      cache_hit: params.execIdempotency.cacheHit,
-    },
-  };
-}
-
 export function buildRequireUserLocalState(params: {
   local: UnknownRecord;
   parsed: unknown;

@@ -18,6 +18,9 @@ export {
 export { readCheckpointContextUsage } from './functions/engineStateSnapshot';
 export { isRuntimeFailureFact } from './functions/runtimeFailureFact';
 export { ENGINE_STATE_SCHEMA_VERSION } from './types';
+export { RunPauseRequested, RunRecoveryBlockedError, isRunPauseSignal } from './definitions/runContinuation';
+export type { ExecutionCheckpointPort, ToolRecoveryPort, ToolRecoveryDecision } from './definitions/runContinuation';
+export type { GraphContinuationInput } from './engine';
 
 export type { GraphAgentExecutorDependencies } from './executor';
 export type {

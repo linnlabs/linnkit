@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import {
-  applyToolOutputIdempotencyMetadata,
   buildErrorLocalState,
   buildRequireUserLocalState,
   buildSuccessLocalState,
@@ -8,7 +7,7 @@ import {
   readStructuredObservation,
   validateStructuredToolResultContract,
 } from '../toolNode.stateTransitions';
-import { createToolOutputEvent, createUserInputEvent, ToolCallIdSchema } from '../../../../contracts';
+import { createUserInputEvent, ToolCallIdSchema } from '../../../../contracts';
 
 function createHistoryEvent(id: string) {
   return createUserInputEvent(id, 'conv_1', 'turn_1', `content:${id}`);
@@ -103,26 +102,6 @@ describe('toolNode.stateTransitions', () => {
     ).toEqual({
       ok: false,
       reason: 'modelInput.attachments[0] 必须是 strict selection。',
-    });
-  });
-
-  it('应把 idempotency 状态写入 canonical tool_output', () => {
-    const runtimeEvent = createToolOutputEvent(
-      'output-1',
-      'conv-1',
-      'turn-1',
-      'search',
-      'call-1',
-      { status: 'success', observation: 'done', data: { ok: true } },
-    );
-    applyToolOutputIdempotencyMetadata({
-      runtimeToolOutput: runtimeEvent,
-      execIdempotency: { key: 'idem_1', cacheHit: true },
-    });
-
-    expect(runtimeEvent.ephemeral).toBe(true);
-    expect(runtimeEvent.metadata).toEqual({
-      idempotency: { key: 'idem_1', cache_hit: true },
     });
   });
 

@@ -49,7 +49,8 @@ const handle = await supervisor.registerRun({
 - `concurrencyKey` 是 host 定义的进程内原子唯一键。适合表达 `conversation:<id>:foreground` 这类业务约束；允许并行的 auxiliary 不应复用 foreground key。禁止用“先 list/find、再 register”替代，因为两个请求可同时通过查询。
 - transport `EventBus.close()` 不等于 run 终态。`awaiting_user` 会保留 handle/slot；恢复时 `claimResume.activate()` 把同一 RunHandle 换绑到新的 transport EventBus，并轮换 execution controller，`observeRun()` 可跨 transport 连续观察。同步 run 在 completed/failed/cancelled 后释放；detached 取消还必须等 executor settlement。
 - detached run 执行中如果 EventBus 提前 close，不会提前释放 active slot，避免后台 run 绕过并发限制；slot 会等 detached executor 终态 cleanup。
-- `RunHandle.pause()/resume()` 仍是冷暂停占位；不要与已实现的 HITL `RunSupervisor.claimResume()` 混淆。`runTree/handleFailure` 仍未实现。
+- `pause()` 先持久化暂停意图，再以 `RunPauseRequested` 中断当前 attempt；此时 `status=paused` 且 `pausedAt` 缺失，表示仍在收口。Host 保存断点、收口当前 execution 后调用 `markPaused()`，才允许 `resumePausedRun()` 激活。它不创建用户消息，也不提交任何审批。
+- `resumePausedRun({ runId, expectedUpdatedAt, executionId, eventBus })` 保留同一 run 并轮换 execution identity / signal。Host 必须先完成前一 execution 的收口，之后再启动 Graph `continueSession`。原本抛 NotImplementedError 的 `RunHandle.resume()` 已移除，避免把“改状态”误当成“调度 Graph”。`runTree/handleFailure` 仍未实现。
 
 ## 3. RunHandle 完整 API（截至 0.5.0）
 
@@ -67,7 +68,16 @@ const handle = await supervisor.registerRun({
 
 ## 4. 进程恢复（recoverOnBoot）
 
-进程启动时建议调用 `recoverOnBoot()`，把上次进程遗留的 `pending/running/awaiting_user/paused` run 标记为 `RUN_ABANDONED`，避免管理面板里永远挂着"运行中"。
+Host 提供 `canRestoreRun(record)` 时，`recoverOnBoot()` 把具备 durable 输入的遗留运行重建为
+`paused`，保留原等待交互及其 identity，并清除旧进程的临时 response claim。它不会调用
+executor。Host 校验 descriptor 后用 `restoreRun()` 重建原 handle，等待用户的正式继续操作。
+缺少恢复输入的旧运行仍以 `RUN_ABANDONED` 结算；已 cancelled/completed/failed 的运行不复活。
+
+恢复装配必须实现 `RunRegistryStore.compareAndSwap(previous, next)`：状态转换以完整旧记录
+为条件原子提交，冲突向调用方返回而不是覆盖。Host 同时必须持有工作区唯一 owner，并在
+事件 / checkpoint 事务校验当前 `metadata.executionId`；Supervisor 的内存锁不能替代
+存储 fence。RunHandle 拒绝与当前 execution identity 不一致的旧 owner lifecycle 写入。
+`restoreRun` 不会从聊天记录猜 request：原 AgentSpec、请求和能力兼容性校验属于 Host descriptor。
 
 ## 5. Cost 统计
 

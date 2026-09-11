@@ -14,6 +14,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.33.0] - 2026-09-11
+
+### Added
+
+- Opt-in durable Graph execution boundaries, atomic event/checkpoint writer integration,
+  and same-run `continueSession` preserving request, model and cumulative step budget.
+- Tool intent barriers and owner reconciliation for unknown external outcomes. Completed
+  calls and yielded nodes are not re-executed when reading a committed checkpoint.
+- Pause intent and settlement, explicit paused-run activation, Host-driven boot restoration,
+  atomic registry transitions and stale execution identity rejection.
+- Persistent synchronous child execution using the original run, turn and input identities.
+  Host descriptors, activation fences, capability validation and effect owners remain required.
+
+### Fixed
+
+- Cache hits retain durable terminal facts for each new tool call, including attachments.
+- Checkpoint revisions now advance through every Graph route.
+
+### Changed
+
+- Removed the unimplemented `RunHandle.resume()` placeholder. Use the Supervisor's
+  `resumePausedRun()` followed by Graph `continueSession`; interaction responses continue
+  to use `claimResume()`. Existing non-recoverable Hosts remain opt-in and keep their policy.
+
 ## [0.32.3] - 2026-09-11
 
 ### Changed

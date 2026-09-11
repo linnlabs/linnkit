@@ -118,6 +118,18 @@ Linnkit 只定义 child-run 原语和端口，不替 Host 选择全局实例。H
 
 ## 6. 最小验证
 
+### 同步 child 的持久继续
+
+`ChildRunInvokeConfig.persistence` 显式注入持久 Checkpointer、ExecutionCheckpointPort
+与 ToolRecoveryPort。首次调用持久化原 child 输入；继续传入同一 runId 和 expectedRevision，
+保留原 turn、用户输入、请求与累计步数。已 yielded 的 child 只读取原结果，不再次调用模型。
+此模式的异常向 Host 传播且不清理 checkpoint，由 Host 将 attempt 结算为暂停或明确终止。
+未配置 persistence 的现有嵌入调用仍使用短生命周期内存图。
+
+Host 必须先保存父 tool call 到稳定 child identity 的映射、冻结 child Agent 定义，并复用
+原 child lifecycle / EventStore writer。仅注入持久 checkpoint 而每次注册新 child 不算恢复。
+同步 child 的待审批限制仍然存在；需要产品交互的工作交给 foreground run。
+
 - 单测：父 agent 工具内 `invokeChildRun` → 父 run 的 `cost().childrenTotal.llmCost > 0`
 - 集成测：child run 内部调用工具时，`model.select` / `tool.allow` audit envelope 的 `scope.conversationId` 与注册 child run 的 conversationId 一致，`scope.runId` 是 child runId。
 - 单测：child run 的 `abortSignal` 在调用前或执行中触发时，即使 provider 抛普通 Error，`invokeChildRun` 仍 resolve 出 `cancelled:true`，而不是 reject 或写成 failed。

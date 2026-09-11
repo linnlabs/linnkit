@@ -32,6 +32,8 @@ const NON_CHECKPOINT_LOCAL_KEYS = [
   'memory',
   'runtimeEventSink',
   'runtimeEventCommitPort',
+  'commitExecutionBoundary',
+  'toolRecoveryPort',
   'runtimeFailureFactSink',
   'signal',
   'summarizationCallbacks',

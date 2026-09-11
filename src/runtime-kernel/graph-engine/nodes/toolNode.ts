@@ -59,6 +59,8 @@ import {
   settleToolCallsAfterExecutionAbort,
 } from './toolNode.cancellation';
 import { recordToolProtocolError } from '../../../shared/llmAuditRecorder';
+import { commitToolBoundary, executeRecoverableTool } from './toolNode.recovery';
+import { isRunPauseSignal, RunRecoveryBlockedError } from '../definitions/runContinuation';
 
 const logger = new Logger('ToolNode');
 
@@ -320,6 +322,7 @@ export class ToolNode implements GraphNode {
 
     while (true) {
       const result = await this.runNextPendingToolCall(state);
+      await commitToolBoundary(state, result);
       if (Array.isArray(result.events) && result.events.length > 0) {
         events.push(...result.events);
       }
@@ -339,11 +342,9 @@ export class ToolNode implements GraphNode {
     const calls = parsePendingToolCalls(state.local?.pendingToolCalls ?? []);
     const signalRaw = state.local?.signal;
     if (isAbortSignal(signalRaw) && signalRaw.aborted) {
-      settlePendingToolCallsAfterAbort({
-        state,
-        calls,
-        toolCatalog: this.toolRuntime,
-      });
+      if (!isRunPauseSignal(signalRaw)) {
+        settlePendingToolCallsAfterAbort({ state, calls, toolCatalog: this.toolRuntime });
+      }
       const abortError = new Error('The user aborted a request.');
       abortError.name = 'AbortError';
       throw abortError;
@@ -499,7 +500,11 @@ export class ToolNode implements GraphNode {
     });
 
     try {
-      const exec = await executeToolWithIdempotency({
+      const exec = await executeRecoverableTool({
+        state,
+        call,
+        context: prepared.toolContext,
+        execute: () => executeToolWithIdempotency({
         idempotencyKey: execution.idempotencyKey,
         inFlight: this.idempotencyInFlight,
         history: readHistoryEvents(prepared.local),
@@ -510,6 +515,7 @@ export class ToolNode implements GraphNode {
             execution.toolArgs,
             prepared.toolContext
           ),
+        }),
       });
       if (exec.success) {
         const parsed = typeof exec.result === 'string' ? parseJsonSafe(exec.result) : exec.result;
@@ -593,7 +599,7 @@ export class ToolNode implements GraphNode {
         bridge: execution.bridge,
       });
     } catch (error) {
-      if (isToolExecutionAbort(error)) {
+      if (isToolExecutionAbort(error) && !isRunPauseSignal(state.local?.signal)) {
         settleToolCallsAfterExecutionAbort({
           state,
           remainingCalls: calls.slice(1),
@@ -665,7 +671,7 @@ export class ToolNode implements GraphNode {
       {
         attachments: context.attachments,
         metadata: Object.keys(toolOutputMetadata).length > 0 ? toolOutputMetadata : undefined,
-        ephemeral: context.exec.idempotency?.cacheHit === true,
+        // 缓存复用的是业务结果，不是当前 call 的终态身份；每个新 call 都必须可持久化配对。
         durationMs: context.exec.durationMs,
       }
     );
@@ -734,6 +740,11 @@ export class ToolNode implements GraphNode {
   }
 
   private async handleError(context: ToolNodeErrorContext): Promise<NodeResult> {
+    if (context.state.local?.executingToolCallId
+      && (context.exec.errorKind === 'protocol' || context.exec.errorKind === 'capability')) {
+      // 当前能力不可用不证明原副作用失败；保留未决意图，待 owner 能再次对账。
+      throw new RunRecoveryBlockedError(context.exec.error ?? 'Tool recovery capability is unavailable');
+    }
     if (context.exec.errorKind === 'protocol' || context.exec.errorKind === 'capability') {
       await this.emitToolDecisionAudit({
         action: 'tool.deny',

@@ -26,6 +26,7 @@ import type { ToolExecutionContext } from '../../tools/toolExecutionContext';
 import type { AuditEnvelope } from '../../../contracts/audit';
 import type { RuntimeEvent, UserInputEvent } from '../../../contracts';
 import { DEFAULT_MAX_CHILD_RUN_DEPTH } from '../types';
+import { MemoryCheckpointer } from '../../graph-engine/checkpointer/memoryCheckpointer';
 import {
   createHistorySummaryEvent,
   DEFAULT_CONTEXT_COMPACTION_POLICY,
@@ -63,6 +64,37 @@ function createChildRuntimeEventSink(publishedEvents?: RuntimeEvent[]): RuntimeE
 }
 
 describe('ChildRunInvoker', () => {
+  it('持久 child 中断后不生成新用户输入，完成断点重读不重新调用模型', async () => {
+    const checkpointer = new MemoryCheckpointer();
+    const publishedEvents: RuntimeEvent[] = [];
+    let attempts = 0;
+    const turns: unknown[] = [];
+    const invoker = new ChildRunInvoker({
+      modelResolver: { resolveModelId: () => 'child-model' },
+      createLlmNode: () => ({ id: 'llm', async run(state) {
+        attempts += 1;
+        turns.push(state.local?.turnId);
+        if (attempts === 1) throw new Error('provider disconnected');
+        return { kind: 'yield', events: [] };
+      } }),
+      toolRuntime: noopToolRuntime, observationPreview: noopObservationPreview,
+      eventToMessageConverter: () => [],
+    });
+    const input = { agentConfig: { id: 'child', promptKey: 'default' }, userMessage: 'original child task',
+      parentToolContext: {}, conversationId: 'child-invoker-test', runId: RunIdSchema.parse('child-invoker-test-run'),
+      runtimeEventSink: createChildRuntimeEventSink(publishedEvents),
+      persistence: { checkpointer, executionCheckpointPort: { commit: (key: string, state: EngineState) => checkpointer.save(key, state) } },
+    };
+    await expect(invoker.invoke(input)).rejects.toThrow('provider disconnected');
+    for (let index = 0; index < 2; index += 1) {
+      const state = await checkpointer.load(input.runId);
+      await expect(invoker.invoke({ ...input, persistence: { ...input.persistence, expectedRevision: state?.revision } })).resolves.toMatchObject({ success: true, runId: input.runId });
+    }
+    expect(attempts).toBe(2);
+    expect(turns[0]).toBe(turns[1]);
+    expect(publishedEvents.filter(event => event.type === 'user_input')).toHaveLength(1);
+    expect((await checkpointer.load(input.runId))?.local?.executorLocal?.stepCount).toBe(2);
+  });
   it('独立历史策略下仍把 Host 冻结的环境注入透传给 child 请求', async () => {
     const capturedRequests: AgentInvocationRequest[] = [];
     const llmNode: GraphNode = {

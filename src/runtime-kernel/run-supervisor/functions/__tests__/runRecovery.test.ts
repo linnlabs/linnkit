@@ -20,6 +20,25 @@ function createRecord(runId: string, status: RunRecord['status']): RunRecord {
 }
 
 describe('runRecovery', () => {
+  it('具备恢复输入的 run 仅重建暂停态，等待审批保留身份，终态不复活', async () => {
+    const registryStore = new MemoryRunRegistryStore();
+    await registryStore.save(createRecord('running', 'running'));
+    await registryStore.save({ ...createRecord('waiting', 'awaiting_user'), metadata: {
+      awaitingUser: { interaction: { interactionId: 'original', status: 'pending' }, resumeClaim: { claimId: 'old-owner' } },
+    } });
+    await registryStore.save(createRecord('cancelled', 'cancelled'));
+    const notifyTerminal = vi.fn();
+    expect(await recoverRunsOnBoot({ registryStore, reason: 'restart', now: () => 99,
+      canRestoreRun: async () => true, notifyTerminal })).toEqual([]);
+    expect(await registryStore.load(RunIdSchema.parse('running'))).toMatchObject({ status: 'paused', pausedAt: 99 });
+    expect(await registryStore.load(RunIdSchema.parse('waiting'))).toMatchObject({ status: 'awaiting_user', metadata: {
+      awaitingUser: { interaction: { interactionId: 'original', status: 'pending' } },
+    } });
+    const waiting = await registryStore.load(RunIdSchema.parse('waiting'));
+    expect(waiting?.metadata?.awaitingUser).not.toHaveProperty('resumeClaim');
+    expect((await registryStore.load(RunIdSchema.parse('cancelled')))?.status).toBe('cancelled');
+    expect(notifyTerminal).not.toHaveBeenCalled();
+  });
   it('把非终态 run 标记为 RUN_ABANDONED 并通知 terminal outcome', async () => {
     const registryStore = new MemoryRunRegistryStore();
     await registryStore.save(createRecord('run-pending', 'pending'));

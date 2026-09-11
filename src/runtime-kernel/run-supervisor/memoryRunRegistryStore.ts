@@ -5,6 +5,7 @@ import type {
   RunStatus,
 } from './runRegistryStorePort';
 import type { RunId } from '../../contracts';
+import { isDeepStrictEqual } from 'node:util';
 
 function cloneRunRecord(record: RunRecord): RunRecord {
   return {
@@ -27,6 +28,12 @@ function matchesStatus(candidate: RunStatus, filter: ListRunsFilter['status']): 
 
 export class MemoryRunRegistryStore implements RunRegistryStore {
   private readonly store = new Map<RunId, RunRecord>();
+
+  async compareAndSwap(previous: RunRecord, next: RunRecord): Promise<boolean> {
+    if (previous.runId !== next.runId || !isDeepStrictEqual(this.store.get(previous.runId), previous)) return false;
+    this.store.set(next.runId, cloneRunRecord(next));
+    return true;
+  }
 
   async save(record: RunRecord): Promise<void> {
     this.store.set(record.runId, cloneRunRecord(record));

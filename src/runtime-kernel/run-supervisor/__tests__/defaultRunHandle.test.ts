@@ -13,7 +13,6 @@ import { MemoryEventStore } from '../../graph-engine/event-store/memoryEventStor
 import { MemoryRunRegistryStore } from '../memoryRunRegistryStore';
 import { DefaultRunHandle } from '../runHandle';
 import type { CancelOpts, RunCostCollector, RunRequestSnapshot } from '../runHandle';
-import { NotImplementedError } from '../runErrors';
 import type { RunRecord } from '../runRegistryStorePort';
 
 const agentSpec: AgentSpec = {
@@ -405,10 +404,16 @@ describe('DefaultRunHandle', () => {
     await expect(handle.request()).resolves.toEqual({ query: '原始问题', promptKey: 'default' });
   });
 
-  it('pause/resume 在 N-3.A 段明确抛 NotImplementedError', async () => {
+  it('暂停先保存意图，收口后才成为可继续的暂停态，不被迟到启动覆盖', async () => {
     const { handle } = await createHandle();
-
-    await expect(handle.pause('稍后继续')).rejects.toBeInstanceOf(NotImplementedError);
-    await expect(handle.resume()).rejects.toBeInstanceOf(NotImplementedError);
+    await handle.markRunning();
+    await handle.pause('稍后继续');
+    expect(handle.signal.aborted).toBe(true);
+    expect(handle.signal.reason.name).toBe('RunPauseRequested');
+    expect(await handle.meta()).toMatchObject({ status: 'paused', pauseReason: '稍后继续', pausedAt: undefined });
+    await handle.markRunning();
+    expect((await handle.meta()).status).toBe('paused');
+    await handle.markPaused({ currentNode: 'tool', iterationsUsed: 3 });
+    expect(await handle.meta()).toMatchObject({ status: 'paused', currentNode: 'tool', iterationsUsed: 3, pausedAt: expect.any(Number) });
   });
 });

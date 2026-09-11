@@ -172,6 +172,32 @@ async function registerOneRun() {
 }
 
 describe('DefaultRunSupervisor', () => {
+  it('重建原 run 后需显式继续；暂停收口前和竞争激活都被拒绝，旧 signal 隔离', async () => {
+    const registryStore = new MemoryRunRegistryStore();
+    const supervisor = new DefaultRunSupervisor({ registryStore });
+    const registration = { runId: RunIdSchema.parse('durable-run'), conversationId: 'conv-1',
+      agentSpec, request, eventBus: new EventBus('first'), eventStore: new MemoryEventStore(),
+      costCollector: createCostCollector() };
+    const original = await supervisor.registerRun(registration);
+    await original.markRunning();
+    await supervisor.pause(original.runId);
+    const originalSignal = original.signal;
+    const input = { runId: original.runId, expectedUpdatedAt: (await original.meta()).updatedAt,
+      eventBus: new EventBus('resume'), executionId: ExecutionIdSchema.parse('resume') };
+    await expect(supervisor.resumePausedRun(input)).rejects.toThrow('not settled');
+    await original.markPaused({ currentNode: 'tool', iterationsUsed: 3 });
+    const restarted = new DefaultRunSupervisor({ registryStore, canRestoreRun: async () => true });
+    await restarted.recoverOnBoot();
+    const restored = await restarted.restoreRun({ ...registration, eventBus: new EventBus('restored') });
+    expect(await restored.request()).toEqual(request);
+    const resume = { ...input, expectedUpdatedAt: (await restored.meta()).updatedAt };
+    const results = await Promise.allSettled([restarted.resumePausedRun(resume), restarted.resumePausedRun(resume)]);
+    expect(results.map(result => result.status)).toEqual(['fulfilled', 'rejected']);
+    expect(restored.signal.aborted).toBe(false);
+    expect(originalSignal.aborted).toBe(true);
+    await expect(original.markCompleted()).rejects.toThrow('execution ownership has changed');
+    expect(await restored.meta()).toMatchObject({ runId: original.runId, iterationsUsed: 3, currentNode: 'tool', status: 'running' });
+  });
   it('registerRun 生成 runId、写 pending RunRecord，并返回 handle', async () => {
     const { registryStore, handle } = await registerOneRun();
 
@@ -723,9 +749,6 @@ describe('DefaultRunSupervisor', () => {
   it('尚未实现的 N-3.B 方法明确抛 NotImplementedError', async () => {
     const { supervisor } = await registerOneRun();
 
-    await expect(supervisor.pause(RunIdSchema.parse('run-1'), '稍后')).rejects.toBeInstanceOf(
-      NotImplementedError
-    );
     await expect(supervisor.runTree(RunIdSchema.parse('run-1'))).rejects.toBeInstanceOf(
       NotImplementedError
     );

@@ -130,10 +130,12 @@ export class LlmNode implements GraphNode {
         bridge.handle
       );
     } catch (error) {
-      bridge.finalizePartialAnswer();
+      // 可恢复 attempt 的半截流不是已完成答案；原无恢复 Host 保持既有取消展示合同。
+      if (!local.commitExecutionBoundary) bridge.finalizePartialAnswer();
       throw error;
     }
     const { decision, executorLocalPatch, contextTrace, contextUsage } = tickOutput;
+    if (decision.kind === 'error' && local.commitExecutionBoundary) throw decision.error;
 
     // ── 决策 dispatch ──
 

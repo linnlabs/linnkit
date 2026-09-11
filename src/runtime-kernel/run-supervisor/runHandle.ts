@@ -11,7 +11,9 @@ import { generateAuditEnvelopeId } from '../../contracts';
 import { EventBus } from '../execution/event-bus';
 import type { EventStore, PersistedEvent } from '../graph-engine/event-store/base';
 import { createEventStoreAudit } from '../audit/eventStoreAudit';
-import { NotImplementedError } from './runErrors';
+import { RunPauseRequested } from '../graph-engine/definitions/runContinuation';
+import { RunInteractionConflictError } from './runErrors';
+import { persistRunTransition } from './functions/persistRunTransition';
 import type { RunRecord, RunRegistryStore, RunStatus } from './runRegistryStorePort';
 import {
   decideRunLifecycleTransition,
@@ -101,8 +103,10 @@ export interface RunHandle<TRequest extends RunRequestSnapshot = RunRequestSnaps
   markAwaitingUser(patch?: RunAwaitingUserPatch): Promise<void>;
   markCompleted(patch?: RunLifecyclePatch): Promise<void>;
   markFailed(error: RunFailureInfo, patch?: RunLifecyclePatch): Promise<void>;
-  pause(reason?: string): Promise<never>;
-  resume(): Promise<never>;
+  /** 写暂停意图后中断当前 attempt；pausedAt 未设置表示执行尚在收口。 */
+  pause(reason?: string): Promise<void>;
+  /** Host 在 checkpoint 提交和当前 attempt 收口之后确认可继续。 */
+  markPaused(patch?: RunAwaitingUserPatch): Promise<void>;
 }
 
 export interface DefaultRunHandleOptions<TRequest extends RunRequestSnapshot = RunRequestSnapshot> {
@@ -185,6 +189,7 @@ export class DefaultRunHandle<TRequest extends RunRequestSnapshot = RunRequestSn
 
   private runRecord: RunRecord;
   private abortController: AbortController;
+  private executionId: string | undefined;
   private readonly agentSpecSnapshot: AgentSpec;
   private readonly requestSnapshot: TRequest;
   private transportEventBus: EventBus;
@@ -201,6 +206,9 @@ export class DefaultRunHandle<TRequest extends RunRequestSnapshot = RunRequestSn
     this.runId = options.runRecord.runId;
     this.parentRunId = options.runRecord.parentRunId;
     this.abortController = options.abortController;
+    const executionId = options.runRecord.metadata?.executionId;
+    if (executionId !== undefined && typeof executionId !== 'string') throw new Error('Run executionId must be a string');
+    this.executionId = executionId;
     this.agentSpecSnapshot = AgentSpecSchema.parse(structuredClone(options.agentSpec));
     this.requestSnapshot = cloneRequest(options.request);
     this.transportEventBus = options.eventBus;
@@ -222,8 +230,9 @@ export class DefaultRunHandle<TRequest extends RunRequestSnapshot = RunRequestSn
    * awaiting_user 之后的 resume 是同一逻辑 run 的新 execution。
    * 必须切换取消控制器，避免旧 transport 的迟到 abort 污染新 execution。
    */
-  replaceExecutionAbortController(controller: AbortController): void {
+  replaceExecutionAbortController(controller: AbortController, executionId?: string): void {
     this.abortController = controller;
+    this.executionId = executionId;
   }
 
   async spec(): Promise<AgentSpec> {
@@ -248,6 +257,7 @@ export class DefaultRunHandle<TRequest extends RunRequestSnapshot = RunRequestSn
 
     const latestRecord = await this.registryStore.load(this.runId);
     const baseRecord = latestRecord ?? this.runRecord;
+    this.assertExecutionOwner(baseRecord);
     const transition = decideRunLifecycleTransition(baseRecord.status, 'cancelled');
     if (transition.kind === 'skip_terminal') {
       if (transition.terminalStatus === 'cancelled' && hasLifecyclePatch(patch)) {
@@ -259,7 +269,7 @@ export class DefaultRunHandle<TRequest extends RunRequestSnapshot = RunRequestSn
           currentNode: patch.currentNode ?? baseRecord.currentNode,
           iterationsUsed: patch.iterationsUsed ?? baseRecord.iterationsUsed,
         };
-        await this.registryStore.save(settledRecord);
+        await persistRunTransition(this.registryStore, baseRecord, settledRecord);
         this.runRecord = { ...settledRecord };
         return;
       }
@@ -288,7 +298,7 @@ export class DefaultRunHandle<TRequest extends RunRequestSnapshot = RunRequestSn
       },
     };
 
-    await this.registryStore.save(nextRecord);
+    await persistRunTransition(this.registryStore, baseRecord, nextRecord);
     this.runRecord = { ...nextRecord };
     await this.auditPort.emit({
       envelopeId: generateAuditEnvelopeId(),
@@ -414,29 +424,42 @@ export class DefaultRunHandle<TRequest extends RunRequestSnapshot = RunRequestSn
     await this.saveLifecycleStatus('failed', patch, error);
   }
 
-  async pause(_reason?: string): Promise<never> {
-    throw new NotImplementedError('RunHandle.pause is N-3.B; not implemented in N-3.A');
+  async pause(reason = 'Run paused by user'): Promise<void> {
+    const latest = await this.registryStore.load(this.runId);
+    if (latest) this.assertExecutionOwner(latest);
+    if (!latest || latest.status === 'paused' || latest.status === 'awaiting_user'
+      || decideRunLifecycleTransition(latest.status, 'paused').kind === 'skip_terminal') return;
+    const next: RunRecord = {
+      ...latest, status: 'paused', updatedAt: Date.now(), pauseReason: reason, pausedAt: undefined,
+    };
+    // 用户意图先落盘，重启后不能把已确认的暂停变成继续执行。
+    await persistRunTransition(this.registryStore, latest, next);
+    this.runRecord = next;
+    this.abortController.abort(new RunPauseRequested(reason));
   }
 
-  async resume(): Promise<never> {
-    throw new NotImplementedError('RunHandle.resume is N-3.B; not implemented in N-3.A');
+  async markPaused(patch: RunAwaitingUserPatch = {}): Promise<void> {
+    await this.saveLifecycleStatus('paused', patch);
   }
 
   private async saveLifecycleStatus(
-    status: Extract<RunLifecycleWriteStatus, 'running' | 'awaiting_user' | 'completed' | 'failed'>,
-    patch: RunLifecyclePatch | RunAwaitingUserPatch,
+    status: Extract<RunLifecycleWriteStatus, 'running' | 'awaiting_user' | 'paused' | 'completed' | 'failed'>,
+    patch: RunAwaitingUserPatch,
     errorIfAny?: RunFailureInfo
   ): Promise<void> {
     const latestRecord = await this.registryStore.load(this.runId);
     const baseRecord = latestRecord ?? this.runRecord;
     const transition = decideRunLifecycleTransition(baseRecord.status, status);
+    this.assertExecutionOwner(baseRecord);
+    // 暂停意图可能先于 runner 启动到达；只有 Supervisor 的正式激活可以离开 paused。
+    if (status === 'running' && baseRecord.status === 'paused') return;
     if (transition.kind === 'skip_terminal') {
       this.runRecord = { ...baseRecord };
       return;
     }
 
     const awaitingUserPatch =
-      status === 'awaiting_user' ? (patch as RunAwaitingUserPatch) : undefined;
+      status === 'awaiting_user' || status === 'paused' ? patch : undefined;
     const updatedAt = Date.now();
     const nextRecord: RunRecord = {
       ...baseRecord,
@@ -445,10 +468,10 @@ export class DefaultRunHandle<TRequest extends RunRequestSnapshot = RunRequestSn
       currentNode: patch.currentNode ?? baseRecord.currentNode,
       iterationsUsed: patch.iterationsUsed ?? baseRecord.iterationsUsed,
       pauseReason:
-        status === 'awaiting_user'
+        status === 'awaiting_user' || status === 'paused'
           ? (awaitingUserPatch?.reason ?? baseRecord.pauseReason)
           : undefined,
-      pausedAt: status === 'awaiting_user' ? updatedAt : undefined,
+      pausedAt: status === 'awaiting_user' || status === 'paused' ? updatedAt : undefined,
       errorIfAny,
       metadata: awaitingUserPatch?.eventId
         ? {
@@ -464,7 +487,7 @@ export class DefaultRunHandle<TRequest extends RunRequestSnapshot = RunRequestSn
         : baseRecord.metadata,
     };
 
-    await this.registryStore.save(nextRecord);
+    await persistRunTransition(this.registryStore, baseRecord, nextRecord);
     this.runRecord = { ...nextRecord };
     if (status === 'completed' || status === 'failed') {
       this.closeObservationChannel();
@@ -475,6 +498,12 @@ export class DefaultRunHandle<TRequest extends RunRequestSnapshot = RunRequestSn
   private readonly forwardTransportEvent = (envelope: EventEnvelope<RoutedRuntimeEvent>): void => {
     this.observationEventBus.emit('event', envelope);
   };
+
+  private assertExecutionOwner(record: RunRecord): void {
+    if (record.metadata?.executionId !== this.executionId) {
+      throw new RunInteractionConflictError(this.runId, 'execution ownership has changed');
+    }
+  }
 
   private readonly forwardTransportError = (error: Error): void => {
     this.observationEventBus.emit('error', error);

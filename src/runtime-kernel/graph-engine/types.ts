@@ -1,4 +1,5 @@
 import type { ToolExecutionContext } from '../tools/toolExecutionContext';
+import type { ToolRecoveryPort } from './definitions/runContinuation';
 import type {
   AgentSpecSystemReminderPolicy,
   AgentSpecToolObservationGovernancePolicy,
@@ -95,6 +96,11 @@ export interface EngineLocalState extends Record<string, unknown> {
   runtimeEventSink?: RuntimeEventSink;
   /** 在 fan-out 前请求 Host 持久化单个 durable fact。 */
   runtimeEventCommitPort?: RuntimeEventCommitPort;
+  /** Graph 注入的短提交边界，ToolNode 每个 call 前后复用；不序列化能力。 */
+  commitExecutionBoundary?: (state: EngineState) => Promise<void>;
+  toolRecoveryPort?: ToolRecoveryPort;
+  /** 意图已提交但结果未提交的原始 call；重启时必须经过工具 owner 对账。 */
+  executingToolCallId?: ToolCallId;
   runtimeFailureFactSink?: RuntimeFailureFactSink;
   summarizationCallbacks?: SummarizationCallbacks;
   /** 最近一次成功完成的 LLM Prompt 占用；可序列化并随 checkpoint 保留。 */
@@ -125,6 +131,8 @@ export const ENGINE_STATE_SCHEMA_VERSION = 1;
 
 export interface EngineState {
   nodeId: string;
+  /** 仅在配置 ExecutionCheckpointPort 后启用；yielded 不得重新执行最终节点。 */
+  executionStatus?: 'ready' | 'executing' | 'yielded' | 'awaiting_user';
   /**
    * 当前 checkpoint 的单调版本。
    *

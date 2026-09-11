@@ -51,6 +51,7 @@ import {
   RunNotFoundError,
 } from './runErrors';
 import type { ListRunsFilter, RunRecord, RunRegistryStore } from './runRegistryStorePort';
+import { persistRunTransition } from './functions/persistRunTransition';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -92,9 +93,14 @@ export class DefaultRunSupervisor<TRequest extends RunRequestSnapshot = RunReque
   private readonly inFlight = new Map<RunId, Promise<RunOutcome>>();
   private readonly eventWatchDisposers = new Map<RunId, () => void>();
   private readonly controlOperations = new Map<RunId, Promise<void>>();
+  private readonly canRestoreRun?: DefaultRunSupervisorOptions<TRequest>['canRestoreRun'];
 
   constructor(options: DefaultRunSupervisorOptions<TRequest>) {
+    if (options.canRestoreRun && !options.registryStore.compareAndSwap) {
+      throw new Error('Run recovery requires RunRegistryStore.compareAndSwap');
+    }
     this.registryStore = options.registryStore;
+    this.canRestoreRun = options.canRestoreRun;
     this.auditPort = options.auditPort;
     this.executor = options.executor;
     this.runIdFactory = options.runIdFactory ?? generateRunId;
@@ -154,6 +160,29 @@ export class DefaultRunSupervisor<TRequest extends RunRequestSnapshot = RunReque
       throw error;
     }
 
+    return this.attachRun(record, spec, controller);
+  }
+
+  async restoreRun(spec: RunRegistrationSpec<TRequest> & { runId: RunId }): Promise<RunHandle<TRequest>> {
+    if (!this.registryStore.compareAndSwap) throw new Error('Run restoration requires atomic registry transitions');
+    return this.withRunControlLock(spec.runId, async () => {
+      if (this.handles.has(spec.runId)) throw new RunAlreadyRegisteredError(spec.runId);
+      const record = await this.registryStore.load(spec.runId);
+      if (!record) throw new RunNotFoundError(spec.runId);
+      if ((record.status !== 'paused' && record.status !== 'awaiting_user')
+        || record.conversationId !== spec.conversationId || record.agentSpecId !== spec.agentSpec.id
+        || record.parentRunId !== spec.parentRunId) {
+        throw new RunInteractionConflictError(spec.runId, 'restoration does not match persisted run');
+      }
+      this.acquireRunAdmission(spec.runId, spec.concurrencyKey);
+      return this.attachRun(record, spec, new AbortController());
+    });
+  }
+
+  private attachRun(
+    record: RunRecord, spec: RunRegistrationSpec<TRequest>, controller: AbortController,
+  ): RunHandle<TRequest> {
+    const runId = record.runId;
     try {
       const handle = new DefaultRunHandle<TRequest>({
         runRecord: record,
@@ -277,11 +306,34 @@ export class DefaultRunSupervisor<TRequest extends RunRequestSnapshot = RunReque
       reason,
       now: this.now,
       notifyTerminal: outcome => this.notifyTerminalWaiters(outcome.runId),
+      canRestoreRun: this.canRestoreRun,
     });
   }
 
-  async pause(_runId: RunId, _reason?: string): Promise<never> {
-    throw new NotImplementedError('RunSupervisor.pause is N-3.B; not implemented in N-3.A');
+  async pause(runId: RunId, reason?: string): Promise<void> {
+    await this.withRunControlLock(runId, () => this.getHandle(runId).pause(reason));
+  }
+
+  async resumePausedRun(input: Parameters<RunSupervisor<TRequest>['resumePausedRun']>[0]): Promise<RunHandle<TRequest>> {
+    return this.withRunControlLock(input.runId, async () => {
+      const handle = this.getHandle(input.runId);
+      const record = await this.registryStore.load(input.runId);
+      if (!record || record.status !== 'paused' || record.pausedAt === undefined
+        || record.updatedAt !== input.expectedUpdatedAt) {
+        throw new RunInteractionConflictError(input.runId, 'run is not settled at the expected pause');
+      }
+      await persistRunTransition(this.registryStore, record, {
+        ...record, status: 'running', updatedAt: this.now(), pausedAt: undefined,
+        pauseReason: undefined, errorIfAny: undefined,
+        metadata: { ...record.metadata, executionId: input.executionId },
+      });
+      const controller = new AbortController();
+      handle.replaceExecutionAbortController(controller, input.executionId);
+      handle.attachTransportEventBus(input.eventBus);
+      this.controllers.set(input.runId, controller);
+      this.attachAwaitingUserWatcher(input.runId, input.eventBus);
+      return handle;
+    });
   }
 
   async claimResume(
@@ -327,7 +379,7 @@ export class DefaultRunSupervisor<TRequest extends RunRequestSnapshot = RunReque
         throw new RunNotFoundError(runId);
       }
       const claimId = generateRunResumeClaimId();
-      await this.registryStore.save({
+      await persistRunTransition(this.registryStore, record, {
         ...record,
         updatedAt: this.now(),
         metadata: {
@@ -437,7 +489,7 @@ export class DefaultRunSupervisor<TRequest extends RunRequestSnapshot = RunReque
       }
       const awaitingUserWithoutClaim = { ...awaitingUser };
       Reflect.deleteProperty(awaitingUserWithoutClaim, 'resumeClaim');
-      await this.registryStore.save({
+      await persistRunTransition(this.registryStore, record, {
         ...record,
         status: 'running',
         updatedAt: this.now(),
@@ -460,7 +512,8 @@ export class DefaultRunSupervisor<TRequest extends RunRequestSnapshot = RunReque
       // 才能取消它，旧 transport 的迟到 abort 不得跨 execution 传播。
       const executionController = new AbortController();
       forwardParentAbortSignal(executionController, parentSignal);
-      handle.replaceExecutionAbortController(executionController);
+      handle.replaceExecutionAbortController(executionController, execution?.executionId
+        ?? (typeof record.metadata?.executionId === 'string' ? record.metadata.executionId : undefined));
       this.controllers.set(runId, executionController);
       return handle;
     });
@@ -482,7 +535,7 @@ export class DefaultRunSupervisor<TRequest extends RunRequestSnapshot = RunReque
       }
       const awaitingUserWithoutClaim = { ...awaitingUser };
       Reflect.deleteProperty(awaitingUserWithoutClaim, 'resumeClaim');
-      await this.registryStore.save({
+      await persistRunTransition(this.registryStore, record, {
         ...record,
         updatedAt: this.now(),
         metadata: {

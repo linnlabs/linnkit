@@ -57,4 +57,27 @@ UI 历史应由 `events` 派生为可重建 read model。read model 可以与事
 
 ## 6. 最小验证
 
+### 可恢复执行的显式接入
+
+`GraphExecutorConfig.executionCheckpointPort` 启用可恢复执行提交：Host 必须把 publisher
+已接纳的本步骤 durable facts 与传入 checkpoint 放进同一短事务，并校验当前 activation
+的写入权。普通 EventBus consumer 在此模式下暂存事实，由该提交释放；不能先独立落盘
+再把两次写入称为原子提交。`RuntimeEventCommitPort` 的显式 durable-first 事实仍走原入口。
+
+`EventBusEventPersistence.checkpointWriter` 在现有 consumer 内暂存本步骤事实；Graph 的
+提交端口调用同实例 `commitCheckpoint`，writer 一次收到 facts 与 checkpoint。
+离开 Graph 时调用 `finishCheckpointWrites` 作废未提交 attempt 并恢复普通 settlement
+写入。`drain` 只等待已安排的事务，不能把 staged facts 当成已持久化。客户端以持久运行
+状态确认完成，不把尚未提交的实时进度当作恢复凭据。
+
+Graph 在节点调用前保存进度，每个工具 call 前保存执行意图、结束后保存结果与下一位置。
+`continueSession` 只挂载新的临时能力，保留原请求、历史、模型和累计预算；不创建用户输入，
+也不从 `user` 重启。`yielded` checkpoint 只返回已完成状态，不能重跑最终节点。
+未决工具必须经 `ToolRecoveryPort` 查询 owner；无 owner 证明时抛 `RunRecoveryBlockedError`，
+不按相同参数猜测成功。允许安全重试是 owner 的显式决定。
+
+`RunPauseRequested` 是临时停止的 signal reason；它不等于取消，也不结算尚未执行的
+工具为失败。Host 仍负责 RunDescriptor、权限重建、唯一 activation、生命周期和资源保留。
+仅使用原 `Checkpointer` 的 Host 不会自动获得这些恢复保证。
+
 linnkit 在内部对每个 port 都跑了 contract test。你的实现必须通过这些**等价的契约测试**。建议在 host 测试里 mirror linnkit 的 contract test，把 memory 实现 → 你的实现做参数化，确保行为 1:1。

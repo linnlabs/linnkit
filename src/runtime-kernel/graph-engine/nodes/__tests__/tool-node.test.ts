@@ -338,7 +338,7 @@ describe('ToolNode - 单元测试', () => {
         type: 'tool_output',
         observation: 'cached result',
         data: {},
-        ephemeral: true,
+        ephemeral: false,
         metadata: {
           idempotency: {
             key: EXPECTED_IDEMPOTENCY_KEY,
@@ -409,7 +409,7 @@ describe('ToolNode - 单元测试', () => {
       expect(secondOutput).toMatchObject({
         observation: 'fresh result',
         data: {},
-        ephemeral: true,
+        ephemeral: false,
         metadata: {
           idempotency: {
             key: EXPECTED_IDEMPOTENCY_KEY,
