@@ -14,6 +14,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.35.1] - 2026-09-11
+
+### Fixed
+
+- Initialize durable graph budgets before the first checkpoint, including child runs
+  with execution policies. Every initial checkpoint now passes the public storage parser.
+
 ## [0.35.0] - 2026-09-11
 
 ### Added

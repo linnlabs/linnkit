@@ -173,13 +173,22 @@ export class GraphExecutor {
       if (existing) {
         throw new Error(`Graph checkpoint already exists: ${checkpointKey}`);
       }
-      this.ephemeralLocals.set(checkpointKey, { ...local });
+      // 初次提交也必须是可加载的完整预算边界；Host 可只传策略，不能要求它伪造进度。
+      const initialLocal = this.executionCheckpointPort ? {
+        ...local,
+        executorLocal: {
+          ...(isRecord(local.executorLocal) ? local.executorLocal : {}),
+          stepCount: 0,
+          maxSteps: options.maxSteps ?? this.config.maxSteps,
+        },
+      } : local;
+      this.ephemeralLocals.set(checkpointKey, { ...initialLocal });
       await this.commitCheckpoint(checkpointKey, {
         nodeId,
         ...(this.executionCheckpointPort ? { executionStatus: 'ready' } : {}),
         revision: 1,
         schemaVersion: ENGINE_STATE_SCHEMA_VERSION,
-        local: sanitizeCheckpointLocal(local),
+        local: sanitizeCheckpointLocal(initialLocal),
       });
       return this.runUntilYieldQueued(
         checkpointKey,

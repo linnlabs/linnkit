@@ -27,6 +27,7 @@ import type { AuditEnvelope } from '../../../contracts/audit';
 import type { RuntimeEvent, UserInputEvent } from '../../../contracts';
 import { DEFAULT_MAX_CHILD_RUN_DEPTH } from '../types';
 import { MemoryCheckpointer } from '../../graph-engine/checkpointer/memoryCheckpointer';
+import { parseEngineCheckpoint } from '../../graph-engine/functions/parseEngineCheckpoint';
 import {
   createHistorySummaryEvent,
   DEFAULT_CONTEXT_COMPACTION_POLICY,
@@ -86,12 +87,13 @@ describe('ChildRunInvoker', () => {
       toolRuntime: noopToolRuntime, observationPreview: noopObservationPreview,
       eventToMessageConverter: () => [],
     });
-    const input = { agentConfig: { id: 'child', promptKey: 'default' }, userMessage: 'original child task',
+    const input = { agentConfig: { id: 'child', promptKey: 'default', stepPolicy: { kind: 'final_answer' as const } }, userMessage: 'original child task',
       parentToolContext: {}, conversationId: 'child-invoker-test', runId: RunIdSchema.parse('child-invoker-test-run'),
       runtimeEventSink: createChildRuntimeEventSink(publishedEvents),
       initialInput: { turnId: 'original-child-turn', request: frozenRequest },
       maxSteps: 100,
-      persistence: { checkpointer, executionCheckpointPort: { commit: (key: string, state: EngineState) => checkpointer.save(key, state) } },
+      persistence: { checkpointer, executionCheckpointPort: { commit: (key: string, state: EngineState) =>
+        checkpointer.save(key, parseEngineCheckpoint(JSON.parse(JSON.stringify(state)))) } },
     };
     await expect(invoker.invoke(input)).rejects.toThrow('provider disconnected');
     for (let index = 0; index < 2; index += 1) {
