@@ -87,6 +87,11 @@ export interface ChildRunInvokeConfig {
   seedHistoryEvents?: RuntimeEvent[];
   maxSteps?: number;
   modelId?: string;
+  /** Host 在 child admission 前冻结并持久保存；框架只补原 user-input fact identity。 */
+  initialInput?: {
+    readonly turnId: string;
+    readonly request: AgentInvocationRequest;
+  };
   /** 由 Host 提供同一 child run 的持久断点与事务 writer；不再使用内存临时图。 */
   persistence?: {
     readonly checkpointer: Checkpointer;
@@ -161,10 +166,10 @@ export class ChildRunInvoker {
       runtimeEventSink,
       runtimeEventCommitPort,
       seedHistoryEvents,
-      maxSteps = 8,
       modelId,
       abortSignal,
     } = config;
+    const maxSteps = config.initialInput?.request.maxSteps ?? config.maxSteps ?? 8;
 
     const childRunId = runId ?? generateRunId();
     const internalCheckpointKey = childRunId;
@@ -213,7 +218,12 @@ export class ChildRunInvoker {
     if (config.persistence?.expectedRevision !== undefined) {
       return this.continueChild(config, childRunId, runtimeConversationId);
     }
-    const turnId = generateTurnId();
+    const turnId = config.initialInput?.turnId ?? generateTurnId();
+    if (config.initialInput && (
+      !turnId.trim() || config.initialInput.request.query !== userMessage
+      || config.initialInput.request.promptKey !== agentConfig.promptKey
+      || !config.initialInput.request.model_id
+    )) throw new Error('Child initial input does not match the admitted invocation');
 
     logger.info(`启动 child-run: ${agentConfig.id}`, {
       conversationId: runtimeConversationId,
@@ -234,11 +244,14 @@ export class ChildRunInvoker {
     const admittedChildUserInput = runtimeEventSink(childUserInput, 'ChildRunInvoker.user_input');
 
     const childModelId = resolveChildRunModelId({
-      explicitModelId: modelId,
+      explicitModelId: config.initialInput?.request.model_id ?? modelId,
       agentConfig,
       resolveDefaultModelId: () => this.modelResolver.resolveModelId(),
     });
-    const request: AgentInvocationRequest = {
+    const request: AgentInvocationRequest = config.initialInput ? {
+      ...config.initialInput.request,
+      currentUserEventId: admittedChildUserInput.id,
+    } : {
       query: userMessage,
       currentUserEventId: admittedChildUserInput.id,
       promptKey: agentConfig.promptKey,

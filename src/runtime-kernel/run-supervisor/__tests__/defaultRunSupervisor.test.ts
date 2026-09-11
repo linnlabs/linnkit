@@ -190,13 +190,17 @@ describe('DefaultRunSupervisor', () => {
     await restarted.recoverOnBoot();
     const restored = await restarted.restoreRun({ ...registration, eventBus: new EventBus('restored') });
     expect(await restored.request()).toEqual(request);
-    const resume = { ...input, expectedUpdatedAt: (await restored.meta()).updatedAt };
+    const parent = new AbortController();
+    const resume = { ...input, expectedUpdatedAt: (await restored.meta()).updatedAt, parentSignal: parent.signal };
     const results = await Promise.allSettled([restarted.resumePausedRun(resume), restarted.resumePausedRun(resume)]);
     expect(results.map(result => result.status)).toEqual(['fulfilled', 'rejected']);
     expect(restored.signal.aborted).toBe(false);
     expect(originalSignal.aborted).toBe(true);
     await expect(original.markCompleted()).rejects.toThrow('execution ownership has changed');
     expect(await restored.meta()).toMatchObject({ runId: original.runId, iterationsUsed: 3, currentNode: 'tool', status: 'running' });
+    parent.abort('parent paused');
+    expect(restored.signal.aborted).toBe(true);
+    expect(restored.signal.reason).toBe('parent paused');
   });
   it('registerRun 生成 runId、写 pending RunRecord，并返回 handle', async () => {
     const { registryStore, handle } = await registerOneRun();

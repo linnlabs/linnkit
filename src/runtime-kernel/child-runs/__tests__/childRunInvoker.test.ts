@@ -69,11 +69,17 @@ describe('ChildRunInvoker', () => {
     const publishedEvents: RuntimeEvent[] = [];
     let attempts = 0;
     const turns: unknown[] = [];
+    const frozenRequest = {
+      query: 'original child task', promptKey: 'default', model_id: 'original-model', maxSteps: 6,
+      frozenSystemPrompt: 'Host frozen input', availableTools: ['original-tool'],
+    };
     const invoker = new ChildRunInvoker({
       modelResolver: { resolveModelId: () => 'child-model' },
       createLlmNode: () => ({ id: 'llm', async run(state) {
         attempts += 1;
         turns.push(state.local?.turnId);
+        expect(state.local?.request).toMatchObject(frozenRequest);
+        expect(state.local?.executorLocal?.maxSteps).toBe(6);
         if (attempts === 1) throw new Error('provider disconnected');
         return { kind: 'yield', events: [] };
       } }),
@@ -83,6 +89,8 @@ describe('ChildRunInvoker', () => {
     const input = { agentConfig: { id: 'child', promptKey: 'default' }, userMessage: 'original child task',
       parentToolContext: {}, conversationId: 'child-invoker-test', runId: RunIdSchema.parse('child-invoker-test-run'),
       runtimeEventSink: createChildRuntimeEventSink(publishedEvents),
+      initialInput: { turnId: 'original-child-turn', request: frozenRequest },
+      maxSteps: 100,
       persistence: { checkpointer, executionCheckpointPort: { commit: (key: string, state: EngineState) => checkpointer.save(key, state) } },
     };
     await expect(invoker.invoke(input)).rejects.toThrow('provider disconnected');
@@ -92,6 +100,7 @@ describe('ChildRunInvoker', () => {
     }
     expect(attempts).toBe(2);
     expect(turns[0]).toBe(turns[1]);
+    expect(turns[0]).toBe('original-child-turn');
     expect(publishedEvents.filter(event => event.type === 'user_input')).toHaveLength(1);
     expect((await checkpointer.load(input.runId))?.local?.executorLocal?.stepCount).toBe(2);
   });

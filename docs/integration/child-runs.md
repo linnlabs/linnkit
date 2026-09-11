@@ -126,9 +126,17 @@ Linnkit 只定义 child-run 原语和端口，不替 Host 选择全局实例。H
 此模式的异常向 Host 传播且不清理 checkpoint，由 Host 将 attempt 结算为暂停或明确终止。
 未配置 persistence 的现有嵌入调用仍使用短生命周期内存图。
 
+Host 可在 admission 前保存 `initialInput: { turnId, request }`，再传给首次 invoke。
+该输入拥有原始 query、模型、预算、工具集及 Host 扩展的冻结内容；框架只补充唯一 child
+user-input fact 的 `currentUserEventId`，不以当前默认配置覆盖它。query / promptKey 必须与
+本次调用相符。继续只读取 checkpoint 中的原 request；不重新读取 initialInput。
+
 Host 必须先保存父 tool call 到稳定 child identity 的映射、冻结 child Agent 定义，并复用
 原 child lifecycle / EventStore writer。仅注入持久 checkpoint 而每次注册新 child 不算恢复。
 同步 child 的待审批限制仍然存在；需要产品交互的工作交给 foreground run。
+
+Host 激活原 child 时向 `resumePausedRun` 传入本次父 execution 的 `parentSignal`；
+旧父 signal 不能继续控制新 child attempt，新的父暂停或取消仍必须传递到 child。
 
 - 单测：父 agent 工具内 `invokeChildRun` → 父 run 的 `cost().childrenTotal.llmCost > 0`
 - 集成测：child run 内部调用工具时，`model.select` / `tool.allow` audit envelope 的 `scope.conversationId` 与注册 child run 的 conversationId 一致，`scope.runId` 是 child runId。

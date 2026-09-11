@@ -159,6 +159,7 @@ export interface RunSupervisor<TRequest extends RunRequestSnapshot = RunRequestS
     readonly expectedExecutionId?: ExecutionId;
     readonly eventBus: EventBus;
     readonly executionId: ExecutionId;
+    readonly parentSignal?: AbortSignal;
   }): Promise<RunHandle<TRequest>>;
   claimResume(
     runId: RunId,

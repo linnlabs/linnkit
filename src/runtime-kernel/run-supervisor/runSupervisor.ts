@@ -375,6 +375,7 @@ export class DefaultRunSupervisor<TRequest extends RunRequestSnapshot = RunReque
         metadata: { ...record.metadata, executionId: input.executionId },
       });
       const controller = new AbortController();
+      forwardParentAbortSignal(controller, input.parentSignal);
       handle.replaceExecutionAbortController(controller, input.executionId);
       handle.attachTransportEventBus(input.eventBus);
       this.controllers.set(input.runId, controller);

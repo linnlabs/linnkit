@@ -14,6 +14,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.35.0] - 2026-09-11
+
+### Added
+
+- Child invocation accepts a Host-admitted initial request and turn identity. Frozen Host
+  inputs, original model and step budget survive a crash before the first graph commit;
+  continuation continues to consume only the original durable checkpoint.
+- Paused child activation can attach the current parent execution's abort signal.
+
 ## [0.34.0] - 2026-09-11
 
 ### Added
