@@ -64,10 +64,7 @@ export function createExecuteLlmStage(dependencies: ExecuteLlmStageDependencies)
       const streamEventHandler: ((event: AnyAgentEvent) => void) | undefined =
         ctx.input.stream && ctx.eventHandler
           ? (event: AnyAgentEvent) => {
-              const processedEvent = processStreamEvent(event, ctx.outputProcessor);
-              if (processedEvent) {
-                ctx.eventHandler?.(processedEvent);
-              }
+              ctx.eventHandler?.(processStreamEvent(event, ctx.outputProcessor));
             }
           : undefined;
 
@@ -237,16 +234,13 @@ async function emitModelFallbackRejectionAudits(
 function processStreamEvent(
   event: AnyAgentEvent,
   outputProcessor: GraphExecutorOutputProcessor | undefined
-): AnyAgentEvent | null {
+): AnyAgentEvent {
   if (!outputProcessor?.processStreamChunk || event.type !== 'stream_chunk') {
     return event;
   }
 
   const processedContent = outputProcessor.processStreamChunk(event.content);
-  if (processedContent.length === 0) {
-    return null;
-  }
-
+  // 文本过滤不能删除已经分配 answer_id/seq 的事实；空正文仍须被 Graph 接纳并推进该序号。
   return {
     ...event,
     content: processedContent,

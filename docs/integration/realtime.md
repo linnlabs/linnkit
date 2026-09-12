@@ -73,6 +73,11 @@ TypeScript 类型只在编译期有效。Provider JSON、HTTP SSE、IPC、数据
 
 realtime adapter 在官方 mapper 之后只能写 `execution_id / execution_seq / run_id / lane / visibility` 等宿主归属字段。禁止把 `EventEnvelope.seq` 写回 `SSEEvent.seq`：答案投影依赖 chunk 从 `0` 连续递增，覆盖后会让实时答案永远等待不存在的首块，而持久化的完整 `final_answer` 只能在重新加载历史时出现。
 
+Host `outputProcessor.processStreamChunk()` 只变换当前 chunk 的正文。返回空串可以隐藏该段文字，
+但不能丢弃已由 streaming adapter 分配 `answer_id / seq` 的事件：Graph、官方 SSE mapper 和客户端
+仍接纳空正文 chunk 并推进原序号，不重新编号或跳号。完整答案只拼接处理后的正文，空 chunk 不增加文本。
+这不放宽 Provider canonical 准入：原始 `answer_delta / thought_delta` 仍必须非空。
+
 ### 1.3 身份字段与 owner
 
 身份的唯一性作用域、等值关系与禁止替代以 [`runtime-identity.md`](./runtime-identity.md) 为唯一完整规范；本节只保留实时链路速查。

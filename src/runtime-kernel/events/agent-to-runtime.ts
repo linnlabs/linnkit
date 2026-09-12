@@ -218,10 +218,9 @@ function mapStreamChunkToRuntime(
   context: EventMappingContext,
   id: string,
   timestamp: number,
-): RuntimeEvent | null {
-  const text = streamEvent.content ?? '';
-  if (!text) return null;
-  const chunkEvent = createFinalAnswerChunkEvent(id, context.conversationId, context.turnId, streamEvent.answer_id, streamEvent.seq, text, {
+): RuntimeEvent {
+  // AgentEvent 已完成 schema admission；空正文可能来自 Host 文本处理，不能丢失其序号事实。
+  const chunkEvent = createFinalAnswerChunkEvent(id, context.conversationId, context.turnId, streamEvent.answer_id, streamEvent.seq, streamEvent.content, {
     timestamp,
     is_last: streamEvent.is_last === true,
   });

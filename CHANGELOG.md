@@ -14,6 +14,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Preserve allocated answer chunk identities and sequence numbers when a Host output
+  processor filters text to an empty string. Graph, realtime mapping and durable answer
+  assembly now stay aligned across filtered chunks and retries, without relaxing strict
+  sequence validation or canonical Provider delta admission.
+
 ## [0.37.1] - 2026-09-12
 
 ### Fixed

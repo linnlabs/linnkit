@@ -23,6 +23,7 @@ export interface GraphExecutorOutputProcessor {
    * runtime-kernel 调用时必须保留对象接收者，不要拆成裸函数传递。
    */
   processResponse?(this: GraphExecutorOutputProcessor, rawResponse: string): string;
+  /** 返回空串只隐藏当前正文；已经分配的 chunk identity/seq 仍原样进入 Graph 与实时通道。 */
   processStreamChunk?(this: GraphExecutorOutputProcessor, chunk: string): string;
 }
 

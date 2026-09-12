@@ -113,6 +113,7 @@ Linnkit 测试使用 `createScriptedInferenceHarness()`。Host 测试至少覆�
 - 无 terminal、重复 terminal、未闭合工具、非 JSON object 参数和 route identity 不匹配；
 - 零 SDK 重试、Abort 不发普通 error、工具只产生数据不执行；
 - 首分片/中途分片空闲、未知断流、Host 状态机违规与用户取消的独立终因；Linnkit 重试前撤回失败 attempt 的 partial output，成功重试只形成一个 durable Assistant turn；
+- Host 输出处理器将合法 delta 过滤为空串时，首段、中段、末段和长流仍原样保留已分配的 chunk 序号；重试后新答案从零开始，最终持久正文只来自成功 attempt；原始 canonical 空 delta 仍拒绝；
 - 每个 API surface 的受控 request/event/raw-usage fixture；
 - 生产 composition root 的 Model Catalog → Host port → capability 路由；
 - 有图输入的 final messages → requirement → materializer → Provider body 闭环。
