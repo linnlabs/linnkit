@@ -74,4 +74,4 @@
 
 ## 维护说明
 
-公开接入文档只写长期稳定的接入事实。一次性升级计划、内部取舍和调研笔记不放进 npm tarball；公开版本变化统一写到仓根 `CHANGELOG.md`。发布 runbook 只维护在 `docs/release/RELEASE.md`，不在接入文档里重复。
+公开接入文档只写长期稳定的接入事实。一次性升级计划、内部取舍和调研笔记不放进 npm tarball；公开版本变化统一写到仓根 `CHANGELOG.md`。源码仓的发布规范见 `CONTRIBUTING.md`，实际门禁由 `.github/workflows/release.yml` 执行，不在接入文档里重复。

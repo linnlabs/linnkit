@@ -86,6 +86,16 @@ Graph 在节点调用前保存进度，每个工具 call 前保存执行意图�
 此入口只结算已接纳工作，不能启动新动作，不用于 RunPauseRequested。拥有取消收尾事实
 的自定义节点也应履行同一合同。Host 不得在 finishCheckpointWrites 后从 journal 补写。
 
+协议熔断也必须先完成结果提交：ToolNode 消费完整个已接纳 batch，提交全部配对
+`tool_output`、清除工具执行意图并保存 `ready / llm` 位置，之后才抛出稳定的
+`tool.protocol_fuse`。这表示当前 execution 被中断，不表示 run 已成功完成；Host
+仍拥有失败或暂停的生命周期决策。若 Host 允许用户显式继续，Graph 从 LLM 消费原错误
+历史，不重跑已拒绝的工具，也不自动继续本次熔断。结果提交失败时优先传播存储异常，
+保留此前已提交的 checkpoint，不能先报告熔断完成再补写丢失事实。
+
+该结果边界不适用于任意未知异常：未获得工具 owner 证明的副作用仍须保留执行意图并按
+恢复合同对账，不能为了“每个调用看起来结束”而伪造失败输出或直接清除未决动作。
+
 Supervisor 的 cancelled 状态先撤销动作权限，不意味着在途提交已经排空。Host checkpoint
 writer 应允许原 activation 在现存 revision 链上完成收尾（包括取消时已排队的边界），
 但不能恢复工具效果写入权；yielded 或释放后必须拒绝迟到提交，不得复活已清理的断点。

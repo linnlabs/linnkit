@@ -12,6 +12,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+### Fixed
+
+- Commit the complete tool batch before raising a protocol fuse. Atomic checkpoint Hosts
+  retain every admitted tool's terminal output when closing the execution, and explicit
+  continuation consumes the committed error history without repeating rejected calls.
+  A failed checkpoint commit remains a storage error rather than a falsely settled fuse.
+
 ## [0.37.0] - 2026-09-12
 
 ### Added

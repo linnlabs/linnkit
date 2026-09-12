@@ -54,6 +54,18 @@
 - 单测：用 `createToolContextFixture()` 直接测 `tool.run(args, fixtureContext)`。
 - 集成测：在 host-bound `ToolRuntimeHarness` 上覆盖"失败恢复 / 并行调用 / observation 预览"路径。
 
+### 协议错误与结果收口
+
+连续四次工具协议错误会触发 `tool.protocol_fuse`，阻止当前 execution 再调用 LLM。
+同一 assistant batch 仍须先为每个调用生成结果；成功调用会清除连续错误计数，不能把
+工具执行错误或图片能力不匹配算作协议错误。熔断不放宽参数合同，也不暗中重试。
+
+启用原子 checkpoint 时，错误结果和下一执行位置必须在抛出熔断前完成同一提交。
+Host 接入测试应通过真实 publisher 与 persistence consumer 验证：执行收口后所有
+tool call 仍有且只有一个 durable output；提交失败不会假报收口完成；显式继续不重跑
+已结算调用。仅断言 ToolNode 抛出错误或实时收到 output，不能证明持久化完整。
+继续与未知副作用的边界见 [Persistence](./persistence.md#6-最小验证)。
+
 ## 6. ObservationPreviewPort：配置超长 observation 存储路径
 
 `contextPolicy.toolOutput.observationGovernance` 只控制**什么时候治理**：

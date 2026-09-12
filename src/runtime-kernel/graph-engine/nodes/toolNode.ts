@@ -33,6 +33,7 @@ import {
   applyProtocolFuseState,
   createToolProtocolFuseError,
   checkProtocolFuse,
+  type ToolProtocolFuseError,
 } from './toolNode.protocolFuse';
 import { isRecord, parseJsonSafe } from './toolNode.helpers';
 import type { UnknownRecord } from './toolNode.helpers';
@@ -163,6 +164,13 @@ type ToolNodeErrorContext = PreparedToolNodeContext & {
   toolArgs: Record<string, unknown>;
   exec: ToolExecutionResult;
   bridge: ToolNodeEventBridge;
+};
+
+/** 已结算的工具失败仍须提交结果边界，不能通过提前抛错丢弃 publisher 已接纳的事实。 */
+type ToolCallOutcome = NodeResult | {
+  readonly kind: 'interrupted';
+  readonly error: ToolProtocolFuseError;
+  readonly events: RoutedRuntimeEvent[];
 };
 
 export interface ToolNodeDependencies {
@@ -321,7 +329,7 @@ export class ToolNode implements GraphNode {
     const events: RoutedRuntimeEvent[] = [];
 
     while (true) {
-      let result: NodeResult;
+      let result: ToolCallOutcome;
       try {
         result = await this.runNextPendingToolCall(state);
       } catch (error) {
@@ -337,6 +345,14 @@ export class ToolNode implements GraphNode {
         const error = new Error('The user aborted a request.');
         error.name = 'AbortError';
         throw error;
+      }
+      if (result.kind === 'interrupted') {
+        // 熔断只中断本 execution；批次已结算，显式继续时应从 LLM 消费原错误历史。
+        // 必须先提交，Host 离开 Graph 后会作废未提交 attempt，不能让它从 journal 补写。
+        await commitToolBoundary(state, {
+          kind: 'route', nextNodeId: 'llm', events: result.events,
+        });
+        throw result.error;
       }
       await commitToolBoundary(state, result);
       if (Array.isArray(result.events) && result.events.length > 0) {
@@ -364,7 +380,7 @@ export class ToolNode implements GraphNode {
     await commitToolBoundary(state, { kind: 'yield', events: [] });
   }
 
-  private async runNextPendingToolCall(state: EngineState): Promise<NodeResult> {
+  private async runNextPendingToolCall(state: EngineState): Promise<ToolCallOutcome> {
     const calls = parsePendingToolCalls(state.local?.pendingToolCalls ?? []);
     const signalRaw = state.local?.signal;
     if (isAbortSignal(signalRaw) && signalRaw.aborted) {
@@ -765,7 +781,7 @@ export class ToolNode implements GraphNode {
     return { kind: 'route', nextNodeId: 'wait_user', events: context.bridge.getRuntimeEvents() };
   }
 
-  private async handleError(context: ToolNodeErrorContext): Promise<NodeResult> {
+  private async handleError(context: ToolNodeErrorContext): Promise<ToolCallOutcome> {
     if (context.state.local?.executingToolCallId
       && (context.exec.errorKind === 'protocol' || context.exec.errorKind === 'capability')) {
       // 当前能力不可用不证明原副作用失败；保留未决意图，待 owner 能再次对账。
@@ -837,7 +853,11 @@ export class ToolNode implements GraphNode {
     });
 
     if (fuse.shouldFuse && remainingCalls.length === 0) {
-      throw createToolProtocolFuseError(fuse.nextCount, context.exec.error);
+      return {
+        kind: 'interrupted',
+        error: createToolProtocolFuseError(fuse.nextCount, context.exec.error),
+        events: context.bridge.getRuntimeEvents(),
+      };
     }
 
     if (
