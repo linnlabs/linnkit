@@ -1,17 +1,15 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-const repoRoot = path.resolve(__dirname, '../../../..');
-
-const contextManagerTargets = [
-  'packages/linnkit/src/context-manager/index.ts',
-  'packages/linnkit/src/context-manager/shared',
-  'packages/linnkit/src/context-manager/profiles/agent',
-];
+const repoRoot = path.resolve(__dirname, '../..');
+const guardFile = path.resolve(__dirname, 'no-host-leakage.test.ts');
 
 const contextManagerLegacyLiterals = [
   'document_fragment',
+  'context_before',
+  'context_after',
   'project_context',
   'document_context',
   'user_quote',
@@ -25,7 +23,7 @@ const contextManagerLegacyLiterals = [
   '[任务完成]',
 ];
 
-const linnkitProductionTargets = ['packages/linnkit/src'];
+const sourceTargets = ['src', '__tests__', 'build', 'bin'];
 
 /**
  * 明确属于当前 host/product 的名称和富请求字段。
@@ -37,7 +35,11 @@ const hostProductLiterals = [
   ['Linn', 'ya'].join(''),
   'Deep Research',
   'deep_research',
+  'deep-research',
   'Slides',
+  'ppt_',
+  'pptx',
+  'PPT ',
   'SharedMemory',
   'TaskState',
   'taskstate',
@@ -58,59 +60,58 @@ const hostProductLiterals = [
 ];
 
 function collectSourceFiles(target: string): string[] {
-  const absoluteTarget = path.join(repoRoot, target);
-  if (!fs.existsSync(absoluteTarget)) {
-    return [];
-  }
-
-  const stat = fs.statSync(absoluteTarget);
+  // 缺失路径必须抛错；否则拆仓或移动目录会把边界检查变成空扫描假绿。
+  const stat = fs.statSync(target);
   if (stat.isFile()) {
-    return isTypeScriptFile(absoluteTarget) ? [absoluteTarget] : [];
+    return isSourceFile(target) ? [target] : [];
   }
 
   const files: string[] = [];
-  for (const entry of fs.readdirSync(absoluteTarget, { withFileTypes: true })) {
+  for (const entry of fs.readdirSync(target, { withFileTypes: true })) {
     if (entry.name.startsWith('.')) {
       continue;
     }
 
-    const child = path.join(absoluteTarget, entry.name);
+    const child = path.join(target, entry.name);
     if (entry.isDirectory()) {
-      // 该门禁约束生产源码的业务边界；测试夹具需要保留历史标签样本来验证转换行为。
-      if (entry.name === '__tests__') {
-        continue;
-      }
-      files.push(...collectSourceFiles(path.relative(repoRoot, child)));
+      files.push(...collectSourceFiles(child));
       continue;
     }
 
-    if (entry.isFile() && isTypeScriptFile(child)) {
+    if (entry.isFile() && isSourceFile(child)) {
       files.push(child);
     }
   }
   return files;
 }
 
-function isTypeScriptFile(filePath: string): boolean {
-  return filePath.endsWith('.ts')
-    && !filePath.endsWith('.d.ts')
-    && !filePath.endsWith('.test.ts')
-    && !filePath.endsWith('.spec.ts')
-    && !filePath.endsWith('.integration.test.ts');
+function isSourceFile(filePath: string): boolean {
+  // 只有本文件拥有拒绝词表；业务回归夹具不能因此整目录豁免。
+  return filePath !== guardFile && /\.[cm]?[jt]sx?$/.test(filePath);
+}
+
+function isTestFile(filePath: string): boolean {
+  return filePath.split(path.sep).includes('__tests__') || /\.(test|spec)\.[cm]?[jt]sx?$/.test(filePath);
 }
 
 function findLiteralViolations(
-  targets: string[],
+  root: string,
+  targets: readonly string[],
   literals: string[],
-  options: { readonly caseInsensitive?: boolean } = {},
+  options: { readonly caseInsensitive?: boolean; readonly productionOnly?: boolean } = {},
 ): string[] {
   const violations: string[] = [];
 
   for (const target of targets) {
-    for (const file of collectSourceFiles(target)) {
+    const files = collectSourceFiles(path.join(root, target))
+      .filter(file => !options.productionOnly || !isTestFile(file));
+    if (files.length === 0) {
+      throw new Error(`Boundary scan target has no source files: ${target}`);
+    }
+    for (const file of files) {
       const content = fs.readFileSync(file, 'utf8');
       const searchableContent = options.caseInsensitive ? content.toLowerCase() : content;
-      const relativeFile = path.relative(repoRoot, file);
+      const relativeFile = path.relative(root, file);
 
       for (const literal of literals) {
         const searchableLiteral = options.caseInsensitive
@@ -127,19 +128,36 @@ function findLiteralViolations(
 }
 
 describe('linnkit no host leakage', () => {
-  it('keeps shared and agent profile code free of host-facing legacy literals', () => {
+  it('keeps production contracts and runtime free of host-facing legacy literals', () => {
     expect(findLiteralViolations(
-      contextManagerTargets,
+      repoRoot,
+      ['src'],
       contextManagerLegacyLiterals,
+      { productionOnly: true },
     )).toEqual([]);
   });
 
-  it('keeps all production source free of host product names and rich request fields', () => {
-    // 测试夹具会故意保存历史工具名来验证 replay；collectSourceFiles 明确排除它们。
+  it('keeps source, build entrypoints and test fixtures free of host product names', () => {
     expect(findLiteralViolations(
-      linnkitProductionTargets,
+      repoRoot,
+      sourceTargets,
       hostProductLiterals,
       { caseInsensitive: true },
     )).toEqual([]);
+  });
+
+  it('rejects missing or empty targets and detects product fixtures in nested tests', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'linnkit-boundary-'));
+    try {
+      expect(() => findLiteralViolations(root, ['missing'], ['host_probe'])).toThrow();
+      fs.mkdirSync(path.join(root, 'src', '__tests__'), { recursive: true });
+      expect(() => findLiteralViolations(root, ['src'], ['host_probe'])).toThrow('no source files');
+      fs.writeFileSync(path.join(root, 'src', '__tests__', 'probe.test.ts'), 'const tool = "host_probe";');
+      expect(findLiteralViolations(root, ['src'], ['host_probe'])).toEqual([
+        `${path.join('src', '__tests__', 'probe.test.ts')} contains host_probe`,
+      ]);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 });

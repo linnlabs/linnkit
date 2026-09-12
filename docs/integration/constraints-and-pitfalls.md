@@ -8,7 +8,7 @@
 
 ## 1. 硬约束（接入方必读）
 
-linnkit 仓库内部的 package-boundary 由 **AST 级 guard**（基于 TypeScript Compiler API）强制 10 条规则。其中**直接影响外部消费者**的：
+独立仓通过公开入口 smoke、第三方 import 的 AST 检查、browser-safe bundle 测试和源码业务泄漏检查守住边界；这些门禁不能替代业务语义审阅。**直接影响外部消费者**的约束是：
 
 1. **只能从公开子入口 import**。`exports` 字段没声明的路径会被 Node 16+ ESM 解析直接拒绝。
 2. **不要 deep import**。`@linnlabs/linnkit/runtime-kernel/some-internal-folder/foo` 不算公开 API；下个 minor 随时可能挪。
@@ -24,14 +24,14 @@ linnkit 仓库内部的 package-boundary 由 **AST 级 guard**（基于 TypeScri
 
 不要这样接：
 
-1. **直接把 linnkit 真源仓内的 host adapters 整个抄过来当模板**——那是产品决策内嵌的实现（默认 provider / 默认 task / 默认 schema），里面糊了具体产品的语义。可以参考它们的**形状**和**装配顺序**，但不要直接拷贝再硬改。
+1. **把别的产品的 host adapters 整个抄过来当模板**——它们包含该产品的 provider、task 和 schema 决策，不属于 Linnkit 源码或公开合同。可以参考装配方式，具体实现应在自己的 Host 维护。
 2. **把别人的 agent registry / context / flow 当作公开 API 引用**——它们没在 `package.json#exports` 里。
 3. **试图通过自定义 build 钩子修改 `@linnlabs/linnkit` 内部行为**——所有定制点必须通过依赖注入。
 4. **为了省事继续从外部 schemas 包拿本该属于 agent 的 A 类协议**——0.1.1 已经把 schemas 收回包内（`@linnlabs/linnkit/contracts`），不要再走老路径。
 
 正确做法：
 
-- 复用 `@linnlabs/linnkit` 的 7 个公开子入口
+- 复用 `package.json#exports` 中的公开入口
 - 在你自己的 host layer 决定 provider、tool、persistence、flow 的真实实现
 - 通过 fence registry 把产品上下文挂进框架，而不是改框架
 
@@ -57,7 +57,7 @@ A 类（system / user 注入）走 fence 是最干净的路。B 类（per-tool �
 
 **Q：`document_fragment` / `context_before` 这类产品字段能进入 framework 吗？**
 
-**不能**。产品上下文必须由 Host 转成正式 fence；Linnkit 新请求、持久化和上下文构建不接受产品字段或旧消息 type。缺少迁移的数据应由接入方在启用当前合同前显式处理，framework 不提供运行时兼容。
+**不能成为框架业务合同**。产品上下文必须由 Host 转成正式 fence。当前源码已收紧旧消息 type 的 schema；此前发布版本仍存在接受旧值的残留。升级和显式迁移要求见 [Context Fence 当前合同](./context-fences.md#11-当前合同) 与 [Changelog](../../CHANGELOG.md)，framework 不提供静默兼容。
 
 **Q：我能跳过 host-bound testkit，只用 linnkit 自带的 testkit 写测试吗？**
 

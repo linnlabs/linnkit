@@ -21,7 +21,7 @@ describe('RunRegistryStore contract', () => {
     const record = createRunRecord({
       parentRunId: RunIdSchema.parse('parent-1'),
       iterationsUsed: 3,
-      metadata: { feature: 'deep-research' },
+      metadata: { feature: 'example-workflow' },
     });
 
     await store.save(record);
@@ -88,7 +88,7 @@ describe('RunRegistryStore contract', () => {
     await store.save(
       createRunRecord({
         runId: RunIdSchema.parse('run-1'),
-        agentSpecId: 'deep_research_leader',
+        agentSpecId: 'example_agent',
         startedAt: 30,
         updatedAt: 30,
       })
@@ -104,25 +104,25 @@ describe('RunRegistryStore contract', () => {
     await store.save(
       createRunRecord({
         runId: RunIdSchema.parse('run-3'),
-        agentSpecId: 'deep_research_leader',
+        agentSpecId: 'example_agent',
         startedAt: 10,
         updatedAt: 10,
       })
     );
 
-    const result = await store.list({ agentSpecId: 'deep_research_leader' });
+    const result = await store.list({ agentSpecId: 'example_agent' });
 
     expect(result.nextCursor).toBeUndefined();
     expect(result.runs).toEqual([
       createRunRecord({
         runId: RunIdSchema.parse('run-1'),
-        agentSpecId: 'deep_research_leader',
+        agentSpecId: 'example_agent',
         startedAt: 30,
         updatedAt: 30,
       }),
       createRunRecord({
         runId: RunIdSchema.parse('run-3'),
-        agentSpecId: 'deep_research_leader',
+        agentSpecId: 'example_agent',
         startedAt: 10,
         updatedAt: 10,
       }),

@@ -138,7 +138,7 @@ function makeTextMessage(
 
 function makeWriteFilePairWithLargeArguments(): { toolCalls: AiMessage; toolOutput: AiMessage } {
   const toolCallId = 'tc_write_large_args';
-  const content = 'createText("大量正文");\n'.repeat(1200);
+  const content = '大量正文\n'.repeat(1200);
   return {
     toolCalls: {
       id: 'a_write_large_args',
@@ -154,7 +154,7 @@ function makeWriteFilePairWithLargeArguments(): { toolCalls: AiMessage; toolOutp
             function: {
               name: 'write_file',
               arguments: JSON.stringify({
-                path: '/测试-文字排版-霞鹜文楷.slides',
+                path: '/large-input.txt',
                 content,
               }),
             },
@@ -166,12 +166,12 @@ function makeWriteFilePairWithLargeArguments(): { toolCalls: AiMessage; toolOutp
       id: 't_write_large_args',
       role: 'tool',
       type: 'tool_output',
-      content: '已创建 Slides 文件：/测试-文字排版-霞鹜文楷.slides。',
+      content: '已创建文件：/large-input.txt。',
       timestamp: 7001,
       metadata: {
         tool_call_id: ToolCallIdSchema.parse(toolCallId),
         tool_name: 'write_file',
-        data: { path: '/测试-文字排版-霞鹜文楷.slides' },
+        data: { path: '/large-input.txt' },
       },
     },
   };
@@ -460,7 +460,7 @@ describe('AgentWorkingMemoryProvider tool limits', () => {
       MAX_TOOL_INTERACTION_GROUPS_TO_KEEP: 1,
     });
     const pair = makeWriteFilePairWithLargeArguments();
-    const user = makeTextMessage('user_write_large_args', 'user', 'user_input', '创建测试 slides');
+    const user = makeTextMessage('user_write_large_args', 'user', 'user_input', '创建测试文件');
     const states = buildStates([user, pair.toolCalls, pair.toolOutput]);
     const toolCallState = states.find(state => state.message.id === pair.toolCalls.id);
     if (!toolCallState) {

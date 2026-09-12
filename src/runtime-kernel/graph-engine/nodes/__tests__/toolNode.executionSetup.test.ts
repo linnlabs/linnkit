@@ -141,16 +141,16 @@ describe('toolNode.executionSetup', () => {
       parameters: {
         type: 'object',
         properties: {
-          title: { type: 'string', description: 'PPT 标题' },
-          pages: {
+          title: { type: 'string', description: '批次名称' },
+          items: {
             type: 'array',
-            description: '逐页计划',
+            description: '批次条目',
             items: {
               type: 'object',
-              description: '单页计划',
+              description: '单个条目',
               properties: {
-                title: { type: 'string', description: '页标题' },
-                content: { type: 'string', description: '页内容' },
+                title: { type: 'string', description: '条目名称' },
+                content: { type: 'string', description: '条目内容' },
               },
               required: ['title', 'content'],
             },
@@ -177,9 +177,9 @@ describe('toolNode.executionSetup', () => {
         id: ToolCallIdSchema.parse('call_3'),
         type: 'function',
         function: {
-          name: 'ppt_plan',
+          name: 'submit_batch',
           arguments:
-            '{"title":"Deck","pages":"[{\\"title\\":\\"Overview\\",\\"content\\":\\"Summary\\"}]"}',
+            '{"title":"Batch","items":"[{\\"title\\":\\"Overview\\",\\"content\\":\\"Summary\\"}]"}',
         },
       },
       toolCatalog: {
@@ -189,14 +189,14 @@ describe('toolNode.executionSetup', () => {
 
     expect(execution).toBeTruthy();
     expect(execution?.toolArgs).toEqual({
-      title: 'Deck',
-      pages: [{ title: 'Overview', content: 'Summary' }],
+      title: 'Batch',
+      items: [{ title: 'Overview', content: 'Summary' }],
     });
     expect(warnSpy).toHaveBeenCalledWith(
       expect.stringContaining('[WARN] [ToolArgNormalizer] normalized JSON-encoded tool argument'),
       {
         expectedType: 'array',
-        path: 'ppt_plan.pages',
+        path: 'submit_batch.items',
       }
     );
   });

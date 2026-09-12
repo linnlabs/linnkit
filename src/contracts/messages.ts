@@ -139,11 +139,9 @@ const UserInputMessage = BaseMessage.extend({
 
 const UserContextMessage = BaseMessage.extend({
   role: z.literal('user'),
+  // 产品上下文种类由 Host fence metadata 表达，不进入框架消息枚举。
   type: z.enum([
     'context_injection',
-    'context_before',
-    'context_after',
-    'document_fragment',
     'task_request',
   ]),
 });

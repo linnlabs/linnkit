@@ -16,7 +16,7 @@ import type { CancelOpts, RunCostCollector, RunRequestSnapshot } from '../runHan
 import type { RunRecord } from '../runRegistryStorePort';
 
 const agentSpec: AgentSpec = {
-  id: 'deep_research_leader',
+  id: 'example_agent',
   version: '1.0.0',
   capabilities: ['research'],
   tools: [{ toolId: 'search' }],
@@ -24,8 +24,8 @@ const agentSpec: AgentSpec = {
 };
 
 const request = {
-  query: '研究 N-3',
-  promptKey: 'deep_research_leader',
+  query: '执行示例任务',
+  promptKey: 'example_agent',
 } satisfies RunRequestSnapshot;
 
 function createRuntimeEvent(id: string, content: string): RoutedRuntimeEvent {
@@ -214,7 +214,7 @@ describe('DefaultRunHandle', () => {
         scope: expect.objectContaining({
           conversationId: 'conv-1',
           runId: 'run-1',
-          agentSpecId: 'deep_research_leader',
+          agentSpecId: 'example_agent',
         }),
       })
     );
@@ -400,7 +400,7 @@ describe('DefaultRunHandle', () => {
     mutableSpec.id = 'changed';
     mutableRequest.query = '修改后的问题';
 
-    await expect(handle.spec()).resolves.toMatchObject({ id: 'deep_research_leader' });
+    await expect(handle.spec()).resolves.toMatchObject({ id: 'example_agent' });
     await expect(handle.request()).resolves.toEqual({ query: '原始问题', promptKey: 'default' });
   });
 

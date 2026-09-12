@@ -25,11 +25,7 @@ function classifyMessage(message: AiMessage): ContextTokenComponentKind {
   if (message.role === 'assistant' && (message.type === 'tool_calls' || message.type === 'tool_code')) {
     return 'tool';
   }
-  if (
-    message.type === 'context_injection'
-    || message.type === 'context_before'
-    || message.type === 'context_after'
-  ) {
+  if (message.type === 'context_injection') {
     return 'context-injection';
   }
   if (message.role === 'system') {

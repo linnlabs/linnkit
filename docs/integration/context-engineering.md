@@ -467,7 +467,7 @@ Host 仍必须让 `assistant_part_end.text` 与该 part 已发送的 `thought_de
 | `system_prompt` | 无独立上限；默认必保留 | 与其他内容共同受最终总门禁约束 | [Agent 注册](./agent-registration-guide.md) |
 | `history_summary` | `min(8192 tokens, route.max_output_tokens)` | 这是摘要正文上限；只保留最新摘要，重建后的整份输入仍须通过总门禁 | [自动压缩 §5.3](#automatic-context-compaction) |
 | `user_input` | Linnkit 无独立 token 上限；最新一条默认必保留 | Host 可以另设字符、字节或附件入口限制；这些限制不属于 Linnkit 固定合同 | [Context Fence](./context-fences.md) |
-| `context_injection` / `context_before` / `context_after` / `document_fragment` / `task_request` | 当前没有 per-fence 硬上限 | `FenceDescriptor.maxBudgetFraction` 目前只校验声明，尚未形成运行时裁决；当前只受最终总门禁约束 | [Context Fence](./context-fences.md) |
+| `context_injection` / `task_request` | 当前没有 per-fence 硬上限 | `FenceDescriptor.maxBudgetFraction` 目前只校验声明，尚未形成运行时裁决；当前只受最终总门禁约束 | [Context Fence](./context-fences.md) |
 | `thought` / canonical reasoning | `thought` 不进入模型输入；reasoning 与其他 Assistant 输出共享 `outputLimitTokens` | 全量 reasoning 通过所属 `assistant_replay_parts` 回放并计入消息 token，直到正式压缩替换 | [Reasoning 所有权 §8](#reasoning-retention) |
 | `final_answer` / `tool_code` / `task_completion` | 无独立 token 上限 | 当前一次模型生成共享 `outputLimitTokens`；历史消息按工作记忆预算取舍 | [Token 管理](./token-management.md) |
 | `tool_calls` | 与 thought / text 共享本次生成的 `outputLimitTokens`，没有第二份独立上限 | 普通 route 会把上限发给 Provider；ChatGPT Codex 订阅 route 按其客户端合同省略 wire 上限，只保留本地预算预留。进入历史后与全部 sibling `tool_output` 整组同进同退 | [Tool History](./tool-history.md) / [Provider catalog](../../../../docs/source-acquisition/provider-catalog.md) |

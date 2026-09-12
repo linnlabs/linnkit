@@ -75,7 +75,7 @@ describe('eventMappers.applyRuntimeEventToMemory', () => {
       tool_call_id: 'call-whitespace',
       observation: '\n文件正文\n',
       success: true,
-      data: { path: '/功能测试.slides' },
+      data: { path: '/sample.txt' },
     };
 
     expect(ObservationEventSchema.parse(event).observation).toBe('\n文件正文\n');

@@ -134,7 +134,7 @@ describe('toolNode.stateTransitions', () => {
 
   it('应支持无 questionnaireId 的 requireUser 工具进入 wait_user', () => {
     const parsed = {
-      data: { title: 'Deck Plan', pageCount: 3 },
+      data: { title: 'Action Batch', itemCount: 3 },
       control: { requireUser: true, resumeStrategy: 'continue' },
     };
 
@@ -146,8 +146,8 @@ describe('toolNode.stateTransitions', () => {
     const nextLocal = buildRequireUserLocalState({
       local: { history: [] },
       parsed,
-      toolCallId: ToolCallIdSchema.parse('call_ppt_plan_1'),
-      toolName: 'ppt_plan',
+      toolCallId: ToolCallIdSchema.parse('call_confirm_action_1'),
+      toolName: 'confirm_action',
       remainingCalls: [],
       conversationId: 'conv_1',
       turnId: 'turn_1',
@@ -158,8 +158,8 @@ describe('toolNode.stateTransitions', () => {
       requireUser: true,
       resumeStrategy: 'continue',
       form: parsed,
-      toolCallId: 'call_ppt_plan_1',
-      toolName: 'ppt_plan',
+      toolCallId: 'call_confirm_action_1',
+      toolName: 'confirm_action',
     });
   });
 

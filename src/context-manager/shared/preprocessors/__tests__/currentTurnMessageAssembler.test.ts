@@ -6,18 +6,18 @@ import { CurrentTurnMessageAssembler } from '../currentTurnMessageAssembler';
 
 const registry = createFenceRegistry([
   {
-    kind: 'document-context',
+    kind: 'sample-source',
     llmRole: 'user',
     placement: 'before-current-user',
     lifetime: 'turn-only',
-    formatter: content => `<document_context>\n${content}\n</document_context>`,
+    formatter: content => `<sample_source>\n${content}\n</sample_source>`,
   },
   {
-    kind: 'user-quote',
+    kind: 'sample-selection',
     llmRole: 'user',
     placement: 'before-current-user',
     lifetime: 'turn-only',
-    formatter: content => `<user_quote>\n${content}\n</user_quote>`,
+    formatter: content => `<sample_selection>\n${content}\n</sample_selection>`,
   },
   {
     kind: 'follow-up-context',
@@ -27,11 +27,11 @@ const registry = createFenceRegistry([
     formatter: content => `<follow_up_context>\n${content}\n</follow_up_context>`,
   },
   {
-    kind: 'additional-context',
+    kind: 'sample-system',
     llmRole: 'system',
     placement: 'after-system',
     lifetime: 'persisted',
-    formatter: content => `<additional_context>\n${content}\n</additional_context>`,
+    formatter: content => `<sample_system>\n${content}\n</sample_system>`,
   },
 ]);
 
@@ -50,7 +50,7 @@ describe('CurrentTurnMessageAssembler', () => {
     const messages: AiMessage[] = [
       message('system', 'system', 'system_prompt', 'System prompt'),
       message('ctx', 'system', 'context_injection', 'Stable context', {
-        fenceKind: 'additional-context',
+        fenceKind: 'sample-system',
       }),
       message('user', 'user', 'user_input', '继续'),
     ];
@@ -60,21 +60,21 @@ describe('CurrentTurnMessageAssembler', () => {
     expect(result.messages.map(item => item.id)).toEqual(['system', 'user']);
     expect(result.messages[0].content).toBe([
       'System prompt',
-      '<additional_context>\nStable context\n</additional_context>',
+      '<sample_system>\nStable context\n</sample_system>',
     ].join('\n\n'));
-    expect(result.messages[0].metadata?.assembledFenceKinds).toEqual(['additional-context']);
+    expect(result.messages[0].metadata?.assembledFenceKinds).toEqual(['sample-system']);
   });
 
   it('assembles adjacent current-turn user fences into the current user_input', async () => {
     const messages: AiMessage[] = [
       message('system', 'system', 'system_prompt', 'system'),
       message('doc', 'user', 'context_injection', 'selected source', {
-        fenceKind: 'document-context',
+        fenceKind: 'sample-source',
       }),
       message('quote', 'user', 'context_injection', 'selected element', {
-        fenceKind: 'user-quote',
+        fenceKind: 'sample-selection',
       }),
-      message('user', 'user', 'user_input', '改成圆角矩形'),
+      message('user', 'user', 'user_input', '处理所选内容'),
       message('after', 'user', 'context_injection', 'after note', {
         fenceKind: 'follow-up-context',
       }),
@@ -84,14 +84,14 @@ describe('CurrentTurnMessageAssembler', () => {
 
     expect(result.messages.map(item => item.id)).toEqual(['system', 'user']);
     expect(result.messages[1].content).toBe([
-      '<document_context>\nselected source\n</document_context>',
-      '<user_quote>\nselected element\n</user_quote>',
-      '<user_request>\n改成圆角矩形\n</user_request>',
+      '<sample_source>\nselected source\n</sample_source>',
+      '<sample_selection>\nselected element\n</sample_selection>',
+      '<user_request>\n处理所选内容\n</user_request>',
       '<follow_up_context>\nafter note\n</follow_up_context>',
     ].join('\n\n'));
     expect(result.messages[1].metadata?.assembledFenceKinds).toEqual([
-      'document-context',
-      'user-quote',
+      'sample-source',
+      'sample-selection',
       'follow-up-context',
     ]);
   });
@@ -129,7 +129,7 @@ describe('CurrentTurnMessageAssembler', () => {
     };
     const messages: AiMessage[] = [
       message('doc', 'user', 'context_injection', 'selected source', {
-        fenceKind: 'document-context',
+        fenceKind: 'sample-source',
       }),
       userMessage,
     ];
@@ -147,7 +147,7 @@ describe('CurrentTurnMessageAssembler', () => {
       message('system', 'system', 'system_prompt', 'system'),
       message('assistant', 'assistant', 'final_answer', 'interruption'),
       message('ctx', 'system', 'context_injection', 'stable context', {
-        fenceKind: 'additional-context',
+        fenceKind: 'sample-system',
       }),
       message('user', 'user', 'user_input', '继续'),
     ];
@@ -168,15 +168,15 @@ describe('CurrentTurnMessageAssembler', () => {
 
     expect(result.messages).toEqual(messages);
     expect(result.messages[1].content).toBe('直接请求');
-    expect(result.messages[1].content).not.toContain('<document_context>');
-    expect(result.messages[1].content).not.toContain('<user_quote>');
+    expect(result.messages[1].content).not.toContain('<sample_source>');
+    expect(result.messages[1].content).not.toContain('<sample_selection>');
     expect(result.messages[1].content).not.toContain('<user_request>');
   });
 
   it('uses only actually injected before-current-user fence XML before user_request', async () => {
     const messages: AiMessage[] = [
       message('doc', 'user', 'context_injection', '片段内容', {
-        fenceKind: 'document-context',
+        fenceKind: 'sample-source',
       }),
       message('user', 'user', 'user_input', '用户原始请求'),
     ];
@@ -185,17 +185,17 @@ describe('CurrentTurnMessageAssembler', () => {
 
     expect(result.messages).toHaveLength(1);
     expect(result.messages[0].content).toBe([
-      '<document_context>\n片段内容\n</document_context>',
+      '<sample_source>\n片段内容\n</sample_source>',
       '<user_request>\n用户原始请求\n</user_request>',
     ].join('\n\n'));
-    expect(result.messages[0].content).not.toContain('<user_quote>');
+    expect(result.messages[0].content).not.toContain('<sample_selection>');
     expect(result.messages[0].content).not.toContain('<follow_up_context>');
   });
 
   it('does not nest user_request when the host already wrapped model-facing user content', async () => {
     const messages: AiMessage[] = [
       message('doc', 'user', 'context_injection', '片段内容', {
-        fenceKind: 'document-context',
+        fenceKind: 'sample-source',
       }),
       message('user', 'user', 'user_input', [
         '<local_time>2026-06-18 09:07:05</local_time>',
@@ -207,7 +207,7 @@ describe('CurrentTurnMessageAssembler', () => {
 
     expect(result.messages).toHaveLength(1);
     expect(result.messages[0].content).toBe([
-      '<document_context>\n片段内容\n</document_context>',
+      '<sample_source>\n片段内容\n</sample_source>',
       '<local_time>2026-06-18 09:07:05</local_time>',
       '<user_request>\n用户原始请求\n</user_request>',
     ].join('\n\n'));
@@ -217,7 +217,7 @@ describe('CurrentTurnMessageAssembler', () => {
   it('does not consume historical non-adjacent turn-only fences', async () => {
     const messages: AiMessage[] = [
       message('old-doc', 'user', 'context_injection', 'old selected source', {
-        fenceKind: 'document-context',
+        fenceKind: 'sample-source',
       }),
       message('old-user', 'user', 'user_input', '旧问题'),
       message('assistant', 'assistant', 'final_answer', '旧回答'),

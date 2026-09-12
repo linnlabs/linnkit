@@ -189,14 +189,14 @@ describe('ToolNode - 单元测试', () => {
         success: true,
         result: JSON.stringify({
           data: {
-            title: 'Deck Plan',
-            pageCount: 2,
-            pages: [
-              { slideNumber: 1, title: 'Intro', content: '介绍背景' },
-              { slideNumber: 2, title: 'Plan', content: '说明方案' },
+            title: 'Action Batch',
+            itemCount: 2,
+            items: [
+              { index: 1, title: 'First', content: '第一步' },
+              { index: 2, title: 'Second', content: '第二步' },
             ],
           },
-          observation: 'PPT 计划已生成。',
+          observation: '操作批次等待确认。',
           control: {
             requireUser: true,
             resumeStrategy: 'continue',
@@ -212,9 +212,9 @@ describe('ToolNode - 单元测试', () => {
           runtimeEventSink: createRuntimeEventAdmissionSink('conv_1', 'run_wait_user'),
           pendingToolCalls: [
             {
-              id: ToolCallIdSchema.parse('call_ppt_plan_1'),
+              id: ToolCallIdSchema.parse('call_confirm_action_1'),
               type: 'function' as const,
-              function: { name: 'ppt_plan', arguments: '{"title":"Deck Plan"}' },
+              function: { name: 'confirm_action', arguments: '{"title":"Action Batch"}' },
             },
           ],
           toolContext: {},

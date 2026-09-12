@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { validateAiMessage } from '../messages';
+import { AgentSpecContextPolicy } from '../contextPolicy';
 
 describe('context_injection message contract', () => {
   it('accepts system context injection messages with fence metadata', () => {
@@ -47,7 +48,7 @@ describe('context_injection message contract', () => {
     expect(parsed.data.metadata?.fenceKind).toBe('memory-context');
   });
 
-  it('keeps legacy context message types parseable during migration', () => {
+  it('rejects legacy product message types and must-keep policy instead of silently migrating', () => {
     for (const type of ['document_fragment', 'context_before', 'context_after'] as const) {
       const parsed = validateAiMessage({
         id: `legacy-${type}`,
@@ -57,7 +58,11 @@ describe('context_injection message contract', () => {
         timestamp: 1,
       });
 
-      expect(parsed.success).toBe(true);
+      expect(parsed.success).toBe(false);
+      expect(AgentSpecContextPolicy.safeParse({
+        profileId: 'agent',
+        mustKeep: { alwaysKeepTypes: [type] },
+      }).success).toBe(false);
     }
   });
 });

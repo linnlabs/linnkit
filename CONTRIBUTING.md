@@ -85,6 +85,23 @@ or changing contracts use a patch version; new public contracts still require a 
 - Bug fixes and protocol-level improvements are always welcome.
 - Larger features or API surface changes: open an issue first to discuss design intent.
 
+### Host-neutral source and fixtures
+
+Framework changes must express a reusable runtime, context or port invariant. Product
+document formats, layout rules, named agents, tool implementations and scientific-data
+checks belong to the consuming Host or its plugins, including their regression fixtures.
+Reduce a product-discovered failure to a neutral tool, opaque payload or injected fence
+before adding its regression here. Do not add product message types or compatibility
+branches to the framework; breaking contract cleanup requires a minor release and an
+explicit Host migration note.
+
+`src/__tests__/no-host-leakage.test.ts` scans this standalone repository's source, build
+entrypoints and test fixtures. Missing or empty targets fail; the rejection vocabulary
+is confined to the guard itself, and legacy-input rejection tests do not authorize
+legacy production contracts. Run it with `npx vitest run src/__tests__/no-host-leakage.test.ts`.
+This literal guard supplements semantic code review; it cannot prove every business
+boundary by itself. Hosts consume a published package version, never a sibling checkout.
+
 ---
 
 ## Commit message convention

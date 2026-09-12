@@ -8,7 +8,7 @@
 
 > **第一周必读**。如果你的产品需要把不同来源的上下文注入到 LLM 不同位置（"项目元信息塞 system 之后"、"被引用的段落塞当前用户输入之前"、"长记忆只塞当前轮"），**这是 linnkit 的一等接入面**。
 >
-> **不要**自己在 system prompt 里手工拼 `<my_tag>...</my_tag>`——会被 boundary guard 拦下，且生命周期治理失控。
+> **不要**绕过 fence 注册与注入，另行拼接需要生命周期管理的上下文。源码边界检查不能判断任意动态 prompt 的业务含义；生命周期正确性仍需流程测试验证。
 
 > **当前预算边界**：placement、lifetime 与 formatter 已接线；`FenceDescriptor.mustKeep` / `maxBudgetFraction` 目前只表达注册意图并校验字段取值，尚未自动转成 `MustKeepPolicy` 或运行时容量裁决。当前轮 system/user fence 又会先组装进 `system_prompt` / 最新 `user_input`，因此 per-kind `truncationRules` 无法再按 `metadata.fenceKind` 命中。现在真正生效的硬约束只有整份最终 Prompt 的容量门禁；不要把 descriptor 上的比例当成已生效的 per-fence 上限。
 
@@ -16,7 +16,7 @@
 
 linnkit 设计原则：
 
-- **framework 不知道任何 host 产品语义**——`document_fragment` / `project_context` / `<additional_context>` 这种字面绝不出现在 framework 源码里
+- **framework 不解释 host 产品语义**——不按 `document_fragment` / `project_context` / `<additional_context>` 等产品名称分支，也不把它们注册为框架消息类型；拒绝词表和旧输入拒绝测试不属于业务实现
 - **任意 host 都能注册自己的围栏家族**——例如 `<additional_context>`、`<memory-context>`、`<system-event>`、`<file_context>`，都通过同一套机制插入，不需要任何 host 改 framework 源码
 - **注入消息有稳定协议载体**——`AiMessage.type = 'context_injection'` 是唯一通用类型，`metadata.fenceKind` 表达开放的 host kind
 
@@ -325,6 +325,16 @@ linnkit 0.4.x 起，agent profile 的公开请求合同已经收窄：
 
 - host 产品字段不再挂在 `AgentProfileRequest` 上
 - `MessageFormatter` 也不再替 `document_fragment` / `additional_context` 这类产品语义做包装
+
+当前源码同时从 `AiMessage` 与 `AgentSpec.contextPolicy.mustKeep.alwaysKeepTypes` 移除了
+`document_fragment`、`context_before`、`context_after` 三种旧消息类型。这是下一 minor 的
+合同收紧，发布状态见 [Changelog](../../CHANGELOG.md)。此前版本的 schema 仍接受这些值，
+不能把旧文档中的禁止声明当作已经执行的校验。
+
+升级前，Host 应核查自己的持久消息和策略配置：保留消息身份与内容，由原产品 owner 显式
+转换成 `context_injection` 及其注册的 fence kind、placement 和 lifetime；无法确定来源与
+生命周期时应报告待迁移，不能在框架读取链路中猜测或丢弃内容。通过新 schema 验证后再启用
+升级。未使用这三种消息类型、且已通过 `fences[]` 注入的 Host 无需改变产品请求字段。
 
 接入方必须：
 

@@ -14,6 +14,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking; next minor release:** remove the legacy `document_fragment`,
+  `context_before` and `context_after` message types from `AiMessage` and AgentSpec
+  must-keep policies. Host context must use `context_injection` with registered fences;
+  token classification no longer recognizes those legacy types. Hosts must explicitly
+  migrate any stored messages and policy configurations before upgrading. The framework
+  does not silently rename historical messages or infer a product fence kind.
+
+### Fixed
+
+- Restore the host-neutrality gate after the standalone repository split: scan real
+  local sources and fail on missing or empty targets. Include build entrypoints and
+  test fixtures in product-name checks, replacing product-specific regression examples
+  with neutral tool, run and fence scenarios. Runtime protocols under test are unchanged.
+
 ## [0.37.3] - 2026-09-12
 
 ### Fixed
