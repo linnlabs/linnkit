@@ -95,6 +95,7 @@ describe('filtered text chunks across the real LLM, Graph and persistence bounda
     expect(result.stored.some(event => event.type === 'final_answer_chunk' || event.type === 'error')).toBe(false);
     expect(result.checkpoint).toMatchObject({ nodeId: 'llm', executionStatus: 'yielded' });
     expect(result.checkpoint?.local?.history?.filter(event => event.type === 'final_answer')).toEqual(answers);
+    expect(result.checkpoint?.local?.history?.some(event => event.type === 'final_answer_chunk')).toBe(false);
     expect(result.calls).toHaveLength(1);
   });
 
@@ -115,6 +116,7 @@ describe('filtered text chunks across the real LLM, Graph and persistence bounda
     const answers = result.stored.filter(event => event.type === 'final_answer');
     expect(answers).toHaveLength(1);
     expect(answers[0]).toMatchObject({ answer_id: chunks[3]?.answer_id, content: 'final' });
+    expect(result.checkpoint?.local?.history?.some(event => event.type === 'final_answer_reset')).toBe(false);
     expect(result.calls).toHaveLength(2);
   });
 

@@ -71,6 +71,16 @@ UI 历史应由 `events` 派生为可重建 read model。read model 可以与事
 写入。`drain` 只等待已安排的事务，不能把 staged facts 当成已持久化。客户端以持久运行
 状态确认完成，不把尚未提交的实时进度当作恢复凭据。
 
+Graph working history 是 checkpoint 中的 durable 事实视图，不是实时事件 journal。
+LLM、工具与取消结算在合并原历史和新事实时统一复用 `shouldPersistRuntimeEvent`：
+流式 thought delta、answer chunk/reset 和 tool_process 仍完整发布到 sink / NodeResult，
+但不进入后续 working history。已有合法 checkpoint 也在正常历史合并时执行同一投影；
+不需要 Host 修改数据库或按版本猜测字段。完整 thought、error/control、审批与工具终态
+等 durable 事实仍保留，不能拿 `shouldEnterAgentContext` 替代此资格；Provider prompt
+继续由 Context 的更窄规则投影，reasoning 回放来自 canonical assistant replay parts。
+这样 checkpoint 随语义事实增长，而不是随 Provider 分片数量增长。恢复/取消仍只依赖
+原请求、预算、pending call、执行意图、结果和 owner 凭据，不依赖实时分片。
+
 Graph 在节点调用前保存进度，每个工具 call 前保存执行意图、结束后保存结果与下一位置。
 `continueSession` 只挂载新的临时能力，保留原请求、历史、模型和累计预算；不创建用户输入，
 也不从 `user` 重启。`yielded` checkpoint 只返回已完成状态，不能重跑最终节点。

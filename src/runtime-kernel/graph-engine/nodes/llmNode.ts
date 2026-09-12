@@ -13,7 +13,6 @@ import { LlmNodeEventBridge, type TickEvent } from './llmNode.eventBridge';
 import {
   createContextUsageSnapshotEvent,
   generateRuntimeEventId,
-  parseRuntimeEvents,
   type RuntimeEvent,
 } from '../../../contracts';
 import { requireRuntimeIdentity } from '../tick-pipeline/helpers';
@@ -198,7 +197,7 @@ export class LlmNode implements GraphNode {
 
     logger.info('[LlmNode] 历史事件已更新', {
       previousCount: history.length,
-      nextCount: parseRuntimeEvents(patch.history).length,
+      nextCount: patch.history.length,
       streamedEventCount: nodeState.streamRuntimeEvents.length,
     });
 

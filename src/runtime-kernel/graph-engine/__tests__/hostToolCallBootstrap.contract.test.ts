@@ -131,9 +131,9 @@ describe('createHostToolCallBootstrap', () => {
     );
     expect(result.stepCount).toBe(2);
     expect(result.events.some(event => event.type === 'tool_output')).toBe(true);
+    expect(result.events.some(event => event.type === 'tool_process')).toBe(true);
     expect(llmHistory.map(event => event.type)).toEqual([
       'tool_call_decision',
-      'tool_process',
       'tool_output',
     ]);
   });

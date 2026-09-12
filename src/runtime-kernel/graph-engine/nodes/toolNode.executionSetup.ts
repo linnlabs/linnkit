@@ -11,7 +11,6 @@ import { isRecord, parseJsonSafe, type UnknownRecord } from './toolNode.helpers'
 import {
   parseRuntimeEvents,
   toSerializableJsonRecord,
-  type RuntimeEvent,
   type ToolCallId,
 } from '../../../contracts';
 import { Logger } from '../../../shared/logger';
@@ -90,7 +89,6 @@ export function prepareToolNodeContext(state: EngineState): PreparedToolNodeCont
   const conversationId = requireRuntimeIdentity(local.conversationId, 'conversationId');
   const turnId = requireRuntimeIdentity(local.turnId, 'turnId');
 
-  const historyEvents = parseRuntimeEvents(local.history ?? []);
   const existingConversationId =
     typeof toolContext.conversationId === 'string' ? toolContext.conversationId.trim() : '';
   ensureToolContextRuntimeCapability({

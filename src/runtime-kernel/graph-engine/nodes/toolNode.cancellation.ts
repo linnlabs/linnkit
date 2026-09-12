@@ -1,10 +1,11 @@
-import type { RoutedRuntimeEvent } from '../../../contracts';
+import { parseRuntimeEvents, type RoutedRuntimeEvent } from '../../../contracts';
 import type { ToolCatalogPort } from '../../tools/ports';
 import type { EngineState, StandardToolCall } from '../types';
 import { prepareToolExecution, prepareToolNodeContext } from './toolNode.executionSetup';
 import type { UnknownRecord } from './toolNode.helpers';
 import type { ToolNodeEventBridge } from './toolNode.eventBridge';
 import { stripAnswerState } from './toolNode.stateTransitions';
+import { appendWorkingHistory } from '../functions/appendWorkingHistory';
 
 const CANCELLED_BEFORE_EXECUTION = 'Tool call was cancelled before execution because the run was aborted.';
 const CANCELLED_DURING_EXECUTION = 'Tool call was cancelled during execution because the run was aborted.';
@@ -93,10 +94,10 @@ function buildCancelledToolBatchLocalState(
   local: UnknownRecord,
   runtimeEvents: readonly RoutedRuntimeEvent[],
 ): UnknownRecord {
-  const history = Array.isArray(local.history) ? local.history : [];
+  const history = parseRuntimeEvents(local.history ?? []);
   return {
     ...stripAnswerState(local),
     pendingToolCalls: [],
-    history: [...history, ...runtimeEvents],
+    history: appendWorkingHistory(history, runtimeEvents),
   };
 }

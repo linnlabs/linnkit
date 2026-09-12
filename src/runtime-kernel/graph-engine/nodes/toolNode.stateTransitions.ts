@@ -2,6 +2,7 @@ import type { ToolControlInfo } from '../../tools/ui-types';
 import type { UnknownRecord } from './toolNode.helpers';
 import { isRecord } from './toolNode.helpers';
 import { parseRuntimeEvents, type RuntimeEvent, type ToolCallId } from '../../../contracts';
+import { appendWorkingHistory } from '../functions/appendWorkingHistory';
 import {
   parseToolModelInputDeclaration,
   type ToolModelInputAttachmentSelection,
@@ -9,7 +10,7 @@ import {
 
 function mergeHistory(local: UnknownRecord, runtimeEvents: RuntimeEvent[]): RuntimeEvent[] {
   const history = parseRuntimeEvents(local.history ?? []);
-  return [...history, ...runtimeEvents];
+  return appendWorkingHistory(history, runtimeEvents);
 }
 
 export function stripAnswerState(local: UnknownRecord): UnknownRecord {

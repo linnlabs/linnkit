@@ -163,7 +163,7 @@ describe('LlmNode orchestration', () => {
     expect(state.local?.finalAnswer).toBe('任务完成');
   });
 
-  it('发布后的同一 RuntimeEvent 同时进入 journal 与下一轮 history', async () => {
+  it('发布后的同一 RuntimeEvent 保留完整 journal，只有 durable 事实进入下一轮 history', async () => {
     const published: RuntimeEvent[] = [];
     const { reasoner } = createReasoner(async (_input, eventHandler) => {
       eventHandler?.({
@@ -200,7 +200,8 @@ describe('LlmNode orchestration', () => {
 
     expect(published.map(event => event.type)).toEqual(['final_answer_chunk', 'final_answer']);
     expect(result.events).toEqual(published);
-    expect(state.local?.history).toEqual(published);
+    expect(state.local?.history).toEqual([published[1]]);
+    expect(state.local?.history?.[0]).toBe(published[1]);
     expect(published[1]).toMatchObject({
       id: 'answer_provider',
       answer_id: 'answer_provider',

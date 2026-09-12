@@ -1,4 +1,5 @@
 import type { ExecutorLocalPatch, ExecutorLocalState, StandardToolCall } from '../types';
+import { appendWorkingHistory } from '../functions/appendWorkingHistory';
 import type {
   RoutedRuntimeEvent,
   RuntimeEvent,
@@ -24,7 +25,7 @@ export interface LlmNodeLocalState {
   answerId: string | undefined;
   /** 当前答案段内已发出的 chunk 序号（下一个 chunk 使用的值） */
   chunkSeq: number;
-  /** 已缓冲的 RuntimeEvent（含 sink 回灌事件），最终并入历史 */
+  /** 实时 journal 保留全部已发布事件；working history 另按持久资格投影。 */
   streamRuntimeEvents: RoutedRuntimeEvent[];
   /** 已缓冲的 RuntimeEvent ID 去重集合 */
   seenRuntimeIds: Set<string>;
@@ -204,6 +205,10 @@ export interface WriteBackContext {
   contextUsage?: ContextUsageSnapshot;
 }
 
+interface LlmNodeLocalPatch extends Record<string, unknown> {
+  history: RuntimeEvent[];
+}
+
 /**
  * 把 reducer 状态回写为 EngineLocalState 补丁。
  *
@@ -216,10 +221,10 @@ export interface WriteBackContext {
 export function buildLocalPatch(
   nodeState: LlmNodeLocalState,
   ctx: WriteBackContext,
-): Record<string, unknown> {
-  const updatedHistory = [...ctx.history, ...nodeState.streamRuntimeEvents];
+): LlmNodeLocalPatch {
+  const updatedHistory = appendWorkingHistory(ctx.history, nodeState.streamRuntimeEvents);
 
-  const patch: Record<string, unknown> = {
+  const patch: LlmNodeLocalPatch = {
     answerId: nodeState.answerId,
     chunkSeq: nodeState.chunkSeq,
     conversationId: ctx.conversationId,

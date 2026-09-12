@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { ToolCallIdSchema, type RoutedRuntimeEvent } from '../../../contracts';
+import { createThoughtEvent, ToolCallIdSchema, type RoutedRuntimeEvent } from '../../../contracts';
 import { GraphExecutor } from '../engine';
 import { MemoryCheckpointer } from '../checkpointer/memoryCheckpointer';
 import { ToolNode } from '../nodes/toolNode';
@@ -64,6 +64,26 @@ function fixture() {
 }
 
 describe('durable graph continuation', () => {
+  it('取消旧历史中的流式进度时保留完整事实和每个待执行工具的终态', async () => {
+    const f = fixture();
+    const controller = new AbortController();
+    controller.abort();
+    const execute = vi.fn(async () => success);
+    const complete = createThoughtEvent('complete', 'conversation', 'turn', 'Completed reasoning');
+    const progress = createThoughtEvent('progress', 'conversation', 'turn', 'Partial reasoning', {
+      ephemeral: true, is_complete: false,
+    });
+    await expect(f.engine(execute).startSession('run', {
+      ...f.capabilities, signal: controller.signal,
+      conversationId: 'conversation', turnId: 'turn', history: [complete, progress],
+      pendingToolCalls: [call('call-1'), call('call-2')],
+    }, 'tool')).rejects.toMatchObject({ name: 'AbortError' });
+    expect(execute).not.toHaveBeenCalled();
+    expect((await f.checkpoint()).state.local?.history).toEqual([complete, ...f.durable]);
+    expect(f.durable.map(event => event.type === 'tool_output' && event.tool_call_id))
+      .toEqual(['call-1', 'call-2']);
+  });
+
   it('LLM 决策完成与下一节点之间取消时，结算已接纳的调用而不启动工具', async () => {
     const f = fixture();
     const controller = new AbortController();
