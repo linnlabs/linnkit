@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.37.1] - 2026-09-12
+
 ### Fixed
 
 - Commit the complete tool batch before raising a protocol fuse. Atomic checkpoint Hosts
