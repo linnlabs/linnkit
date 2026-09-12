@@ -12,7 +12,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [Unreleased]
+## [0.37.0] - 2026-09-12
+
+### Added
+
+- Optional GraphNode cancellation settlement hook for already-admitted work at node transitions.
+  It never starts work and is not invoked for resumable pauses.
+
+### Fixed
+
+- Commit cancelled ToolNode batches before AbortError leaves the graph, preserving completed
+  tool outcomes and pairing unstarted calls. Durable Hosts no longer discard their staged
+  terminal results when closing the execution checkpoint writer.
 
 ## [0.36.0] - 2026-09-11
 

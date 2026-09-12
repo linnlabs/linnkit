@@ -24,6 +24,7 @@ import { runWithLifecycleTelemetry } from './orchestration/runWithLifecycleTelem
 import { requireRuntimeEventSink } from './graphLocal';
 import { requireRuntimeIdentity } from './tick-pipeline/helpers';
 import type { ExecutionCheckpointPort } from './definitions/runContinuation';
+import { isRunPauseSignal } from './definitions/runContinuation';
 
 const logger = new Logger('GraphExecutor');
 
@@ -448,6 +449,7 @@ export class GraphExecutor {
 
       const signalRaw = (state.local as Record<string, unknown> | undefined)?.signal;
       if (isAbortSignal(signalRaw) && signalRaw.aborted) {
+        if (!isRunPauseSignal(signalRaw)) await this.nodes.get(state.nodeId)?.cancel?.(state);
         logger.warn('[GraphExecutor] 收到 AbortSignal，立即停止推理循环');
         this.ephemeralLocals.delete(checkpointKey);
         throwAbortError();
@@ -505,6 +507,14 @@ export class GraphExecutor {
       }
 
       state = stepResolution.state;
+
+      // 取消可能在节点完成期间到达。先让下一节点结算已接纳任务，不能先写入一个可继续的边界。
+      const completedSignal = state.local?.signal;
+      if (isAbortSignal(completedSignal) && completedSignal.aborted && !isRunPauseSignal(completedSignal)) {
+        await this.nodes.get(state.nodeId)?.cancel?.(state);
+        this.ephemeralLocals.delete(checkpointKey);
+        throwAbortError();
+      }
 
       if (stepResolution.action.kind === 'route') {
         logger.info('[GraphExecutor] 路由切换', {

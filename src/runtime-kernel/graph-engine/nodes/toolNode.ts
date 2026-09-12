@@ -321,7 +321,23 @@ export class ToolNode implements GraphNode {
     const events: RoutedRuntimeEvent[] = [];
 
     while (true) {
-      const result = await this.runNextPendingToolCall(state);
+      let result: NodeResult;
+      try {
+        result = await this.runNextPendingToolCall(state);
+      } catch (error) {
+        if (isToolExecutionAbort(error) && !isRunPauseSignal(state.local?.signal)) {
+          await this.cancel(state);
+        }
+        throw error;
+      }
+      const signal = state.local?.signal;
+      if (isAbortSignal(signal) && signal.aborted && !isRunPauseSignal(signal)) {
+        // 动作可能已完成：保留其真实结果，仅取消 batch 剩余调用，再提交同一终止边界。
+        await this.cancel(state);
+        const error = new Error('The user aborted a request.');
+        error.name = 'AbortError';
+        throw error;
+      }
       await commitToolBoundary(state, result);
       if (Array.isArray(result.events) && result.events.length > 0) {
         events.push(...result.events);
@@ -336,6 +352,16 @@ export class ToolNode implements GraphNode {
         events,
       };
     }
+  }
+
+  async cancel(state: EngineState): Promise<void> {
+    settlePendingToolCallsAfterAbort({
+      state,
+      calls: parsePendingToolCalls(state.local?.pendingToolCalls ?? []),
+      toolCatalog: this.toolRuntime,
+    });
+    // 必须在 AbortError 离开 Graph 前提交；Host finishCheckpointWrites 会作废未提交 attempt。
+    await commitToolBoundary(state, { kind: 'yield', events: [] });
   }
 
   private async runNextPendingToolCall(state: EngineState): Promise<NodeResult> {

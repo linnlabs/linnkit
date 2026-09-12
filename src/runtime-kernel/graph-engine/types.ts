@@ -157,6 +157,8 @@ export interface NodeResult {
 export interface GraphNode {
   id: string;
   run(state: EngineState): Promise<NodeResult>;
+  /** 节点尚未进入时结算取消；只收尾已接纳事实，不启动工作。暂停不会调用此入口。 */
+  cancel?(state: EngineState): Promise<void>;
 }
 
 export interface StandardToolCall {

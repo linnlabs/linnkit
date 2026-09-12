@@ -81,4 +81,13 @@ Graph 在节点调用前保存进度，每个工具 call 前保存执行意图�
 工具为失败。Host 仍负责 RunDescriptor、权限重建、唯一 activation、生命周期和资源保留。
 仅使用原 `Checkpointer` 的 Host 不会自动获得这些恢复保证。
 
+永久取消时 ToolNode 在 AbortError 离开前提交 yielded 边界，保留真实已完成结果并为未启动
+调用配对取消输出。Graph 在节点切换间收到取消时调用可选 `GraphNode.cancel(state)`；
+此入口只结算已接纳工作，不能启动新动作，不用于 RunPauseRequested。拥有取消收尾事实
+的自定义节点也应履行同一合同。Host 不得在 finishCheckpointWrites 后从 journal 补写。
+
+Supervisor 的 cancelled 状态先撤销动作权限，不意味着在途提交已经排空。Host checkpoint
+writer 应允许原 activation 在现存 revision 链上完成收尾（包括取消时已排队的边界），
+但不能恢复工具效果写入权；yielded 或释放后必须拒绝迟到提交，不得复活已清理的断点。
+
 linnkit 在内部对每个 port 都跑了 contract test。你的实现必须通过这些**等价的契约测试**。建议在 host 测试里 mirror linnkit 的 contract test，把 memory 实现 → 你的实现做参数化，确保行为 1:1。

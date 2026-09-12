@@ -64,6 +64,50 @@ function fixture() {
 }
 
 describe('durable graph continuation', () => {
+  it('LLM 决策完成与下一节点之间取消时，结算已接纳的调用而不启动工具', async () => {
+    const f = fixture();
+    const controller = new AbortController();
+    const execute = vi.fn(async () => success);
+    const engine = f.engine(execute);
+    engine.registerNode({ id: 'llm', async run(state) {
+      state.local = { ...state.local, pendingToolCalls: [call('call-1'), call('call-2')] };
+      controller.abort();
+      return { kind: 'route', nextNodeId: 'tool', events: [] };
+    } });
+    await expect(engine.startSession('run', { ...f.capabilities,
+      signal: controller.signal, conversationId: 'conversation', turnId: 'turn',
+      request: { query: 'original', promptKey: 'agent' }, history: [],
+      executorLocal: { stepCount: 0, maxSteps: 10 },
+    }, 'llm')).rejects.toMatchObject({ name: 'AbortError' });
+    expect(execute).not.toHaveBeenCalled();
+    expect(f.durable.map(event => event.type === 'tool_output' && event.tool_call_id)).toEqual(['call-1', 'call-2']);
+    expect((await f.checkpoint()).state).toMatchObject({ executionStatus: 'yielded', local: { pendingToolCalls: [] } });
+  });
+
+  it.each(['aborted', 'committed', 'not-started'] as const)(
+    '取消 %s 工具时提交配对终态；不能遗留 staged 事实或重跑动作', async outcome => {
+      const f = fixture();
+      const controller = new AbortController();
+      const execute = vi.fn(async () => {
+        controller.abort();
+        if (outcome === 'aborted') throw new DOMException('cancelled', 'AbortError');
+        return success;
+      });
+      if (outcome === 'not-started') controller.abort();
+      await expect(f.start(f.engine(execute), controller.signal)).rejects.toMatchObject({ name: 'AbortError' });
+      expect(execute).toHaveBeenCalledTimes(outcome === 'not-started' ? 0 : 1);
+      expect(f.durable.map(event => event.type === 'tool_output' && [event.tool_call_id, event.status]))
+        .toEqual([['call-1', outcome === 'committed' ? 'success' : 'error'], ['call-2', 'error']]);
+      expect((await f.checkpoint()).state).toMatchObject({ executionStatus: 'yielded', local: { pendingToolCalls: [] } });
+      expect((await f.checkpoint()).state.local?.executingToolCallId).toBeUndefined();
+      f.crash();
+      await f.engine(execute).continueSession('run', {
+        expectedRevision: (await f.checkpoint()).revision, capabilities: f.capabilities,
+      });
+      expect(execute).toHaveBeenCalledTimes(outcome === 'not-started' ? 0 : 1);
+    },
+  );
+
   it('暂停不结算尚未执行工具；新引擎接续原 call、请求、模型与累计预算', async () => {
     const f = fixture();
     const controller = new AbortController();
