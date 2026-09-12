@@ -14,6 +14,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.37.3] - 2026-09-12
+
+### Fixed
+
+- Keep realtime thought deltas, answer chunks/resets and tool progress out of Graph working
+  history and checkpoints while preserving their complete live journal. LLM, tool and
+  cancellation history merges share the existing durable-event lifecycle rule, including
+  when continuing a checkpoint with earlier stream progress. Complete reasoning, control,
+  error, interaction and tool terminal facts remain intact; canonical model replay and
+  chunk sequence validation are unchanged.
+- Remove full-history schema parsing performed only for an LLM log count or an unused
+  ToolNode setup value. Strict external and checkpoint admission remains in place.
+
 ## [0.37.2] - 2026-09-12
 
 ### Fixed
