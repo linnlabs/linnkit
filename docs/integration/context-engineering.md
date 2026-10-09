@@ -266,8 +266,14 @@ contextPolicy: {
 | `workingMemory.minToolInteractionsToKeep` | `2` | compressed 历史工具摘要的预算兜底组数 | ✅ AgentSpec + runtime |
 | `workingMemory.maxRecentToolRuns` | `2` | 原始 tool_calls 形态保护的最近工具 turn 数 | ✅ AgentSpec + runtime |
 | `workingMemory.maxRecentToolInteractions` | `2` | Deprecated alias，兼容旧配置；新配置请用 `maxRecentToolRuns` | ⚠️ 兼容保留 |
-| `workingMemory.toolPairingSearchRange` | `10` | 搜工具配对的窗口范围 | ✅ AgentSpec + runtime |
+| `workingMemory.toolPairingSearchRange` | `10` | 工具配对距离，只计非本批结果消息；相邻结果为 `1`，同批结果不消耗窗口 | ✅ AgentSpec + runtime |
 | P1-P3 优先级数字 | `1/2/3` | 优先级编号 | ❌ 不开放|
+
+工具组按 `call_id` 配对，不限制单个 assistant 批次的调用数量。配对只在该 assistant
+之后、下一条 `user_input` 或 assistant 消息之前进行；系统或 Host context 提示可以插入，
+但受上面的间隔距离限制。完整组要求唯一的调用 ID、每个调用恰好一条结果，显式工具名不得冲突；
+成功与错误回执同等参与配对。孤儿结果不会补入其他批次，缺失、重复或身份冲突的组不会作为
+完整组进入工作记忆。详见 [工具历史的批次边界](./tool-history.md#工具批次的配对边界)。
 
 <a id="automatic-context-compaction"></a>
 

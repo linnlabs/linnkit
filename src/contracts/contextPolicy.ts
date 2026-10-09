@@ -88,6 +88,7 @@ export const AgentSpecWorkingMemoryPolicy = z.object({
   /** @deprecated Use maxRecentToolRuns. Kept as a compatibility alias for older AgentSpec configs. */
   maxRecentToolInteractions: z.number().int().nonnegative().optional(),
   minToolInteractionsToKeep: z.number().int().nonnegative().optional(),
+  /** 配对距离只计非同批结果消息；相邻结果为 1，不能跨 user_input 或后续 assistant。 */
   toolPairingSearchRange: z.number().int().positive().optional(),
 });
 export type AgentSpecWorkingMemoryPolicy = z.infer<typeof AgentSpecWorkingMemoryPolicy>;

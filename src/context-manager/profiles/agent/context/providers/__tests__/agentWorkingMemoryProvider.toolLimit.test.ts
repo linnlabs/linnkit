@@ -519,11 +519,11 @@ describe('AgentWorkingMemoryProvider tool limits', () => {
     expect(originalArguments).not.toContain(legacyTruncatedToolArgumentsMarker);
   });
 
-  it('honors toolPairingSearchRange when matching tool outputs', async () => {
+  it('honors toolPairingSearchRange for intervening context messages', async () => {
     const pair = makeToolPair(1);
-    const farMessages = [
+    const farMessages: AiMessage[] = [
       pair.toolCalls,
-      makeTextMessage('assistant_gap', 'assistant', 'final_answer', '间隔消息'),
+      { id: 'context_gap', role: 'system', type: 'context_injection', content: '间隔提示', timestamp: 1001 },
       pair.toolOutput,
     ];
     const narrowProvider = new AgentWorkingMemoryProvider({
