@@ -65,8 +65,8 @@ export const AGENT_CONTEXT_BUILDER_CONFIG = {
   // === 工具交互特殊配置 ===
   
   /**
-   * 工具调用配对搜索范围
-   * - 在多少条消息范围内搜索工具调用的配对
+   * 工具调用配对距离：只计非同批结果消息，相邻结果为 1。
+   * - 批量结果不消耗窗口；user_input 或后续 assistant 始终关闭旧批次。
    */
   TOOL_PAIRING_SEARCH_RANGE: 10,
   

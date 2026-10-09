@@ -18,9 +18,10 @@ type ToolCallRecord = {
 
 interface ToolInteractionGroupBuildOptions {
   /**
-   * 工具调用与工具结果允许相隔的最大消息数。
+   * 工具调用到结果的最大距离，不计已经配对的同批结果；相邻结果的距离为 1。
    *
-   * 中文备注：超过窗口的 tool_output 不再配对，避免很旧的 tool_calls 被远处结果误粘连。
+   * 中文备注：窗口约束插入的非本批消息，不能把合法批次的第 N 条结果误当成迟到结果。
+   * user_input 或后续 assistant 消息始终关闭旧批次，不受窗口大小影响。
    */
   maxPairingDistance?: number;
 }
@@ -119,6 +120,7 @@ function buildToolInteractionGroups<T>(
     startIndex: number;
     endIndex: number;
     isCompressed: boolean;
+    hasIdentityConflict: boolean;
     items: Array<{
       toolCallId: string;
       toolName: string;
@@ -130,12 +132,20 @@ function buildToolInteractionGroups<T>(
   };
 
   const groups: MutableGroup[] = [];
-  const activeToolCallIdToGroupIndex = new Map<string, number>();
+  type MutableItem = MutableGroup['items'][number];
+  const activeToolCalls = new Map<string, { group: MutableGroup; item: MutableItem }>();
+  const runToolCallOwners = new Map<string, MutableGroup>();
   let currentRunOrdinal = 0;
   for (const entry of entries) {
     const { message } = entry;
     if (message.role === 'user' && message.type === 'user_input') {
       currentRunOrdinal += 1;
+      activeToolCalls.clear();
+      runToolCallOwners.clear();
+    }
+    if (message.role === 'assistant') {
+      // 下一次 assistant 决策或正文代表新边界；迟到结果不能补全前一次调用。
+      activeToolCalls.clear();
     }
 
     if (message.role === 'assistant' && message.type === 'tool_calls') {
@@ -143,8 +153,7 @@ function buildToolInteractionGroups<T>(
       if (toolCalls.length === 0) {
         continue;
       }
-      const groupIndex = groups.length;
-      const itemList = toolCalls.map((toolCall) => {
+      const itemList: MutableItem[] = toolCalls.map((toolCall) => {
         const toolName =
           typeof toolCall.function?.name === 'string' && toolCall.function.name.trim().length > 0
             ? toolCall.function.name
@@ -154,8 +163,8 @@ function buildToolInteractionGroups<T>(
           toolName,
           toolArgs: safeParseArgs(toolCall.function?.arguments),
           toolCall,
-          toolOutputs: [] as Array<{ value: T; message: AiMessage; index: number }>,
-          rawOutputs: [] as string[],
+          toolOutputs: [],
+          rawOutputs: [],
         };
       });
 
@@ -170,12 +179,20 @@ function buildToolInteractionGroups<T>(
         startIndex: entry.originalIndex,
         endIndex: entry.originalIndex,
         isCompressed: false,
+        hasIdentityConflict: false,
         items: itemList,
       };
 
       groups.push(group);
       for (const item of itemList) {
-        activeToolCallIdToGroupIndex.set(item.toolCallId, groupIndex);
+        const previousOwner = runToolCallOwners.get(item.toolCallId);
+        if (previousOwner) {
+          // 同轮 ID 重用无法唯一归属；两组都不能作为完整 replay 或压缩单元。
+          previousOwner.hasIdentityConflict = true;
+          group.hasIdentityConflict = true;
+        }
+        runToolCallOwners.set(item.toolCallId, group);
+        activeToolCalls.set(item.toolCallId, { group, item });
       }
       continue;
     }
@@ -189,21 +206,21 @@ function buildToolInteractionGroups<T>(
       continue;
     }
 
-    const groupIndex = activeToolCallIdToGroupIndex.get(toolCallId);
-    if (groupIndex === undefined) {
+    const pairing = activeToolCalls.get(toolCallId);
+    if (!pairing) {
       continue;
     }
 
-    const group = groups[groupIndex];
+    const { group, item } = pairing;
     if (
       options.maxPairingDistance !== undefined &&
-      entry.originalIndex - group.assistantIndex > options.maxPairingDistance
+      entry.originalIndex - group.assistantIndex - group.toolOutputs.length > options.maxPairingDistance
     ) {
       continue;
     }
-    const item = group.items.find((candidate) => candidate.toolCallId === toolCallId);
-    if (!item) {
-      continue;
+    // AiMessage 低层合同允许省略 tool_name；存在时才校验，身份始终由 call_id 决定。
+    if (message.metadata?.tool_name !== undefined && message.metadata.tool_name !== item.toolName) {
+      group.hasIdentityConflict = true;
     }
 
     const outputEntry = { value: entry.value, message, index: entry.originalIndex };
@@ -217,9 +234,10 @@ function buildToolInteractionGroups<T>(
   }
 
   return groups.map((group) => {
-    const sortedOutputs = [...group.toolOutputs].sort((left, right) => left.index - right.index);
-    const sortedItems = group.items.map((item) => {
-      const itemOutputs = [...item.toolOutputs].sort((left, right) => left.index - right.index);
+    // entries 已按原始顺序遍历，无需重新排序；每个结果只做一次 Map 查找。
+    const outputs = group.toolOutputs;
+    const items = group.items.map((item) => {
+      const itemOutputs = item.toolOutputs;
       return {
         toolCallId: item.toolCallId,
         toolName: item.toolName,
@@ -237,19 +255,19 @@ function buildToolInteractionGroups<T>(
       assistantState: group.assistantState,
       assistantMessage: group.assistantMessage,
       assistantIndex: group.assistantIndex,
-      toolOutputs: sortedOutputs.map((output) => output.value),
-      toolOutputMessages: sortedOutputs.map((output) => output.message),
-      toolOutputIndexes: sortedOutputs.map((output) => output.index),
-      toolCallIds: sortedItems.map((item) => item.toolCallId),
-      toolNames: sortedItems.map((item) => item.toolName),
+      toolOutputs: outputs.map((output) => output.value),
+      toolOutputMessages: outputs.map((output) => output.message),
+      toolOutputIndexes: outputs.map((output) => output.index),
+      toolCallIds: items.map((item) => item.toolCallId),
+      toolNames: items.map((item) => item.toolName),
       sourceMessageIds: Array.from(group.sourceMessageIds),
-      messageIndexes: [group.assistantIndex, ...sortedOutputs.map((output) => output.index)],
+      messageIndexes: [group.assistantIndex, ...outputs.map((output) => output.index)],
       startIndex: group.startIndex,
       endIndex: group.endIndex,
-      isComplete: sortedItems.every((item) => item.toolOutputs.length > 0),
+      isComplete: !group.hasIdentityConflict && items.every((item) => item.toolOutputs.length === 1),
       isCompressed: group.isCompressed,
-      items: sortedItems,
-      messages: [group.assistantState, ...sortedOutputs.map((output) => output.value)],
+      items,
+      messages: [group.assistantState, ...outputs.map((output) => output.value)],
     };
   });
 }

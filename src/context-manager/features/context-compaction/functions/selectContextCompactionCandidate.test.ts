@@ -76,6 +76,50 @@ function validCheckpoint(): string {
 }
 
 describe('selectContextCompactionCandidate', () => {
+  it('把大批工具回执作为单个原子压缩单元，并原样保留最近批次', () => {
+    const oldest = toolGroup('large', 10, 12);
+    const latest = toolGroup('latest', 40, 12);
+    const candidate = selectContextCompactionCandidate({
+      messages: [
+        message({ id: 'user', role: 'user', type: 'user_input', timestamp: 1 }),
+        ...oldest,
+        ...latest,
+      ],
+      totalBudget: 10,
+      inputBudgetTokens: 10,
+      policy: resolveContextCompactionPolicy({ keepLatestToolGroups: 1 }),
+      mustKeepPolicy: DEFAULT_MUST_KEEP_POLICY,
+      estimateTokens,
+    });
+
+    expect(candidate?.plan.replacedMessageIds).toEqual(oldest.map(value => value.id));
+    expect(candidate?.plan.replacedToolGroupCount).toBe(1);
+    expect(candidate?.plan.keptToolGroupCount).toBe(1);
+    expect(candidate?.plan.replacedTokenEstimate).toBe(oldest.reduce((sum, value) => sum + estimateTokens(value), 0));
+  });
+
+  it('重复结果不能使损坏组成为完整压缩单元', () => {
+    const valid = toolGroup('valid', 10);
+    const invalid = toolGroup('duplicate', 20, 12);
+    const candidate = selectContextCompactionCandidate({
+      messages: [
+        message({ id: 'user', role: 'user', type: 'user_input', timestamp: 1 }),
+        ...valid,
+        ...invalid,
+        { ...invalid[1], id: 'duplicate-output' },
+        ...toolGroup('later', 40),
+      ],
+      totalBudget: 10,
+      inputBudgetTokens: 10,
+      policy: resolveContextCompactionPolicy({ keepLatestToolGroups: 0 }),
+      mustKeepPolicy: DEFAULT_MUST_KEEP_POLICY,
+      estimateTokens,
+    });
+
+    expect(candidate?.plan.replacedMessageIds).toEqual(valid.map(value => value.id));
+    expect(candidate?.plan.replacedToolGroupCount).toBe(1);
+  });
+
   it('按完整工具组替换当前 run 的旧组，并保留最新两组', () => {
     const messages: AiMessage[] = [
       message({ id: 'system', role: 'system', type: 'system_prompt', timestamp: 1 }),
