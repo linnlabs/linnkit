@@ -14,6 +14,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.37.5] - 2026-10-13
+
+### Fixed
+
+- Honor the Host's configured retry delay as the minimum wait for ordinary retryable
+  LLM failures. A classifier's shorter default suggestion no longer overrides it;
+  longer error-suggested delays remain intact. Rate-limit backoff, attempt budgets,
+  cancellation and non-retryable failure handling are unchanged.
+
 ## [0.37.4] - 2026-10-09
 
 ### Fixed

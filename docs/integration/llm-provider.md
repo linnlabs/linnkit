@@ -25,6 +25,11 @@ Host 拥有：
 
 Provider SDK 不得执行工具、开启自动 multi-step、自行重试或决定切模型。
 
+同模型重试由 Host 的 `LlmCaller` 配置控制：`maxRetries` 是首次调用失败后的重试次数，
+并受总调用预算 `maxTotalAttempts` 约束。普通可重试错误的等待时间取 `retryDelayMs`
+与分类器建议的较大值，Host 配置因此是等待下限，不会覆盖更长的错误建议。
+限流错误仍沿用已有指数退避与上限；不可重试错误、用户取消及禁用客户端重试的策略不受此等待配置影响。
+
 ## 2. 请求与流事件
 
 Canonical request 只携带 Linnkit 已经决定的事实：模型 ID、resolved messages、可移植 JSON Schema 工具、tool choice、sampling、AbortSignal 和 invocation identity。可选 `cache_policy` 只声明 system prompt 与 history summary 稳定前缀的 canonical message 结束位置；它不承载厂商 TTL、cache key 或 wire 字段。Host adapter 可将断点投影为 Provider 原生语义，不支持的 codec 必须忽略，cache miss 不得改变推理语义。API key、base URL、Provider 对象和 Provider 重试参数不能进入 Linnkit。
