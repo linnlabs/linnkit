@@ -101,7 +101,9 @@ export class EventBusEventPersistence {
       return;
     }
 
-    if (this.checkpointWritesActive) {
+    // 重试记录描述已经发生的请求，不是可回滚的模型产物；长等待期间重载也必须可见。
+    // 仍经同一有序写队列与事件 ID 去重，不代表 LLM 节点/断点已经提交。
+    if (this.checkpointWritesActive && event.type !== 'llm_retry') {
       this.scheduledEventIds.add(event.id);
       this.checkpointEvents.push(event);
       return;

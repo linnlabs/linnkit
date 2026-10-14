@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { LlmRetryState } from './llm-retry';
+import { RuntimeErrorState } from './runtime-error';
 import { AuditEnvelope } from './audit';
 import { SerializableJsonRecord, SerializableJsonValue, toSerializableJsonValue } from './json';
 import { RuntimeResourceRefs } from './resource-ref';
@@ -192,12 +194,10 @@ const RuntimeEventShape = z.discriminatedUnion('type', [
     compression_ratio: z.number().min(0).max(1).optional(),
     included_old_summary: z.boolean().optional(),
   }),
+  BaseEvent.extend({ type: z.literal('llm_retry'), ...LlmRetryState.shape }),
   BaseEvent.extend({
     type: z.literal('error'),
-    error: z.string(),
-    details: SerializableJsonValue.optional(),
-    error_code: z.string().optional(),
-    retryable: z.boolean().optional(),
+    ...RuntimeErrorState.shape,
   }),
   BaseEvent.extend({
     type: z.literal('control'),
@@ -385,6 +385,7 @@ export type FinalAnswerEvent = Extract<RuntimeEvent, { type: 'final_answer' }>;
 export type FinalAnswerChunkEvent = Extract<RuntimeEvent, { type: 'final_answer_chunk' }>;
 export type FinalAnswerResetEvent = Extract<RuntimeEvent, { type: 'final_answer_reset' }>;
 export type HistorySummaryEvent = Extract<RuntimeEvent, { type: 'history_summary' }>;
+export type LlmRetryEvent = Extract<RuntimeEvent, { type: 'llm_retry' }>;
 export type ErrorEvent = Extract<RuntimeEvent, { type: 'error' }>;
 export type ControlEvent = Extract<RuntimeEvent, { type: 'control' }>;
 export type ContextUsageSnapshotEvent = Extract<

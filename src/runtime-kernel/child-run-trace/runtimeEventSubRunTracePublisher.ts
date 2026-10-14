@@ -73,6 +73,8 @@ export class RuntimeEventSubRunTracePublisher implements SubRunTracePublisher {
       source_event_id: envelope.source_event_id,
 
       // 载荷透传
+      ...('retry' in envelope ? { retry: envelope.retry } : {}),
+      ...('failure' in envelope ? { failure: envelope.failure } : {}),
       ...('delta' in envelope ? { delta: envelope.delta } : {}),
       ...('content' in envelope ? { content: envelope.content } : {}),
       ...('answer_id' in envelope ? { answer_id: envelope.answer_id } : {}),

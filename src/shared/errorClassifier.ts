@@ -8,6 +8,7 @@
  */
 
 import { Logger } from './logger';
+import { LlmRetryCategory } from '../contracts/llm-retry';
 
 export enum ErrorCategory {
   RETRYABLE = 'retryable',
@@ -18,6 +19,7 @@ export enum ErrorCategory {
 export const ENGINE_ERROR_CODES = {
   LLM_RATE_LIMIT: 'llm.rate_limit',
   LLM_INVALID_TOOL_ARGS: 'llm.invalid_tool_args',
+  LLM_EMPTY_RESPONSE: 'llm.empty_response',
   LLM_PROVIDER_DOWN: 'llm.provider_down',
   LLM_UNSUPPORTED_CAPABILITY: 'llm.unsupported_capability',
   LLM_AUTH_FAILED: 'llm.auth_failed',
@@ -37,6 +39,7 @@ export const ENGINE_ERROR_CODES = {
 } as const;
 
 export interface ErrorClassification {
+  retryCategory?: LlmRetryCategory;
   category: ErrorCategory;
   reason: string;
   suggestedDelay: number | null;
@@ -171,6 +174,8 @@ function readStructuredClassification(error: Error): ErrorClassification | undef
   if (typeof recoverable !== 'boolean') return undefined;
 
   const errorCode = rawErrorCode.trim();
+  const explicitRetryCategory = LlmRetryCategory.safeParse(error['retryCategory']);
+  const retryCategory = explicitRetryCategory.success ? explicitRetryCategory.data : undefined;
   const retryAfterMsValue = error['retryAfterMs'];
   const retryAfterMs = typeof retryAfterMsValue === 'number'
     && Number.isFinite(retryAfterMsValue)
@@ -185,12 +190,15 @@ function readStructuredClassification(error: Error): ErrorClassification | undef
   const metadata = isRecord(metadataValue) ? metadataValue : undefined;
 
   return createClassification(
-    recoverable ? ErrorCategory.RETRYABLE : ErrorCategory.NON_RETRYABLE,
+    recoverable
+      ? retryCategory === 'rate_limit' ? ErrorCategory.RATE_LIMIT : ErrorCategory.RETRYABLE
+      : ErrorCategory.NON_RETRYABLE,
     `结构化错误: ${errorCode}`,
     recoverable ? retryAfterMs ?? 1000 : null,
     {
       errorCode,
       recoverable,
+      ...(retryCategory === undefined ? {} : { retryCategory }),
       ...(retryAfterMs === undefined ? {} : { retryAfterMs }),
       ...(hint === undefined ? {} : { hint }),
       ...(metadata === undefined ? {} : { metadata }),
@@ -497,7 +505,7 @@ export class ErrorClassifier {
     if (errorMessage.includes('空响应') || errorMessage.includes('empty response')) {
       logClassification(context, '检测到空响应错误，可以重试');
       return createClassification(ErrorCategory.RETRYABLE, '空响应错误', 1000, {
-        errorCode: ENGINE_ERROR_CODES.LLM_PROVIDER_DOWN,
+        errorCode: ENGINE_ERROR_CODES.LLM_EMPTY_RESPONSE,
         recoverable: true,
         retryAfterMs: 1000,
         hint: 'retry_with_backoff',
@@ -528,6 +536,17 @@ export class ErrorClassifier {
     return category === ErrorCategory.RETRYABLE || category === ErrorCategory.RATE_LIMIT;
   }
 
+  static getRetryCategory(classification: ErrorClassification): LlmRetryCategory {
+    if (classification.retryCategory !== undefined) return classification.retryCategory;
+    if (classification.errorCode === ENGINE_ERROR_CODES.LLM_INVALID_TOOL_ARGS
+      || classification.errorCode === ENGINE_ERROR_CODES.LLM_EMPTY_RESPONSE) return 'output';
+    if (classification.category === ErrorCategory.RATE_LIMIT
+      || classification.errorCode === ENGINE_ERROR_CODES.LLM_RATE_LIMIT) return 'rate_limit';
+    if (classification.metadata?.failure_kind === 'transport'
+      || classification.errorCode === ENGINE_ERROR_CODES.LLM_PROVIDER_DOWN) return 'transport';
+    return 'other';
+  }
+
   static calculateRetryDelay(
     errorOrClassification: Error | ErrorClassification,
     attemptNumber: number,
@@ -542,8 +561,10 @@ export class ErrorClassifier {
       return 0;
     }
 
-    if (classification.category === ErrorCategory.RATE_LIMIT) {
-      return Math.min(baseDelay * Math.pow(2, attemptNumber), maxDelay);
+    const retryCategory = this.getRetryCategory(classification);
+    if (retryCategory === 'rate_limit' || retryCategory === 'transport') {
+      // 传输故障与限流共享退避；显式更长的上游等待建议不能被本地上限缩短。
+      return Math.max(Math.min(baseDelay * Math.pow(2, attemptNumber), maxDelay), classification.suggestedDelay ?? 0);
     }
 
     // Host 的等待下限不能被分类器的默认建议缩短；更长的错误建议仍然优先。

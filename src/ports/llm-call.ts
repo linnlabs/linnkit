@@ -113,7 +113,10 @@ export interface LlmCallOptions {
 }
 
 export interface LlmRetryConfig {
+  /** 单次编排的同模型重试总上限；fallback 另受 maxTotalAttempts 限制。 */
   maxRetries: number;
+  /** 类别的独立子配额，不会提高 maxRetries 总上限。未指定类别沿用总上限。 */
+  maxRetriesByCategory?: Readonly<Partial<Record<import('../contracts').LlmRetryCategory, number>>>;
   /**
    * 单次 LLM 编排允许触发的真实上游调用总数。
    *

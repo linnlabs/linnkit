@@ -1,9 +1,10 @@
+import { LlmRetryEpisode } from './functions/llmRetryEpisode';
 import type {
   AnyAgentEvent,
   ErrorEvent as AgentErrorEvent,
   StreamResetEvent,
 } from '../events/agentEvents';
-import { generateRuntimeEventId, generateTraceId } from '../../contracts';
+import { generateRuntimeEventId, generateTraceId, type LlmRetryCategory } from '../../contracts';
 import {
   ErrorClassifier,
   ErrorCategory,
@@ -83,6 +84,9 @@ export async function callWithRetryFallback(params: CallWithRetriesParams): Prom
   });
   const traceId = generateTraceId();
 
+  const categoryRetries: Record<LlmRetryCategory, number> = { transport: 0, output: 0, rate_limit: 0, other: 0 };
+  const retryEpisode = new LlmRetryEpisode(traceId, eventHandler);
+
   let previousAttemptTracker: LiveAttemptStreamTracker | undefined;
 
   if (!clientRetryEnabled) {
@@ -97,199 +101,241 @@ export async function callWithRetryFallback(params: CallWithRetriesParams): Prom
     });
   }
 
-  for (let attempt = 0; attempt <= configuredMaxRetries; attempt++) {
-    throwIfAborted(signal, '检测到取消信号，停止AI活动');
+  try {
+    for (let attempt = 0; attempt <= configuredMaxRetries; attempt++) {
+      throwIfAborted(signal, '检测到取消信号，停止AI活动');
 
-    if (previousAttemptTracker?.hasEmitted() && eventHandler) {
-      eventHandler(previousAttemptTracker.buildResetEvent());
-    }
-    previousAttemptTracker = undefined;
-
-    // 每次真实 attempt 都重新校验 active model 并重新物化；本地拒绝不计入 attempt。
-    const resolvedMessages = await runLlmInputPreflight({
-      activeModelId,
-      messages,
-      modelCatalog: deps.modelCatalog,
-      materializer: deps.llmInputMaterializer,
-      invocationContext,
-      eventHandler,
-      requirement,
-    });
-    const attemptContextUsage = invocationContext?.measurePromptUsage
-      ? await invocationContext.measurePromptUsage(activeModelId, messages)
-      : undefined;
-
-    const isRetry = attempt > 0;
-    let pendingErrorEvent: AgentErrorEvent | null = null;
-    let streamedErrorClassification: ErrorClassification | undefined;
-    const attemptTracker = eventHandler
-      ? createLiveAttemptStreamTracker(eventHandler, evt => {
-          pendingErrorEvent = evt;
-        })
-      : undefined;
-
-    try {
-      if (isRetry) {
-        logger.info('LLM 调用重试', { attempt, configuredMaxRetries });
+      if (previousAttemptTracker?.hasEmitted() && eventHandler) {
+        eventHandler(previousAttemptTracker.buildResetEvent());
       }
+      previousAttemptTracker = undefined;
 
-      actualAttempts++;
-      const llmResponse = attemptTracker
-        ? await callLlmStream({
-            inferencePort: deps.inferencePort,
-            modelId: activeModelId,
-            messages: resolvedMessages,
-            options,
-            eventHandler: attemptTracker.handle,
-            onErrorClassification(classification) {
-              streamedErrorClassification = classification;
-            },
-            signal,
-            toolCallStreamingPolicies: invocationContext?.toolCallStreamingPolicies,
-            traceId,
-          })
-        : await callPlainCompletion(
-            deps.inferencePort,
-            activeModelId,
-            resolvedMessages,
-            options,
-            signal,
-            traceId
-          );
-
-      const responseContent = getLlmResultContent(llmResponse);
-      const toolCallsFromLLM = getLlmResultToolCalls(llmResponse);
-      if (
-        deps.retryConfig.enableEmptyResponseRetry &&
-        !responseContent?.trim() &&
-        !toolCallsFromLLM?.length
-      ) {
-        throw new Error('LLM返回了空响应');
-      }
-
-      logger.debug('LLM 调用成功', { attempts: actualAttempts, maxTotalAttempts });
-      if (attemptContextUsage) {
-        fallbackObserver?.onLlmAttemptSucceeded?.(activeModelId, attemptContextUsage);
-      } else {
-        fallbackObserver?.onLlmAttemptSucceeded?.(activeModelId);
-      }
-      return llmResponse;
-    } catch (error) {
-      lastError = error instanceof Error ? error : new Error(String(error));
-      if (lastError.name === 'AbortError') {
-        logger.info('LLM 调用已取消，不进入 provider failure 分类与重试流程', {
-          attempt: attempt + 1,
-          actualAttempts,
-          maxTotalAttempts,
-          reason: lastError.message,
-        });
-        throw lastError;
-      }
-
-      // 流式 onError 已完成分类；这里复用同一结果，避免重试判断与最终事件漂移。
-      const classification =
-        streamedErrorClassification ??
-        ErrorClassifier.classify(lastError, { logPrefix: '[LlmCaller]' });
-      const currentMaxRetries = clientRetryEnabled ? configuredMaxRetries : 0;
-
-      logger.error('LLM 调用失败', {
-        attempt: attempt + 1,
-        maxAttempts: currentMaxRetries + 1,
-        actualAttempts,
-        maxTotalAttempts,
-        error: lastError.message,
+      // 每次真实 attempt 都重新校验 active model 并重新物化；本地拒绝不计入 attempt。
+      const resolvedMessages = await runLlmInputPreflight({
+        activeModelId,
+        messages,
+        modelCatalog: deps.modelCatalog,
+        materializer: deps.llmInputMaterializer,
+        invocationContext,
+        eventHandler,
+        requirement,
       });
+      const attemptContextUsage = invocationContext?.measurePromptUsage
+        ? await invocationContext.measurePromptUsage(activeModelId, messages)
+        : undefined;
 
-      previousAttemptTracker = attemptTracker;
+      const isRetry = attempt > 0;
+      let pendingErrorEvent: AgentErrorEvent | null = null;
+      let streamedErrorClassification: ErrorClassification | undefined;
+      const attemptTracker = eventHandler
+        ? createLiveAttemptStreamTracker(eventHandler, evt => {
+            pendingErrorEvent = evt;
+          })
+        : undefined;
 
-      if (!hasLlmAttemptBudgetRemaining({ actualAttempts, maxTotalAttempts })) {
-        logger.error('已达到 LLM 总调用次数上限，停止重试/切模型', {
+      try {
+        if (isRetry) {
+          logger.info('LLM 调用重试', { attempt, configuredMaxRetries });
+        }
+
+        actualAttempts++;
+        retryEpisode.retrying(actualAttempts);
+        const llmResponse = attemptTracker
+          ? await callLlmStream({
+              inferencePort: deps.inferencePort,
+              modelId: activeModelId,
+              messages: resolvedMessages,
+              options,
+              eventHandler: attemptTracker.handle,
+              onErrorClassification(classification) {
+                streamedErrorClassification = classification;
+              },
+              signal,
+              toolCallStreamingPolicies: invocationContext?.toolCallStreamingPolicies,
+              traceId,
+            })
+          : await callPlainCompletion(
+              deps.inferencePort,
+              activeModelId,
+              resolvedMessages,
+              options,
+              signal,
+              traceId
+            );
+
+        const responseContent = getLlmResultContent(llmResponse);
+        const toolCallsFromLLM = getLlmResultToolCalls(llmResponse);
+        if (
+          deps.retryConfig.enableEmptyResponseRetry &&
+          !responseContent?.trim() &&
+          !toolCallsFromLLM?.length
+        ) {
+          throw new Error('LLM返回了空响应');
+        }
+
+        logger.debug('LLM 调用成功', { attempts: actualAttempts, maxTotalAttempts });
+        if (attemptContextUsage) {
+          fallbackObserver?.onLlmAttemptSucceeded?.(activeModelId, attemptContextUsage);
+        } else {
+          fallbackObserver?.onLlmAttemptSucceeded?.(activeModelId);
+        }
+        retryEpisode.finish('succeeded');
+        return llmResponse;
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+        if (lastError.name === 'AbortError') {
+          logger.info('LLM 调用已取消，不进入 provider failure 分类与重试流程', {
+            attempt: attempt + 1,
+            actualAttempts,
+            maxTotalAttempts,
+            reason: lastError.message,
+          });
+          throw lastError;
+        }
+
+        // 流式 onError 已完成分类；这里复用同一结果，避免重试判断与最终事件漂移。
+        const classification =
+          streamedErrorClassification ??
+          ErrorClassifier.classify(lastError, { logPrefix: '[LlmCaller]' });
+        const category = ErrorClassifier.getRetryCategory(classification);
+        const categoryLimit = deps.retryConfig.maxRetriesByCategory?.[category] ?? configuredMaxRetries;
+        const currentMaxRetries = clientRetryEnabled ? categoryLimit : 0;
+        const failedRetryState = {
+          category,
+          attempt: categoryRetries[category],
+          max_retries: currentMaxRetries,
+          total_attempts: actualAttempts,
+          error_code: classification.errorCode,
+        };
+
+        logger.error('LLM 调用失败', {
+          attempt: attempt + 1,
+          maxAttempts: currentMaxRetries + 1,
           actualAttempts,
           maxTotalAttempts,
+          error: lastError.message,
         });
-        emitFinalError(eventHandler, pendingErrorEvent, lastError, classification);
-        throw lastError;
-      }
 
-      if (options.allow_model_fallback !== false) {
-        const policySwitchModelId = tryPolicyModelSwitch(
-          deps,
-          activeModelId,
-          excludedModelIds,
-          requirement,
-          fallbackObserver,
-          lastError,
-          invocationContext?.evaluateFallbackPromptCapacity,
+        previousAttemptTracker = attemptTracker;
+
+        if (!hasLlmAttemptBudgetRemaining({ actualAttempts, maxTotalAttempts })) {
+          logger.error('已达到 LLM 总调用次数上限，停止重试/切模型', {
+            actualAttempts,
+            maxTotalAttempts,
+          });
+          retryEpisode.finish('exhausted', failedRetryState);
+          emitFinalError(eventHandler, pendingErrorEvent, lastError, classification, retryEpisode.activeId);
+          throw lastError;
+        }
+
+        if (options.allow_model_fallback !== false) {
+          const policySwitchModelId = tryPolicyModelSwitch(
+            deps,
+            activeModelId,
+            excludedModelIds,
+            requirement,
+            fallbackObserver,
+            lastError,
+            invocationContext?.evaluateFallbackPromptCapacity,
+          );
+          if (policySwitchModelId) {
+            fallbackObserver?.onModelFallbackApplied?.({
+              fromModelId: activeModelId,
+              toModelId: policySwitchModelId,
+              reason: lastError.message,
+              policy: 'policy-switch',
+            });
+            activeModelId = policySwitchModelId;
+            excludedModelIds.add(policySwitchModelId);
+            attempt -= 1;
+            continue;
+          }
+
+          const quotaFallbackModelId = tryCloudQuotaFallback({
+            deps,
+            activeModelId,
+            options,
+            excludedModelIds,
+            requirement,
+            error: lastError,
+            fallbackObserver,
+            evaluateFallbackPromptCapacity: invocationContext?.evaluateFallbackPromptCapacity,
+          });
+          if (quotaFallbackModelId) {
+            fallbackObserver?.onModelFallbackApplied?.({
+              fromModelId: activeModelId,
+              toModelId: quotaFallbackModelId,
+              reason: lastError.message,
+              policy: 'cloud-quota',
+            });
+            activeModelId = quotaFallbackModelId;
+            excludedModelIds.add(quotaFallbackModelId);
+            attempt -= 1;
+            continue;
+          }
+        }
+
+        if (classification.category === ErrorCategory.NON_RETRYABLE) {
+          logger.error('错误不可重试，直接失败', { reason: classification.reason });
+          retryEpisode.finish('failed', failedRetryState);
+          emitFinalError(eventHandler, pendingErrorEvent, lastError, classification, retryEpisode.activeId);
+          throw lastError;
+        }
+
+        if (attempt >= configuredMaxRetries || categoryRetries[category] >= currentMaxRetries) {
+          logger.error('已达到最大重试次数，放弃重试', { maxRetries: currentMaxRetries });
+          retryEpisode.finish('exhausted', failedRetryState);
+          emitFinalError(eventHandler, pendingErrorEvent, lastError, classification, retryEpisode.activeId);
+          throw lastError;
+        }
+
+        const retryDelay = ErrorClassifier.calculateRetryDelay(
+          classification,
+          categoryRetries[category],
+          deps.retryConfig.retryDelayMs,
+          60000
         );
-        if (policySwitchModelId) {
-          fallbackObserver?.onModelFallbackApplied?.({
-            fromModelId: activeModelId,
-            toModelId: policySwitchModelId,
-            reason: lastError.message,
-            policy: 'policy-switch',
-          });
-          activeModelId = policySwitchModelId;
-          excludedModelIds.add(policySwitchModelId);
-          attempt -= 1;
-          continue;
+        if (classification.category === ErrorCategory.RATE_LIMIT) {
+          logger.warn('速率限制错误，延迟后重试', { retryDelay, reason: classification.reason });
+        } else if (classification.category === ErrorCategory.RETRYABLE) {
+          logger.warn('可重试错误，延迟后重试', { retryDelay, reason: classification.reason });
         }
 
-        const quotaFallbackModelId = tryCloudQuotaFallback({
-          deps,
-          activeModelId,
-          options,
-          excludedModelIds,
-          requirement,
-          error: lastError,
-          fallbackObserver,
-          evaluateFallbackPromptCapacity: invocationContext?.evaluateFallbackPromptCapacity,
-        });
-        if (quotaFallbackModelId) {
-          fallbackObserver?.onModelFallbackApplied?.({
-            fromModelId: activeModelId,
-            toModelId: quotaFallbackModelId,
-            reason: lastError.message,
-            policy: 'cloud-quota',
-          });
-          activeModelId = quotaFallbackModelId;
-          excludedModelIds.add(quotaFallbackModelId);
-          attempt -= 1;
-          continue;
-        }
-      }
-
-      if (classification.category === ErrorCategory.NON_RETRYABLE) {
-        logger.error('错误不可重试，直接失败', { reason: classification.reason });
-        emitFinalError(eventHandler, pendingErrorEvent, lastError, classification);
-        throw lastError;
-      }
-
-      if (attempt >= currentMaxRetries) {
-        logger.error('已达到最大重试次数，放弃重试', { maxRetries: currentMaxRetries });
-        emitFinalError(eventHandler, pendingErrorEvent, lastError, classification);
-        throw lastError;
-      }
-
-      const retryDelay = ErrorClassifier.calculateRetryDelay(
-        classification,
-        attempt,
-        deps.retryConfig.retryDelayMs,
-        60000
-      );
-      if (classification.category === ErrorCategory.RATE_LIMIT) {
-        logger.warn('速率限制错误，延迟后重试', { retryDelay, reason: classification.reason });
-      } else if (classification.category === ErrorCategory.RETRYABLE) {
-        logger.warn('可重试错误，延迟后重试', { retryDelay, reason: classification.reason });
-      }
-
-      throwIfAborted(signal, '延迟等待前检测到取消信号，停止重试');
-      if (retryDelay > 0) {
-        await new Promise(resolve => setTimeout(resolve, retryDelay));
+        throwIfAborted(signal, '延迟等待前检测到取消信号，停止重试');
+        categoryRetries[category] += 1;
+        retryEpisode.waiting({
+          category,
+          attempt: categoryRetries[category],
+          max_retries: currentMaxRetries,
+          total_attempts: actualAttempts,
+          error_code: classification.errorCode,
+        }, retryDelay);
+        if (retryDelay > 0) await waitForRetry(retryDelay, signal);
       }
     }
-  }
 
-  throw lastError || new Error('LLM调用在所有重试后都失败了');
+    throw lastError || new Error('LLM调用在所有重试后都失败了');
+  } catch (error) {
+    retryEpisode.finish(error instanceof Error && error.name === 'AbortError' ? 'cancelled' : 'failed');
+    throw error;
+  }
+}
+
+/** 等待由当前调用的取消信号拥有；取消不能等到最长 60 秒的退避结束。 */
+function waitForRetry(delayMs: number, signal?: AbortSignal): Promise<void> {
+  throwIfAborted(signal, '等待重试前已取消');
+  return new Promise((resolve, reject) => {
+    const onAbort = (): void => {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', onAbort);
+      reject(new DOMException('Request interrupted during retry delay', 'AbortError'));
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, delayMs);
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
 }
 
 function isClientRetryEnabledForModel(
@@ -376,8 +422,10 @@ function emitFinalError(
   eventHandler: ((event: AnyAgentEvent) => void) | undefined,
   pendingErrorEvent: AgentErrorEvent | null,
   error: Error,
-  classification: ErrorClassification
+  classification: ErrorClassification,
+  retryId?: string,
 ): void {
   if (!eventHandler) return;
-  eventHandler(pendingErrorEvent ?? createLlmAgentErrorEvent(error, classification));
+  const event = pendingErrorEvent ?? createLlmAgentErrorEvent(error, classification);
+  eventHandler(retryId === undefined ? event : { ...event, retry_id: retryId });
 }

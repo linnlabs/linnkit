@@ -122,6 +122,9 @@ function mapAgentEventToRuntime(
       return event;
     }
 
+    case 'llm_retry':
+      return { ...typed, conversation_id: conversationId, turn_id: turnId, version: 1, ephemeral: false, ...(contextMeta ? { metadata: contextMeta } : {}) };
+
     case 'error': {
       const errorEvent = typed;
       const event = createErrorEvent(id, conversationId, turnId, errorEvent.error, {
@@ -129,6 +132,7 @@ function mapAgentEventToRuntime(
         details: toSerializableJsonValue(errorEvent.details),
         error_code: errorEvent.error_code,
         retryable: errorEvent.retryable,
+        retry_id: errorEvent.retry_id,
       });
       if (contextMeta) event.metadata = { ...(event.metadata ?? {}), ...contextMeta };
       return event;
