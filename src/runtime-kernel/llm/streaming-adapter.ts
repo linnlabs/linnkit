@@ -5,6 +5,7 @@ import {
   ToolCallIdSchema,
   type AssistantReplayPart,
   type CanonicalLlmUsage,
+  type LlmRetryCategory,
   type ProviderContinuation,
   type ToolCallId,
 } from '../../contracts';
@@ -31,12 +32,14 @@ const logger = new Logger('LlmCaller');
 class CanonicalInferenceFailureError extends Error {
   readonly errorCode: string;
   readonly recoverable: boolean;
+  readonly retryCategory?: LlmRetryCategory;
   readonly metadata: Record<string, unknown>;
 
   constructor(failure: {
     readonly kind: CanonicalInferenceFailureKind;
     readonly code: string;
     readonly retryable: boolean;
+    readonly retry_category?: LlmRetryCategory;
   }, abortReason?: unknown) {
     const message = failure.kind === 'aborted' && typeof abortReason === 'string'
       ? abortReason
@@ -47,6 +50,7 @@ class CanonicalInferenceFailureError extends Error {
     this.name = failure.kind === 'aborted' ? 'AbortError' : 'CanonicalInferenceFailureError';
     this.errorCode = `llm.${failure.code}`;
     this.recoverable = failure.retryable;
+    this.retryCategory = failure.retry_category;
     this.metadata = { failure_kind: failure.kind, provider_code: failure.code };
   }
 }

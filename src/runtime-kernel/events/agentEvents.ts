@@ -9,6 +9,7 @@
 import { z } from 'zod';
 import {
   AnswerSegmentIdSchema,
+  LlmRetryState,
   AssistantReplayParts,
   FinalAnswerCompletionReason,
   ProviderContinuations,
@@ -106,8 +107,15 @@ export const FinalAnswerEventSchema = BaseAgentEvent.extend({
 }).strict();
 export type FinalAnswerEvent = z.infer<typeof FinalAnswerEventSchema>;
 
+export const LlmRetryEventSchema = BaseAgentEvent.extend({
+  type: z.literal('llm_retry'),
+  ...LlmRetryState.shape,
+}).strict();
+export type LlmRetryEvent = z.infer<typeof LlmRetryEventSchema>;
+
 export const ErrorEventSchema = BaseAgentEvent.extend({
   type: z.literal('error'),
+  retry_id: LlmRetryState.shape.retry_id.optional(),
   error: z.string(),
   error_code: z.string().optional(),
   retryable: z.boolean().optional(),
@@ -145,6 +153,7 @@ export const AgentEventSchema = z.discriminatedUnion('type', [
   ToolProcessEventSchema,
   ObservationEventSchema,
   FinalAnswerEventSchema,
+  LlmRetryEventSchema,
   ErrorEventSchema,
   StreamChunkEventSchema,
   StreamResetEventSchema,

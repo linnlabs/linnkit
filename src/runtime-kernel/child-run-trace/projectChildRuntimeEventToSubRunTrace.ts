@@ -14,6 +14,31 @@ export function projectChildRuntimeEventToSubRunTrace(
   event: RoutedRuntimeEvent,
 ): SubRunTraceEnvelope | null {
   switch (event.type) {
+    case 'llm_retry':
+      return {
+        kind: 'llm_retry',
+        source_event_id: event.id,
+        retry: {
+          retry_id: event.retry_id,
+          status: event.status,
+          category: event.category,
+          attempt: event.attempt,
+          max_retries: event.max_retries,
+          total_attempts: event.total_attempts,
+          started_at: event.started_at,
+          delay_ms: event.delay_ms,
+          next_retry_at: event.next_retry_at,
+          error: event.error,
+          error_code: event.error_code,
+        },
+      };
+    case 'error':
+      return {
+        kind: 'error',
+        source_event_id: event.id,
+        // 父展示只需要安全错误与重试身份，不复制 child 的任意诊断 details。
+        failure: { error: event.error, error_code: event.error_code, retryable: event.retryable, retry_id: event.retry_id },
+      };
     case 'thought':
       return event.is_complete
         ? {

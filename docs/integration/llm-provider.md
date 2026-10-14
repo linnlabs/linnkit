@@ -24,11 +24,30 @@ Host 拥有：
 - Provider 事件、raw usage、continuation 和错误的安全投影。
 
 Provider SDK 不得执行工具、开启自动 multi-step、自行重试或决定切模型。
+Host 可在 canonical `failure` 上提供可选 `retry_category: transport | output | rate_limit | other`，
+由实际失败 owner 分类；框架优先采用这一正式事实，不从供应商私有 `code` 推断。
+未提供时保留既有规则，`kind=transport` 仍明确属于传输错误；`retryable=false` 不因类别而变为可重试。
 
-同模型重试由 Host 的 `LlmCaller` 配置控制：`maxRetries` 是首次调用失败后的重试次数，
-并受总调用预算 `maxTotalAttempts` 约束。普通可重试错误的等待时间取 `retryDelayMs`
-与分类器建议的较大值，Host 配置因此是等待下限，不会覆盖更长的错误建议。
-限流错误仍沿用已有指数退避与上限；不可重试错误、用户取消及禁用客户端重试的策略不受此等待配置影响。
+同模型重试由 Host 的 `LlmCaller` 配置控制：`maxRetries` 是首次调用失败后的重试总上限，
+并受总真实调用预算 `maxTotalAttempts` 约束；fallback 不消耗同模型重试次数，但仍消耗真实调用预算。
+可选 `maxRetriesByCategory` 给 `transport / output / rate_limit / other` 设置独立子配额；
+未设置的类别沿用总上限，类别配额不能大于总上限。混合错误不会重置已用次数，不能把各类别配额相加
+绕过总上限。Host 例如可以允许传输故障 6 次、输出损坏 3 次；框架不固定产品的具体次数。
+
+普通传输故障与限流共享指数退避，以 `retryDelayMs * 2^n` 计算（首个重试 `n=0`），
+本地指数等待最多 60 秒；明确的更长错误建议仍是等待下限，不被本地上限缩短。
+其余可重试错误采用 `retryDelayMs` 与分类器建议的较大值，不指数增长。
+Host 设置 1500 ms 并允许 6 次网络重试时，等待依次为 1.5、3、6、12、24、48 秒，
+合计 94.5 秒，另外还要加各次请求耗时；这不是能跨越任意长中断的保证。
+空响应拥有独立稳定错误码 `llm.empty_response`，与 `llm.invalid_tool_args` 一起归入 output，
+不能再因空响应被归为 provider-down 而借用网络重试配额。
+
+取消会立即中止等待并清理 timer；不可重试错误、Cloud 计费禁用客户端重试和
+`retry_policy=none` 仍不重试。SDK 保持 `maxRetries: 0`，不能另行增加一层重试。
+配额耗尽后由既有 run 生命周期暂停/失败，用户恢复创建新的 execution 和新的调用配额。
+
+每次实际重试通过既有事件链产生 durable `llm_retry` 状态，详见 [`realtime.md`](./realtime.md)。
+这些状态描述已经发生的请求，与检查点内可回滚的模型产物不同；它们不会成为 Agent 的提示词。
 
 ## 2. 请求与流事件
 

@@ -27,6 +27,7 @@ export type RuntimeEventUiProjectionKind =
   | 'requires_user_interaction'
   | 'audit_envelope'
   | 'subrun_trace'
+  | 'llm_retry'
   | 'error'
   | 'context_usage_snapshot'
   | 'run_execution_metrics'
@@ -201,6 +202,8 @@ export function getRuntimeEventUiProjectionKind(
       return 'audit_envelope';
     case 'subrun_trace':
       return 'subrun_trace';
+    case 'llm_retry':
+      return 'llm_retry';
     case 'error':
       return 'error';
     case 'context_usage_snapshot':
@@ -247,7 +250,7 @@ export function describeRuntimeEventLifecycle(
       return false;
     }
 
-    if (event.type === 'error') {
+    if (event.type === 'error' || event.type === 'llm_retry') {
       return false;
     }
 
@@ -303,6 +306,7 @@ export function describeRuntimeEventLifecycle(
       case 'tool_output':
       case 'requires_user_interaction':
       case 'subrun_trace':
+      case 'llm_retry':
       case 'error':
       case 'context_usage_snapshot':
       case 'run_execution_metrics':

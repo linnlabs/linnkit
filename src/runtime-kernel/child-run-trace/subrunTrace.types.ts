@@ -1,5 +1,7 @@
 import type {
   FinalAnswerCompletionReason,
+  LlmRetryState,
+  RuntimeErrorState,
   RuntimeResourceRef,
   SerializableJsonRecord,
   SubRunTraceEvent,
@@ -23,6 +25,8 @@ interface SubRunTraceEnvelopeBase {
 
 export type SubRunTraceEnvelope = SubRunTraceEnvelopeBase &
   (
+    | { kind: 'llm_retry'; retry: LlmRetryState }
+    | { kind: 'error'; failure: RuntimeErrorState }
     | { kind: 'thought_delta'; delta: string }
     | { kind: 'thought_complete'; content: string }
     | {

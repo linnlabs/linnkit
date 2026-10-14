@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { LlmRetryState } from './llm-retry';
+import { RuntimeErrorState } from './runtime-error';
 
 import { SerializableJsonRecord, SerializableJsonValue } from './json';
 import { Status, ToolCallPhase } from './runtime-status';
@@ -27,6 +29,8 @@ export const SubRunTraceKind = z.enum([
   'final_answer_chunk',
   'final_answer',
   'history_summary',
+  'llm_retry',
+  'error',
 ]);
 export type SubRunTraceKind = z.infer<typeof SubRunTraceKind>;
 
@@ -43,6 +47,8 @@ export const SubRunTracePayload = z.object({
   subrun_parent_id: SubrunIdSchema.optional(),
   source_event_id: SourceEventIdSchema,
   kind: SubRunTraceKind,
+  retry: LlmRetryState.optional(),
+  failure: RuntimeErrorState.optional(),
   delta: z.string().optional(),
   content: z.string().optional(),
   answer_id: AnswerSegmentIdSchema.optional(),
@@ -75,6 +81,12 @@ export function validateSubRunTracePayloadSemantics(
   payload: SubRunTracePayload,
   ctx: z.RefinementCtx,
 ): void {
+  if ((payload.kind === 'llm_retry') !== (payload.retry !== undefined)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['retry'], message: 'retry is required only for llm_retry trace' });
+  }
+  if ((payload.kind === 'error') !== (payload.failure !== undefined)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['failure'], message: 'failure is required only for error trace' });
+  }
   if (payload.kind === 'thought_delta' && payload.delta === undefined) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['delta'], message: 'thought_delta requires delta' });
   }

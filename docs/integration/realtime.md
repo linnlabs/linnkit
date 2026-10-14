@@ -171,6 +171,34 @@ parent trace 中的 attachment refs 只是展示所需的资源身份，不包�
 
 `subrun_trace` 是 live presentation，必须保持 `ephemeral=true`，不能进入通用 RuntimeEvent 事实表。需要重启后展示时，Host 可以从已 admission 的 trace 投影独立紧凑 read model；该 read model 只保存产品确认需要的语义项，读取后必须用公开 `RuntimeEvent` schema 重建并校验完整 DTO。历史投影是 live presentation 的物化视图，不是第二个 child RuntimeEvent 事实源。
 
+### LLM 重试事实
+
+`llm_retry` 是由 `LlmCaller` 创建的 durable 请求观察事实，通过同一 Agent mapper、publisher、
+EventBus 和 EventStore 进入实时与历史；不是 error bar 信号、工具调用或模型自述。
+
+- `retry_id` 是一次 LLM 调用的 trace ID。同一调用所有重试共用它；新的调用或恢复后的新 execution
+  使用新 ID，不能把过去的失败行改成正在重试。
+- `status` 为 `waiting / retrying / succeeded / exhausted / failed / cancelled`。只有真实进入等待、
+  开始请求和结束时发布，不持久化每秒时钟。`started_at` 是第一次安排重试的时间；终态事件的
+  `timestamp` 是结束时间；`next_retry_at` 只存在于 waiting 状态。
+- `category` 是传输、输出、限流或其他失败。`attempt / max_retries` 表示该类别的已安排重试数与子配额，
+  `total_attempts` 是所有真实请求数。混合错误也可能先耗尽总预算，因此不能用分子等于分母代替终态判断。
+- `delay_ms` 是当前等待值，其他状态为 0；`error` 为安全分类短语、`error_code` 为稳定错误码，
+  不复制供应商正文。无自动重试的失败只发布既有 `error`；终末 error 可携带同一个 `retry_id`，
+  供客户端归并到已存在的重试行，而不是再显示一条重复错误。
+- 等待和取消事实经 `EventBusEventPersistence` 的同一有序写队列立即持久化，即使启用了
+  checkpoint writer。它们描述已发生的真实请求，不能随未提交的 LLM 节点被撤回；立即落盘并不表示
+  模型输出或节点断点已提交。其他模型与工具产物仍遵守既有断点原子性。
+
+重试成功保留历史，但成功只表示该次 LLM 请求恢复，不表示整条 Agent run 已完成。
+失败 attempt 的部分答案仍由既有 `final_answer_reset` 撤回，重试事实本身不撤回。
+所有重试事实不进入模型上下文；foreground/conversation 才进入主消息列表。
+child retry 在自己的 EventStore 持久化，并通过官方 child→parent 投影为
+`subrun_trace(kind=llm_retry, retry=LlmRetryState)`；child 安全错误投影为
+`subrun_trace(kind=error, failure=RuntimeErrorState)`，不复制任意诊断 details。
+两类 trace 保持 `source_event_id`，仍是 ephemeral parent read model，不能冒充 child 正式事实。
+Host 如持久化 compact trace，必须同时保存共享 retry/failure payload，重放不得猜测终态。
+
 ### 1.5 run、execution 与 transport
 
 `run_id` 表示逻辑 Agent run；`execution_id` 表示一次实际执行或 transport。wait-user 会结束当前 transport，但逻辑 run 仍为 `awaiting_user`；resume 沿用 run_id，分配新的 execution_id。
@@ -236,6 +264,7 @@ parent trace 中的 attachment refs 只是展示所需的资源身份，不包�
 | `history_summary` | ✓ | ✓ | ✓ | ✓ |
 | `context_usage_snapshot` | ✗（ephemeral）| ✗ | ✗ | ✓ |
 | `run_execution_metrics` | ✓ | ✓ | ✗ | ✓ |
+| `llm_retry` / `error` | ✓ | ✓ | ✗ | ✓ |
 | `audit_envelope` | ✓ | ✗ | ✗ | ✗ |
 
 `final_answer` 仍进入 realtime channel，但它不是第二条正文输入，只用于验证 chunk 聚合结果与规范身份、记录封口原因并结束该 answer segment。它不得替换 live message id。只有 `completion_reason=terminal` 可以被 settlement、复制与操作栏视为最终交付；`tool_call` 和 `interrupted` 仍可展示，但不得冒充终答。缺少 chunk 的非空完整答案是协议错误，不能静默渲染。

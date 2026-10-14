@@ -4,10 +4,11 @@ import type { LLMPolicyErrorDecision, LLMPolicyMatchContext } from './policies/t
 import type { ModelCatalogLike } from './modelCatalog';
 import { ModelResolver, type ModelResolverLike } from './modelResolver';
 import { defaultPolicyEngine } from './policies/defaultPolicyEngine';
-import { resolveLlmMaxTotalAttempts } from './functions/retryAttemptBudget';
+import { resolveLlmMaxTotalAttempts, validateLlmRetryConfig } from './functions/retryAttemptBudget';
 
 export interface LlmCallerOptions {
   maxRetries?: number;
+  maxRetriesByCategory?: LlmRetryConfig['maxRetriesByCategory'];
   maxTotalAttempts?: number;
   enableEmptyResponseRetry?: boolean;
   retryDelayMs?: number;
@@ -34,16 +35,19 @@ export function buildLlmCallerDeps(
 ): NormalizedLlmCallerDeps {
   const modelCatalog = options.modelCatalog;
   const maxRetries = options.maxRetries ?? 3;
-  return {
-    retryConfig: {
+  const retryConfig: LlmRetryConfig = {
+    maxRetries,
+    maxRetriesByCategory: options.maxRetriesByCategory,
+    maxTotalAttempts: resolveLlmMaxTotalAttempts({
       maxRetries,
-      maxTotalAttempts: resolveLlmMaxTotalAttempts({
-        maxRetries,
-        maxTotalAttempts: options.maxTotalAttempts,
-      }),
-      enableEmptyResponseRetry: options.enableEmptyResponseRetry ?? true,
-      retryDelayMs: options.retryDelayMs ?? 1000,
-    },
+      maxTotalAttempts: options.maxTotalAttempts,
+    }),
+    enableEmptyResponseRetry: options.enableEmptyResponseRetry ?? true,
+    retryDelayMs: options.retryDelayMs ?? 1000,
+  };
+  validateLlmRetryConfig(retryConfig);
+  return {
+    retryConfig,
     modelResolver:
       options.modelResolver ??
       new ModelResolver({

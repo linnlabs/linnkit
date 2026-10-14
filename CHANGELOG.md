@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Breaking; next minor release:** remove the legacy `document_fragment`,
+- **Breaking; 0.39.0 or later (not in 0.38.0):** remove the legacy `document_fragment`,
   `context_before` and `context_after` message types from `AiMessage` and AgentSpec
   must-keep policies. Host context must use `context_injection` with registered fences;
   token classification no longer recognizes those legacy types. Hosts must explicitly
@@ -29,6 +29,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   local sources and fail on missing or empty targets. Include build entrypoints and
   test fixtures in product-name checks, replacing product-specific regression examples
   with neutral tool, run and fence scenarios. Runtime protocols under test are unchanged.
+
+## [0.38.0] - 2026-10-14
+
+### Added
+
+- Optional `maxRetriesByCategory` sub-budgets for transport, model-output, rate-limit
+  and other retryable failures, with optional canonical failure `retry_category` supplied
+  by the Host failure owner rather than inferred from provider-specific codes. All remain bounded by the existing same-model retry
+  ceiling and total upstream-attempt budget; SDK retries stay disabled.
+- Durable `llm_retry` lifecycle facts with one invocation identity, category counters,
+  timing and terminal state. Runtime/SSE events, UI governance, optional final-error
+  linkage and child retry/error trace payloads share formal browser-safe contracts.
+  Request observations persist through the existing ordered writer during backoff,
+  independently of uncommitted LLM output and checkpoint state.
+
+### Changed
+
+- Ordinary transport failures now use the existing exponential rate-limit backoff,
+  capped at 60 seconds locally while retaining longer explicit wait suggestions.
+  Empty responses are classified as model-output failures (`llm.empty_response`).
+- Cancelling a retry wait aborts immediately, clears its timer and records cancellation.
+  Retry success/exhaustion does not replace the authoritative Agent run lifecycle.
+
+### Integration
+
+- Hosts must handle the additive `llm_retry` Runtime/SSE type and child trace kinds
+  `llm_retry` / `error`. Rendering, localization and run-resume controls remain Host
+  responsibilities. This minor release is based on 0.37.5 and contains no unrelated
+  unreleased runtime boundary changes.
 
 ## [0.37.5] - 2026-10-13
 

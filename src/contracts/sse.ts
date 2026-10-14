@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { LlmRetryState } from './llm-retry';
+import { RuntimeErrorState } from './runtime-error';
 import { SerializableJsonRecord, SerializableJsonValue, toSerializableJsonValue } from './json';
 import {
   RuntimeEventVisibility,
@@ -173,12 +175,15 @@ export const SSERequiresUserInteractionEvent = BaseSSEEvent.extend({
 
 export type SSERequiresUserInteractionEvent = z.infer<typeof SSERequiresUserInteractionEvent>;
 
+export const SSELlmRetryEvent = BaseSSEEvent.extend({
+  type: z.literal('llm_retry'),
+  ...LlmRetryState.shape,
+});
+export type SSELlmRetryEvent = z.infer<typeof SSELlmRetryEvent>;
+
 export const SSEErrorEvent = BaseSSEEvent.extend({
   type: z.literal('error'),
-  error: z.string(),
-  details: SerializableJsonValue.optional(),
-  error_code: z.string().optional(),
-  retryable: z.boolean().optional(),
+  ...RuntimeErrorState.shape,
 });
 
 export type SSEErrorEvent = z.infer<typeof SSEErrorEvent>;
@@ -297,6 +302,7 @@ export const SSEEvent = z
     SSEToolOutputEvent,
     SSESubRunTraceEvent,
     SSERequiresUserInteractionEvent,
+    SSELlmRetryEvent,
     SSEErrorEvent,
     SSETransportErrorEvent,
     SSEContextUsageSnapshotEvent,
@@ -432,6 +438,8 @@ export function runtimeEventToSSEEvent(event: RuntimeEvent): SSEEvent | null {
         subrun_parent_id: event.subrun_parent_id,
         source_event_id: event.source_event_id,
         kind: event.kind,
+        retry: event.retry,
+        failure: event.failure,
         delta: event.delta,
         content: event.content,
         answer_id: event.answer_id,
@@ -504,6 +512,22 @@ export function runtimeEventToSSEEvent(event: RuntimeEvent): SSEEvent | null {
         compression_ratio: event.compression_ratio,
         included_old_summary: event.included_old_summary,
       };
+    case 'llm_retry':
+      return {
+        ...base,
+        type: 'llm_retry',
+        retry_id: event.retry_id,
+        status: event.status,
+        category: event.category,
+        attempt: event.attempt,
+        max_retries: event.max_retries,
+        total_attempts: event.total_attempts,
+        started_at: event.started_at,
+        delay_ms: event.delay_ms,
+        next_retry_at: event.next_retry_at,
+        error: event.error,
+        error_code: event.error_code,
+      };
     case 'error':
       return {
         ...base,
@@ -512,6 +536,7 @@ export function runtimeEventToSSEEvent(event: RuntimeEvent): SSEEvent | null {
         details: event.details,
         error_code: event.error_code,
         retryable: event.retryable,
+        retry_id: event.retry_id,
       };
     case 'context_usage_snapshot':
       return {

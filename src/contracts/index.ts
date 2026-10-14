@@ -19,3 +19,5 @@ export * from './token-calibration';
 export * from './reasoning';
 export * from './provider-continuation';
 export * from './summarization';
+export * from './llm-retry';
+export * from './runtime-error';

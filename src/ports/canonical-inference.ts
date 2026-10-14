@@ -1,3 +1,4 @@
+import type { LlmRetryCategory } from '../contracts/llm-retry';
 import type {
   CanonicalLlmUsage,
   ProviderContinuation,
@@ -135,6 +136,8 @@ export type CanonicalInferenceEvent =
       readonly kind: CanonicalInferenceFailureKind;
       readonly code: string;
       readonly retryable: boolean;
+      /** Host 按实际失败事实分类；框架不得从 Provider 私有 code 猜测。 */
+      readonly retry_category?: LlmRetryCategory;
     };
 
 export interface CanonicalInferencePort {
