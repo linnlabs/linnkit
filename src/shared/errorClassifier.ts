@@ -546,7 +546,8 @@ export class ErrorClassifier {
       return Math.min(baseDelay * Math.pow(2, attemptNumber), maxDelay);
     }
 
-    return classification.suggestedDelay || baseDelay;
+    // Host 的等待下限不能被分类器的默认建议缩短；更长的错误建议仍然优先。
+    return Math.max(baseDelay, classification.suggestedDelay ?? 0);
   }
 
   static isCloudQuotaError(error: Error): boolean {

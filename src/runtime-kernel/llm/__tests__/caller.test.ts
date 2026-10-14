@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
   CanonicalInferenceEvent,
   CanonicalInferencePort,
@@ -206,7 +206,7 @@ describe('LlmCaller canonical inference 主链', () => {
     const caller = new LlmCaller({
       inferencePort: harness.port,
       modelCatalog: modelCatalog(),
-      maxRetries: 0,
+      maxRetries: 6,
     });
     const events: AnyAgentEvent[] = [];
 
@@ -221,6 +221,52 @@ describe('LlmCaller canonical inference 主链', () => {
       metadata: { failure_kind: 'provider', provider_code: 'provider_http_401' },
     });
     expect(events.filter(event => event.type === 'error')).toHaveLength(1);
+    expect(harness.requests).toHaveLength(1);
+  });
+
+  describe('Host 普通重试等待下限', () => {
+    beforeEach(() => vi.useFakeTimers());
+    afterEach(() => vi.useRealTimers());
+
+    it.each([
+      { label: 'canonical 网络错误采用 Host 的 1500 ms 下限', failure: undefined, delay: 1500 },
+      { label: '服务端临时错误保留 2000 ms 建议', failure: new Error('503 Service Unavailable'), delay: 2000 },
+      {
+        label: '结构化错误保留更长的 5000 ms 建议',
+        failure: Object.assign(new Error('upstream unavailable'), {
+          errorCode: 'llm.provider_down', recoverable: true, retryAfterMs: 5000,
+        }),
+        delay: 5000,
+      },
+    ])('$label', async ({ failure, delay }) => {
+      const harness = createScriptedPort([
+        async function* (request) {
+          yield { type: 'start', model_id: request.model_id, attempt_id: request.invocation.attempt_id };
+          if (failure) throw failure;
+          yield { type: 'failure', kind: 'transport', code: 'econnreset', retryable: true };
+        },
+        request => successful(request, 'recovered'),
+      ]);
+      const caller = new LlmCaller({
+        inferencePort: harness.port,
+        modelCatalog: modelCatalog(),
+        maxRetries: 1,
+        retryDelayMs: 1500,
+      });
+      const events: AnyAgentEvent[] = [];
+      const result = caller.callWithRetries('test-model', testMessages, {}, event => events.push(event));
+
+      // 先让首个真实 attempt 失败并进入等待，再验证等待结束前不会重新调用 Provider。
+      await vi.advanceTimersByTimeAsync(0);
+      expect(harness.requests).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(delay - 1);
+      expect(harness.requests).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(1);
+
+      await expect(result).resolves.toEqual({ content: 'recovered' });
+      expect(harness.requests).toHaveLength(2);
+      expect(events.filter(event => event.type === 'error')).toHaveLength(0);
+    });
   });
 
   it('同一 retry 链共享 trace_id，但每个真实 attempt 使用新 attempt_id', async () => {

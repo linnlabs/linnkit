@@ -30,6 +30,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   test fixtures in product-name checks, replacing product-specific regression examples
   with neutral tool, run and fence scenarios. Runtime protocols under test are unchanged.
 
+## [0.37.5] - 2026-10-13
+
+### Fixed
+
+- Honor the Host's configured retry delay as the minimum wait for ordinary retryable
+  LLM failures. A classifier's shorter default suggestion no longer overrides it;
+  longer error-suggested delays remain intact. Rate-limit backoff, attempt budgets,
+  cancellation and non-retryable failure handling are unchanged.
+
+## [0.37.4] - 2026-10-09
+
+### Fixed
+
+- Preserve complete assistant tool batches in the next canonical model request, including
+  batches larger than ten calls. Successful and failed results remain paired by call ID,
+  with their original observation text and message order intact.
+- Count only non-batch messages toward `workingMemory.toolPairingSearchRange`; sibling
+  results no longer consume the pairing window. The default remains `10`. A new user
+  input or assistant message closes the previous batch regardless of that window.
+- Require one result per unique call ID. Missing results, duplicate declarations or
+  outputs, and conflicting explicit tool names cannot form a complete replay or
+  compaction group. Low-level messages may still omit the optional result tool name.
+  Protected batches remain atomic when over budget, leaving capacity admission and
+  automatic compaction responsible for resolving the excess.
+
 ## [0.37.3] - 2026-09-12
 
 ### Fixed
