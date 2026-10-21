@@ -2,6 +2,7 @@ import type { ToolIdempotencyPolicy } from './idempotency/toolIdempotency';
 import type { ToolExecutionContext } from './toolExecutionContext';
 import type { ModelInputRequirement } from '../llm/input-capabilities';
 import type { ToolModelInputDelivery } from './model-input';
+import { formatUnknownToolArguments } from './schema/functions/formatUnknownToolArguments';
 import type {
   JsonSchemaValue,
   ToolParameterProperty,
@@ -83,7 +84,7 @@ export abstract class BaseTool<TArgs extends ToolArgs = ToolArgs, TResult extend
         if (unknownFields.length > 0) {
           return {
             success: false,
-            error: `Additional properties not allowed: ${unknownFields.join(', ')}`,
+            error: formatUnknownToolArguments(unknownFields, [...allowed]),
           };
         }
       }

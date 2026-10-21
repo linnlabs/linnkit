@@ -223,5 +223,9 @@ Linnkit 负责 `parameters` / `validateArguments` 的通用接口和“owner adm
 不负责具体产品的字段身份、互斥分支、parser 或错误码。只有在多个独立 host 已形成稳定、parser-neutral
 合同后，参数 admission 适配器才适合成为公开 SDK；不要把单一产品的 schema builder 下沉到 framework。
 
+默认 `BaseTool` 浅校验拒绝未知顶层字段时，会列出 schema 的合法字段，并仅对很小且唯一的拼写偏差
+提示候选名；不会重命名、删除参数或执行工具，也不回显参数值。工具若覆盖 `validateArguments`，
+其深层/业务报错仍由 owner parser 负责；通用拼写提示不能推断不同业务字段之间的替代关系。
+
 最小测试分三层：直接调用 `run()` 验证工具业务；真实 `ToolNode + ToolRuntimeDefinition.validateArguments`
 验证错误参数不会产生 start 或进入 execute；host runtime harness 验证能力注入与产品装配。三者不能互相替代。

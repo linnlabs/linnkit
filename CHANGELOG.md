@@ -29,6 +29,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   local sources and fail on missing or empty targets. Include build entrypoints and
   test fixtures in product-name checks, replacing product-specific regression examples
   with neutral tool, run and fence scenarios. Runtime protocols under test are unchanged.
+- Unknown top-level arguments rejected by the default `BaseTool` validator now list
+  allowed parameter names and uniquely close spelling suggestions without changing
+  arguments, echoing values, or starting tool execution.
 
 ## [0.38.0] - 2026-10-14
 
