@@ -14,6 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Unknown top-level arguments rejected by the default `BaseTool` validator now list
+  allowed parameter names and uniquely close spelling suggestions without changing
+  arguments, echoing values, or starting tool execution.
+
 ## [0.38.0] - 2026-10-14
 
 ### Added
