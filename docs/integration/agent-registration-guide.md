@@ -135,7 +135,7 @@ const contextPolicy = defineContextPolicy({
 
 ### 4.1 模型容量、Agent cap 与 token 估算分别由谁负责？
 
-prepared model 的正式 route 提供 `context_window_tokens / max_output_tokens`。Agent 未声明容量 cap 时直接使用 route；显式声明 `maxTokens / reservedForResponse` 时只能进一步收窄。没有模型 route 的独立 Context Manager 接入使用 256K/16K framework fallback。
+prepared model 的正式 route 提供 `context_window_tokens / max_output_tokens`。Agent 未声明容量 cap 时使用 route 能力；最大输出不是必须预留的空间，本次实际输出还受完整 Prompt 后的剩余窗口限制。显式 `maxTokens` 收窄窗口，显式 `reservedForResponse` 限制输出并预留同等响应空间。没有模型 route 的独立 Context Manager 接入仍使用 256K/16K framework fallback。容量先解析再装配 Context Manager，避免未声明的响应默认值误伤较小窗口。
 
 linnkit 内置默认 tokenizer（`tiktoken` + 字节比兜底），用于在已经解析好的 token 预算内估算消息占用。三种调整方式：
 

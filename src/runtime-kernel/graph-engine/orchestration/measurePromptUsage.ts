@@ -68,6 +68,16 @@ export function createPromptUsageMeasurer(
     const usedTokens = remoteResult?.inputTokens ?? calibratedLocalTotal;
     const components = normalizePromptUsageComponents(usedTokens, weights);
 
+    // 能力上限不等于本次请求上限：最终计量已包含 reminder、tools 与图片，
+    // 只能在余下窗口中生成。超输入预算的候选保留原上限供 typed admission 报错，
+    // 不伪造一个可发送的零/负输出快照，也不在这里裁剪或发起 Provider 调用。
+    const outputLimitTokens = usedTokens <= input.promptBudget.inputBudgetTokens
+      ? Math.min(
+          input.promptBudget.outputLimitTokens,
+          input.promptBudget.effectiveWindowTokens - usedTokens,
+        )
+      : input.promptBudget.outputLimitTokens;
+
     return ContextUsageSnapshot.parse({
       basis: 'last_completed_llm_prompt',
       budget_model_id: input.budgetModelId,
@@ -79,7 +89,7 @@ export function createPromptUsageMeasurer(
       component_attribution: 'normalized_local_estimate',
       input_budget_tokens: input.promptBudget.inputBudgetTokens,
       remaining_tokens: input.promptBudget.inputBudgetTokens - usedTokens,
-      output_limit_tokens: input.promptBudget.outputLimitTokens,
+      output_limit_tokens: outputLimitTokens,
       source: remoteResult?.source ?? 'local-estimate',
       confidence: remoteResult?.confidence ?? 'estimate',
       measured_at: now(),

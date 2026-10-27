@@ -19,7 +19,10 @@ export interface LlmCallInvocationContext {
    * 该调用上下文不会进入 provider options，请求适配器不得接触此字段。
    */
   readonly toolCallStreamingPolicies?: Readonly<Record<string, ToolCallStreamingPolicy>>;
-  /** 每个真实 provider attempt 发送前，按 active route 测量最终 Prompt。 */
+  /**
+   * 每个真实 Provider attempt 发送前按 active route 测量、接纳最终 Prompt。
+   * 返回快照的 output_limit_tokens 是该次实际请求上限，caller 必须使用它。
+   */
   readonly measurePromptUsage?: (
     activeModelId: string,
     messages: readonly LlmRequestMessage[],

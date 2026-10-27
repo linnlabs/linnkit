@@ -120,9 +120,24 @@ export async function callWithRetryFallback(params: CallWithRetriesParams): Prom
         eventHandler,
         requirement,
       });
-      const attemptContextUsage = invocationContext?.measurePromptUsage
+      const measuredContextUsage = invocationContext?.measurePromptUsage
         ? await invocationContext.measurePromptUsage(activeModelId, messages)
         : undefined;
+      // caller 的显式上限仍有效；注入的计量结果只能进一步收窄，不能放大请求。
+      const attemptContextUsage = measuredContextUsage
+        ? {
+            ...measuredContextUsage,
+            output_limit_tokens: Math.min(
+              measuredContextUsage.output_limit_tokens,
+              options.max_tokens ?? measuredContextUsage.output_limit_tokens,
+            ),
+          }
+        : undefined;
+      // 每次 attempt 使用本次计量后的输出上限；不能把构建期模型能力直接发给
+      // Provider。保持 options 不可变，避免一次重试的预算污染后续 attempt。
+      const attemptOptions = attemptContextUsage
+        ? { ...options, max_tokens: attemptContextUsage.output_limit_tokens }
+        : options;
 
       const isRetry = attempt > 0;
       let pendingErrorEvent: AgentErrorEvent | null = null;
@@ -145,7 +160,7 @@ export async function callWithRetryFallback(params: CallWithRetriesParams): Prom
               inferencePort: deps.inferencePort,
               modelId: activeModelId,
               messages: resolvedMessages,
-              options,
+              options: attemptOptions,
               eventHandler: attemptTracker.handle,
               onErrorClassification(classification) {
                 streamedErrorClassification = classification;
@@ -158,7 +173,7 @@ export async function callWithRetryFallback(params: CallWithRetriesParams): Prom
               deps.inferencePort,
               activeModelId,
               resolvedMessages,
-              options,
+              attemptOptions,
               signal,
               traceId
             );

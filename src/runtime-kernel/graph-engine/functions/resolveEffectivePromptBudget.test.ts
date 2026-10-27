@@ -2,6 +2,20 @@ import { describe, expect, it } from 'vitest';
 import { resolveEffectivePromptBudget } from './resolveEffectivePromptBudget';
 
 describe('resolveEffectivePromptBudget', () => {
+  it('模型最大输出等于窗口时，能力上限不会耗尽构建期输入预算', () => {
+    expect(resolveEffectivePromptBudget({
+      modelContextWindowTokens: 1_048_576,
+      modelMaxOutputTokens: 1_048_576,
+      toolDefinitionTokens: 2_000,
+    })).toEqual({
+      effectiveWindowTokens: 1_048_576,
+      outputLimitTokens: 1_048_576,
+      inputBudgetTokens: 1_048_575,
+      toolDefinitionTokens: 2_000,
+      messageBudgetTokens: 1_046_575,
+    });
+  });
+
   it('默认 Agent 直接使用模型 route，并在 messages 前预留工具定义', () => {
     expect(resolveEffectivePromptBudget({
       modelContextWindowTokens: 32_000,
@@ -10,9 +24,9 @@ describe('resolveEffectivePromptBudget', () => {
     })).toEqual({
       effectiveWindowTokens: 32_000,
       outputLimitTokens: 4_000,
-      inputBudgetTokens: 28_000,
+      inputBudgetTokens: 31_999,
       toolDefinitionTokens: 2_000,
-      messageBudgetTokens: 26_000,
+      messageBudgetTokens: 29_999,
     });
   });
 
@@ -26,8 +40,8 @@ describe('resolveEffectivePromptBudget', () => {
     })).toMatchObject({
       effectiveWindowTokens: 1_000_000,
       outputLimitTokens: 32_768,
-      inputBudgetTokens: 967_232,
-      messageBudgetTokens: 967_232,
+      inputBudgetTokens: 999_999,
+      messageBudgetTokens: 999_999,
     });
   });
 

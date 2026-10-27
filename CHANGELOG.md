@@ -12,6 +12,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+### Changed
+
+- Separate model output capacity from response reservation. With a prepared route
+  and no explicit response reservation, build against the effective window while
+  leaving at least one generation token; after measuring the complete Prompt,
+  bound each request by the remaining window and the model/policy output limit.
+  This intentionally changes the default input budget and compaction watermarks;
+  explicit `reservedForResponse` and standalone fallback reservations are preserved.
+
+### Fixed
+
+- Accept routes whose maximum output equals their context window. Resolve the
+  effective budget before constructing Context Manager configuration, so inherited
+  response defaults cannot reject a smaller explicit window. Apply the same budget
+  rules to internal compaction, retries, and fallback route admission; successful
+  usage snapshots report the actual requested output limit.
+
 ## [0.38.1] - 2026-10-21
 
 ### Fixed

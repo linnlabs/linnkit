@@ -14,6 +14,7 @@ import { evaluateFallbackPromptCapacity } from '../../../llm/functions/evaluateF
 import { estimatePromptUsageComponentWeights } from '../../functions/promptUsageComponents';
 import { evaluatePrimaryPromptCapacity } from '../../functions/evaluatePrimaryPromptCapacity';
 import { PrimaryPromptCapacityError } from '../../definitions/primaryPromptCapacityError';
+import { resolveFallbackPromptBudget } from '../../functions/resolveFallbackPromptBudget';
 
 export interface ExecuteLlmStageDependencies {
   llmCaller: Pick<LlmCaller, 'callWithRetries'>;
@@ -106,7 +107,13 @@ export function createExecuteLlmStage(dependencies: ExecuteLlmStageDependencies)
                           servedModelId: activeModelId,
                           messages,
                           llmOptions: ctx.llmOptions,
-                          promptBudget,
+                          promptBudget: activeModelId === ctx.modelId
+                            ? promptBudget
+                            : resolveFallbackPromptBudget(
+                                promptBudget,
+                                ctx.promptUsageCandidate?.output_limit_tokens ?? promptBudget.outputLimitTokens,
+                                dependencies.modelCatalog.getModelById(activeModelId)?.inference_route,
+                              ),
                           measurementPolicy: promptUsageMeasurementPolicy,
                           imageInputTokens: ctx.imageInputAdmissionEvidence?.attachments.reduce(
                             (total, attachment) => total + attachment.estimatedTokens,
@@ -136,7 +143,7 @@ export function createExecuteLlmStage(dependencies: ExecuteLlmStageDependencies)
                     return evaluateFallbackPromptCapacity({
                       contextWindowTokens: route?.context_window_tokens,
                       maxOutputTokens: route?.max_output_tokens,
-                      requiredOutputLimitTokens: promptBudget.outputLimitTokens,
+                      requiredOutputLimitTokens: ctx.promptUsageCandidate?.output_limit_tokens ?? promptBudget.outputLimitTokens,
                       estimatedPromptTokens: weights.systemPromptTokens
                         + weights.conversationTokens
                         + weights.toolDefinitionTokens,
