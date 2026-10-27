@@ -12,7 +12,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [Unreleased]
+## [0.40.0] - 2026-10-27
+
+### Breaking
+
+- Remove the legacy `document_fragment`, `context_before` and `context_after`
+  message types from `AiMessage` and AgentSpec must-keep policies. Host context
+  must use `context_injection` with registered fences; token classification no
+  longer recognizes those legacy types. Hosts must explicitly migrate any stored
+  messages and policy configurations before upgrading. The framework does not
+  silently rename historical messages or infer a product fence kind.
+
+### Fixed
+
+- Restore the host-neutrality gate after the standalone repository split: scan
+  real local sources and fail on missing or empty targets. Include build entrypoints
+  and test fixtures in product-name checks, replacing product-specific regression
+  examples with neutral tool, run and fence scenarios.
+
+### Integration
+
+- Includes the dynamic output-budget fix from `0.39.0`. Hosts must use their fence
+  adapter for product context, while explicit response reservations keep their
+  existing meaning. This release includes the remaining changes previously held
+  outside the `0.38.x` releases.
+
+## [0.39.0] - 2026-10-27
 
 ### Changed
 
@@ -23,13 +48,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   This intentionally changes the default input budget and compaction watermarks;
   explicit `reservedForResponse` and standalone fallback reservations are preserved.
 
-- **Breaking; 0.39.0 or later (not in 0.38.0):** remove the legacy `document_fragment`,
-  `context_before` and `context_after` message types from `AiMessage` and AgentSpec
-  must-keep policies. Host context must use `context_injection` with registered fences;
-  token classification no longer recognizes those legacy types. Hosts must explicitly
-  migrate any stored messages and policy configurations before upgrading. The framework
-  does not silently rename historical messages or infer a product fence kind.
-
 ### Fixed
 
 - Accept routes whose maximum output equals their context window. Resolve the
@@ -38,10 +56,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rules to internal compaction, retries, and fallback route admission; successful
   usage snapshots report the actual requested output limit.
 
-- Restore the host-neutrality gate after the standalone repository split: scan real
-  local sources and fail on missing or empty targets. Include build entrypoints and
-  test fixtures in product-name checks, replacing product-specific regression examples
-  with neutral tool, run and fence scenarios. Runtime protocols under test are unchanged.
+### Integration
+
+- This release is based on `0.38.1` and includes only the output-budget fix.
+  Existing explicit response reservations and public message types are preserved.
+  Hosts should expect default input budgets and compaction thresholds to use the
+  effective window rather than subtract the model's entire output capacity.
 
 ## [0.38.1] - 2026-10-21
 
