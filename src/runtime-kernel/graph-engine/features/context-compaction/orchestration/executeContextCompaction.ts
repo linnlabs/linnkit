@@ -23,7 +23,7 @@ import {
   CONTEXT_COMPACTION_INSUFFICIENT_ERROR_CODE,
   generateRuntimeEventId,
 } from '../../../../../contracts';
-import type { EffectivePromptBudget } from '../../../functions/resolveEffectivePromptBudget';
+import { resolveEffectivePromptBudget, type EffectivePromptBudget } from '../../../functions/resolveEffectivePromptBudget';
 import type { TelemetryPort } from '../../../../telemetry/telemetryPort';
 import { normalizedUsageFromCanonical } from '../../../../../shared/llmTelemetryContext';
 import { buildContextCompactionRequest } from '../functions/buildContextCompactionRequest';
@@ -149,7 +149,7 @@ export async function executeContextCompaction(
     response = await dependencies.llmCaller.call(
       input.modelId,
       messages,
-      compactionOptions,
+      { ...compactionOptions, max_tokens: compactionPromptUsage.output_limit_tokens },
       input.signal,
       { imageInputAdmissionEvidence: input.imageInputAdmissionEvidence },
     );
@@ -221,7 +221,7 @@ export async function executeContextCompaction(
       conversationId: input.conversationId,
       turnId: input.turnId,
       timestamp: Date.now(),
-      maxOutputTokens,
+      maxOutputTokens: compactionPromptUsage.output_limit_tokens,
     });
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') throw error;
@@ -430,12 +430,11 @@ function buildCompactionPromptBudget(
   mainBudget: EffectivePromptBudget,
   maxOutputTokens: number,
 ): EffectivePromptBudget {
-  const inputBudgetTokens = mainBudget.effectiveWindowTokens - maxOutputTokens;
-  return {
-    effectiveWindowTokens: mainBudget.effectiveWindowTokens,
-    outputLimitTokens: maxOutputTokens,
-    inputBudgetTokens,
+  // 摘要上限同样是能力/策略封顶，不是必须一次占满的输出预留；
+  // 与主调用共用预算数学，最终按包含压缩 reminder 的完整 Prompt 计量。
+  return resolveEffectivePromptBudget({
+    modelContextWindowTokens: mainBudget.effectiveWindowTokens,
+    modelMaxOutputTokens: maxOutputTokens,
     toolDefinitionTokens: mainBudget.toolDefinitionTokens,
-    messageBudgetTokens: inputBudgetTokens - mainBudget.toolDefinitionTokens,
-  };
+  });
 }

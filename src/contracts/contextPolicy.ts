@@ -250,7 +250,8 @@ const DEFAULT_CONTEXT_POLICY: Required<AgentSpecContextPolicy> = {
  * - schema 保持 optional，避免现有 host 的 `{ profileId: 'agent' }` 类型大面积变红；
  * - 框架拥有的行为策略在这里补齐；
  * - `budget.maxTokens` 与 `budget.reservedForResponse` 是 Agent 显式容量上限，
- *   未声明时必须保持缺失，让 orchestration 使用模型 route 能力。
+ *   未声明时必须保持缺失；route 声明能力，最终输出按实际剩余窗口决定，
+ *   不能把 route 最大输出能力当作必须占满的响应预留。
  */
 export function defineContextPolicy(input: AgentSpecContextPolicyInput = {}): AgentSpecContextPolicy {
   const merged: Required<AgentSpecContextPolicy> = {

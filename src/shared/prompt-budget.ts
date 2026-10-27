@@ -13,6 +13,7 @@ export interface ResolveEffectivePromptBudgetInput {
 
 export interface EffectivePromptBudget {
   effectiveWindowTokens: number;
+  /** 构建期的输出能力/策略上限；最终请求还须按实际 Prompt 占用收窄。 */
   outputLimitTokens: number;
   inputBudgetTokens: number;
   toolDefinitionTokens: number;
@@ -22,8 +23,9 @@ export interface EffectivePromptBudget {
 /**
  * 统一解析一次 LLM 调用的有效 Prompt 预算。
  *
- * 模型 route 是容量基线，Agent policy 只有显式声明时才进一步收窄；
- * 没有模型 route 的独立 host 使用 framework fallback；prepared tools 必须先于 messages 占用输入预算。
+ * 模型输出能力不是必须预留的空间。只有显式响应 policy（或无 route 的独立 host
+ * fallback）才预留固定响应预算；其余情况为生成至少保留一个 token，最终计量后
+ * 再收窄实际输出上限。prepared tools 必须先于 messages 占用输入预算。
  * 该纯函数位于 framework shared 层，让 Context Manager 与 Graph inference 使用同一个数学 owner。
  */
 export function resolveEffectivePromptBudget(
@@ -61,7 +63,11 @@ export function resolveEffectivePromptBudget(
   const outputLimitTokens = input.policyReservedForResponse === undefined
     ? modelMaxOutputTokens
     : Math.min(input.policyReservedForResponse, modelMaxOutputTokens);
-  const inputBudgetTokens = effectiveWindowTokens - outputLimitTokens;
+  const responseReservationTokens = input.policyReservedForResponse !== undefined
+    || input.modelContextWindowTokens === undefined
+    ? outputLimitTokens
+    : 1;
+  const inputBudgetTokens = effectiveWindowTokens - responseReservationTokens;
   if (inputBudgetTokens < 1) {
     throw new Error(
       '有效模型窗口必须大于输出预留，才能形成正数 Prompt 输入预算。',

@@ -58,6 +58,7 @@ interface HarnessOptions {
   maxCompactionsPerRun?: number;
   mainOutputLimitTokens?: number;
   routeMaxOutputTokens?: number;
+  compactionReminderTokens?: number;
   omitCommitPort?: boolean;
 }
 
@@ -159,7 +160,7 @@ export function createContextCompactionGraphHarness(options: HarnessOptions = {}
                   scenario.replaceableRangeExhausted ?? true,
               },
               policy: contextCompactionPolicy,
-              reminder: tokenMarkedContent('COMPACTION CONTROL', 3),
+              reminder: tokenMarkedContent('COMPACTION CONTROL', options.compactionReminderTokens ?? 3),
             },
           }
         : {}),

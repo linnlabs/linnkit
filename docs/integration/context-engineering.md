@@ -43,9 +43,11 @@ framework 默认
 
 `agentSpecAdapter` 会把同一个 policy 拆给几类消费点：context builder 配置、preprocessor 选项、provider registry 选项、execution 选项，以及 system reminder。**这些是运行时分发点，不是新的配置真相源**。如果发现某个字段改了但某个消费点没响应，应该补 adapter 或装配链路；不要在消费点旁边再加一份局部预算常量。
 
-边界也要说清楚：prepared model 的正式 inference route 是容量基线；`contextPolicy.budget.maxTokens` 与 `reservedForResponse` 只是 Agent 可选的显式上限，不是模型能力，也不是 provider 返回的真实计费 token。两项 policy 均未声明时，运行时直接使用 route 的 `context_window_tokens / max_output_tokens`；显式声明时分别取 `min(route, policy)`。`defineContextPolicy()` 和三层 merge 必须保留“未声明”，不能把 framework fallback 物化成 Agent cap。
+prepared model 的正式 inference route 是容量基线，最大输出能力不是每次必须预留的空间。`contextPolicy.budget.maxTokens` 可显式收窄总窗口；`reservedForResponse` 可显式限制本次输出并预留同等响应空间，两者都受 route 能力封顶。未声明响应预留时，构建期只为生成至少保留一个 token；Graph 在普通 reminder、工具定义与图片都计入后，按模型输出能力和实际剩余窗口的较小值决定本次输出上限。`defineContextPolicy()` 和三层 merge 保留“未声明”，不会凭空添加固定输出 cap。
 
-Tool definitions 会先从有效输入预算扣除，剩余的 `messageBudgetTokens` 才交给 Context Manager；同一个 `outputLimitTokens` 会进入 Provider request。单独使用 Context Manager 而没有模型 route 时，framework 才使用 256K 总窗口和 16K 最大输出 fallback。生产 Graph host 仍必须装配 prepared model route，不能把 fallback 当成坏 catalog 的兼容路径。
+Tool definitions 会先从有效输入预算扣除，剩余的 `messageBudgetTokens` 才交给 Context Manager。预算先解析，再投影到 Context Manager 技术配置，避免小窗口与 constructor 的旧响应默认值组合而被误拒绝。单独使用 Context Manager 而没有模型 route 时，仍使用 256K 总窗口、16K 响应预留的 framework fallback；生产 Graph host 必须装配 prepared route。
+
+构建结果中的 `EffectivePromptBudget.outputLimitTokens` 是能力/策略上限，发送前快照的 `output_limit_tokens` 才是本次实际请求上限；LlmCaller 的每次 attempt 使用该次已接纳快照的输出值。fallback 仍保留已决定的请求输出量，同时受候选模型窗口与能力约束，并按候选 route 重新计量；不会把主模型更大的窗口借给备用模型。
 
 相关入口：
 
@@ -261,7 +263,7 @@ contextPolicy: {
 | 字段 | 默认 | 含义 | 开放状态 |
 |------|------|------|---------|
 | `budget.maxTokens` | 未声明（继承模型 route） | Agent 显式总窗口上限 | ✅ AgentSpec + runtime |
-| `budget.reservedForResponse` | 未声明（继承模型 route） | Agent 显式输出上限，并预留同等输入空间 | ✅ AgentSpec + runtime |
+| `budget.reservedForResponse` | 未声明（动态输出） | 显式声明时限制输出，并从窗口预留同等响应空间 | ✅ AgentSpec + runtime |
 | `budget.workingMemoryBudgetPercentage` | `0.70` | 工作记忆占可用预算的比例 | ✅ AgentSpec + runtime |
 | `workingMemory.minToolInteractionsToKeep` | `2` | compressed 历史工具摘要的预算兜底组数 | ✅ AgentSpec + runtime |
 | `workingMemory.maxRecentToolRuns` | `2` | 原始 tool_calls 形态保护的最近工具 turn 数 | ✅ AgentSpec + runtime |
@@ -310,7 +312,7 @@ System Reminder 与自动压缩的关系统一见 [§6](#system-reminder)。
 | `compaction.triggerRatio` | `0.80` | reminder 后最终 Prompt 达到该比例时软触发 |
 | `compaction.targetRatio` | `0.50` | 候选计划期望释放到的水位 |
 | `compaction.keepLatestToolGroups` | `2` | 不进入候选的最近完整工具组数量 |
-| `compaction.maxOutputTokens` | `8192` | 内部摘要请求策略上限；最终取 `min(该值, route.max_output_tokens)` |
+| `compaction.maxOutputTokens` | `8192` | 内部摘要策略上限；发送时再受 route 输出能力及完整压缩 Prompt 剩余窗口限制 |
 | `compaction.maxCompactionsPerRun` | `12` | 单个 run 真正到达 Provider 的压缩 attempt 上限；失败调用同样计入护栏 |
 
 压缩请求复用当前模型、有序工具定义和普通 Reminder 已注入的完整 Prompt，保持每条原消息不变，再追加一条瞬态 user-role 消息承载专用 `<system-reminder>`。Provider adapter 只负责把 canonical cache anchor 映射到对应 wire 协议，不改变压缩算法。
@@ -450,7 +452,7 @@ Host 仍必须让 `assistant_part_end.text` 与该 part 已发送的 `thought_de
 | 字段 | 默认 | 含义 | 开放状态 |
 |------|------|------|---------|
 | `budget.maxTokens` | 未声明（继承模型 route） | Agent 显式总窗口上限 | ✅ AgentSpec |
-| `budget.reservedForResponse` | 未声明（继承模型 route） | Agent 显式响应上限 | ✅ AgentSpec |
+| `budget.reservedForResponse` | 未声明（动态输出） | 显式响应上限与预留 | ✅ AgentSpec |
 | `budget.workingMemoryBudgetPercentage` | `0.70` | 工作记忆占可用预算的比例 | ✅ AgentSpec |
 | `tokenEstimation.encoding` | `'cl100k_base'` | 估算用的 tiktoken encoding 名 | ✅ AgentSpec + runtime |
 | `tokenEstimation.avgCharsPerToken` | `2.0` | tiktoken 不可用或未配置 encoding 时的字符/token 兜底比 | ✅ AgentSpec + runtime |
@@ -462,7 +464,9 @@ Host 仍必须让 `assistant_part_end.text` 与该 part 已发送的 `thought_de
 
 #### 9.1.1 压缩后的最大预算一览
 
-先看唯一的总上限：`effectiveWindowTokens` 取模型 route 总窗口与 Agent 显式 `maxTokens` 的较小值；`outputLimitTokens` 取 route 输出上限与 Agent 显式 `reservedForResponse` 的较小值；`inputBudgetTokens = effectiveWindowTokens - outputLimitTokens`。全部 messages（含 reminder 与图片估算）加上 prepared tool definitions，必须不超过 `inputBudgetTokens`。
+`effectiveWindowTokens` 取 route 总窗口与 Agent 显式 `maxTokens` 的较小值。声明响应预留时，先按 route 输出能力封顶，再从窗口扣除；未声明时，`inputBudgetTokens` 为有效窗口减一，避免输入耗尽所有生成空间。完整 messages（含 reminder 与图片估算）加 prepared tool definitions，必须不超过该输入预算。通过计量与容量接纳后，本次请求输出不得超过构建期输出上限，也不得超过有效窗口减去实际完整输入量。
+
+例如 route 同时声明 1,048,576 总窗口与最大输出，未声明 Agent 响应预留，最终完整输入为 20,000 tokens，则输入构建预算为 1,048,575，本次输出上限为 1,028,576。模型能力不会改写为固定 16K，输入也不会因两项能力相等而变成零。自动压缩仍按输入预算的既有软水位触发；需要保证回答长度时，应显式声明响应预留。
 
 `targetRatio = 0.50` 是压缩的**目标水位**，不是压缩后的硬上限。受保护内容过多时，压缩结果可以高于 50%，但只有不超过 `inputBudgetTokens` 才能提交并调用主模型；严格超限会得到 `CONTEXT_COMPACTION_REBUILD_OVER_BUDGET`，摘要不提交，主模型不调用。
 
@@ -471,7 +475,7 @@ Host 仍必须让 `assistant_part_end.text` 与该 part 已发送的 `thought_de
 | **整份最终输入** | `inputBudgetTokens`（输入硬预算的 100%） | 唯一总硬上限；等于上限可接纳，超过即在 Provider 前拒绝 | [Token 管理](./token-management.md) |
 | Prepared tool definitions | 无独立上限 | 先占用 `inputBudgetTokens`，剩余部分才是 `messageBudgetTokens` | [工具开发](./tool-development-guide.md) |
 | `system_prompt` | 无独立上限；默认必保留 | 与其他内容共同受最终总门禁约束 | [Agent 注册](./agent-registration-guide.md) |
-| `history_summary` | `min(8192 tokens, route.max_output_tokens)` | 这是摘要正文上限；只保留最新摘要，重建后的整份输入仍须通过总门禁 | [自动压缩 §5.3](#automatic-context-compaction) |
+| `history_summary` | 默认策略 8192，再受 route 输出及压缩请求剩余窗口封顶 | 只保留最新摘要，重建后的整份输入仍须通过总门禁；完整压缩请求也使用同一预算数学 | [自动压缩 §5.3](#automatic-context-compaction) |
 | `user_input` | Linnkit 无独立 token 上限；最新一条默认必保留 | Host 可以另设字符、字节或附件入口限制；这些限制不属于 Linnkit 固定合同 | [Context Fence](./context-fences.md) |
 | `context_injection` / `task_request` | 当前没有 per-fence 硬上限 | `FenceDescriptor.maxBudgetFraction` 目前只校验声明，尚未形成运行时裁决；当前只受最终总门禁约束 | [Context Fence](./context-fences.md) |
 | `thought` / canonical reasoning | `thought` 不进入模型输入；reasoning 与其他 Assistant 输出共享 `outputLimitTokens` | 全量 reasoning 通过所属 `assistant_replay_parts` 回放并计入消息 token，直到正式压缩替换 | [Reasoning 所有权 §8](#reasoning-retention) |
@@ -504,7 +508,7 @@ Host 仍必须让 `assistant_part_end.text` 与该 part 已发送的 `thought_de
 |------|---------|------------|
 | host 用 GPT-3.5/4 + 默认 `cl100k_base` | 几乎精确（OpenAI tiktoken 就是这个）| ❌ 不需要 |
 | host 用 GPT-4o + `encoding: 'o200k_base'` | 几乎精确 | ❌ 不需要 |
-| host 对非 tiktoken 模型显式使用 `cl100k_base` 近似 | ±10-30% 偏差 | ⚠️ 大多数场景**够用**（budget 有 `reservedForResponse` 安全垫）；如果你严格按真实计费做预算 → 需要担心 |
+| host 对非 tiktoken 模型显式使用 `cl100k_base` 近似 | ±10-30% 偏差 | 近似估算不能保证与 Provider 一致；响应预留也不能代替准确计量 |
 | host 主要场景是中文 / CJK，且未声明 encoding | 字符/token 粗估 | ⚠️ 按语料调 `avgCharsPerToken`，或注入真实 tokenizer |
 | host 自动化复杂任务（步骤多、工具链长，单次 run 几十万 token）| 默认估算累积偏差可能放大 | ⚠️ 考虑注入 `TokenizerPort`（已可用） |
 | host 严格按计费 token 数 = 预算 token 数（无安全垫）| 默认估算不够 | ❌ **必须**注入 `TokenizerPort`（已可用） |

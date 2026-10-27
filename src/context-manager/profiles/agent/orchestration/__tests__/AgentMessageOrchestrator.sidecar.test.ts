@@ -509,9 +509,9 @@ describe('AgentMessageOrchestrator contextPolicy provider registry', () => {
     expect(result.promptBudget).toEqual({
       effectiveWindowTokens: 256_000,
       outputLimitTokens: 16_384,
-      inputBudgetTokens: 239_616,
+      inputBudgetTokens: 255_999,
       toolDefinitionTokens: 384,
-      messageBudgetTokens: 239_232,
+      messageBudgetTokens: 255_615,
     });
     expect(result.contextBuildResult.contextTrace).toBeUndefined();
   });

@@ -16,6 +16,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Separate model output capacity from response reservation. With a prepared route
+  and no explicit response reservation, build against the effective window while
+  leaving at least one generation token; after measuring the complete Prompt,
+  bound each request by the remaining window and the model/policy output limit.
+  This intentionally changes the default input budget and compaction watermarks;
+  explicit `reservedForResponse` and standalone fallback reservations are preserved.
+
 - **Breaking; 0.39.0 or later (not in 0.38.0):** remove the legacy `document_fragment`,
   `context_before` and `context_after` message types from `AiMessage` and AgentSpec
   must-keep policies. Host context must use `context_injection` with registered fences;
@@ -24,6 +31,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   does not silently rename historical messages or infer a product fence kind.
 
 ### Fixed
+
+- Accept routes whose maximum output equals their context window. Resolve the
+  effective budget before constructing Context Manager configuration, so inherited
+  response defaults cannot reject a smaller explicit window. Apply the same budget
+  rules to internal compaction, retries, and fallback route admission; successful
+  usage snapshots report the actual requested output limit.
 
 - Restore the host-neutrality gate after the standalone repository split: scan real
   local sources and fail on missing or empty targets. Include build entrypoints and

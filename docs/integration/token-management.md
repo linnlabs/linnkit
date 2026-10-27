@@ -45,6 +45,7 @@ Context Manager messages 已确定
 Graph apply_system_reminder → measure_prompt_usage → admit_prompt_capacity
   ├─ 同一个 TokenizerPort 估算 System / Conversation / Tool definitions 权重
   ├─ remote count 同时接收最终 messages 与 prepared tools
+  ├─ 最终输入量确定后，按实际剩余窗口收窄本次输出上限
   ├─ 每个 fallback attempt 按 active route 重测、重新接纳
   └─ 超输入预算时在 Provider 前拒绝；只有成功 attempt 提交 ContextUsageSnapshot
      ▼
@@ -62,6 +63,10 @@ LLM 调用完成
 
 但 Graph 会用这份最终测量做当前 attempt 的容量门禁：`used_tokens <= input_budget_tokens` 才能调 Provider；严格超出时抛 `llm.prompt.input_budget_exceeded`。这不是第二轮裁剪，而是副作用前的 fail-closed admission。被拒绝的候选可进入 typed error metadata 用于诊断，但不得冒充成功 `ContextUsageSnapshot`。
 
+模型最大输出能力与固定响应预留分开计算。声明 `budget.reservedForResponse` 时，从有效窗口预留按模型能力封顶的响应空间；未声明且有 route 时，仅保证至少留出一个生成 token，最终请求按完整输入后的剩余窗口决定输出上限。快照的 `output_limit_tokens` 与该次 Provider attempt 使用的上限一致，失败重试不会把上一次的临时计算写回调用配置。内部摘要请求也遵守同一规则，重建后重新计量主 Prompt。
+
+fallback 仍保留主调用已决定的输出量，不重建另一套 Prompt；候选模型的窗口与输出能力须先接纳该请求。按候选 route 重测后超出其可用输入空间时，仍在该 Provider 请求前拒绝；主模型窗口不能充当备用模型容量。
+
 `context_usage_snapshot` 的发布频率是“每次成功 LLM Prompt 一条”，不是“每个工具一条”。一个 Prompt 可以决定批量工具调用；
 工具执行不改变已经提交的 Prompt，只有工具结果进入 history 后发生的下一次成功 LLM 调用才会产生新快照。临时事件不落
 EventStore，Host 需要历史恢复时应持久化 execution 最终 `run_execution_metrics.context_usage`。完整生命周期见
@@ -76,7 +81,7 @@ EventStore，Host 需要历史恢复时应持久化 execution 最终 `run_execut
 | `used` | 如果 remote count 成功 applied，就是 remote count 的输入 token；否则是本地校准估算 |
 | `remaining` | `totalBudget - used` |
 | `messageBudget` | 本轮 Context Manager 实际用于 messages 裁剪的预算 |
-| `inputBudget` | 模型有效窗口扣除输出上限后的完整 Prompt 输入预算 |
+| `inputBudget` | 有效窗口扣除显式响应预留后的完整 Prompt 输入预算；有 route 且未声明预留时，只保留一个生成 token |
 | `toolDefinitionTokens` | 在 messages 之前预留的 prepared Tool definitions 本地估算 |
 | `source` | `local-estimate` / `provider-preflight-count` / `host-supplied` / `test-fixture` 等 |
 | `confidence` | `estimate` / `provider-estimate` / `actual` |

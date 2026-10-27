@@ -46,6 +46,7 @@ import { Logger } from '../../../../shared/logger';
 import {
   resolveEffectivePromptBudget,
   type EffectivePromptBudget,
+  type ResolveEffectivePromptBudgetInput,
 } from '../../../../shared/prompt-budget';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -138,6 +139,7 @@ export type AgentContextCompactionApplyResult =
 interface RequestContextAssembly {
   contextBuilderConfig: Partial<AgentContextBuilderConfig>;
   contextManager: AgentContextManager;
+  promptBudget: EffectivePromptBudget;
 }
 
 type AgentContextManagerOptions = NonNullable<ConstructorParameters<typeof AgentContextManager>[0]>;
@@ -221,10 +223,25 @@ export class AgentMessageOrchestrator {
   private assembleRequestContext(
     request: AgentProfileRequest,
     contextPolicy: AgentSpecContextPolicy | undefined,
+    limits?: Pick<ResolveEffectivePromptBudgetInput,
+      'modelContextWindowTokens' | 'modelMaxOutputTokens' | 'toolDefinitionTokens'>,
   ): RequestContextAssembly {
+    // 先用 sparse policy 与 prepared route 解析唯一预算，再投影技术配置。
+    // 否则小窗口 policy 会先与 constructor 的旧响应默认值组合，尚未构建就被误拒绝。
+    const promptBudget = resolveEffectivePromptBudget({
+      policyMaxTokens: contextPolicy?.budget?.maxTokens,
+      policyReservedForResponse: contextPolicy?.budget?.reservedForResponse,
+      modelContextWindowTokens: limits?.modelContextWindowTokens,
+      modelMaxOutputTokens: limits?.modelMaxOutputTokens,
+      fallbackContextWindowTokens: this.options.tokenBudget.maxTokens,
+      fallbackMaxOutputTokens: this.options.tokenBudget.reservedForResponse,
+      toolDefinitionTokens: limits?.toolDefinitionTokens ?? 0,
+    });
     const contextBuilderConfig = {
       ...this.baseContextConfig,
       ...(contextPolicy ? contextPolicyToContextBuilderConfig(contextPolicy) : {}),
+      DEFAULT_MAX_TOKENS: promptBudget.effectiveWindowTokens,
+      RESERVED_FOR_RESPONSE: promptBudget.effectiveWindowTokens - promptBudget.inputBudgetTokens,
     };
     const providerRegistry = this.options.createProviderRegistry?.({
       request,
@@ -263,6 +280,7 @@ export class AgentMessageOrchestrator {
     return {
       contextBuilderConfig,
       contextManager,
+      promptBudget,
     };
   }
 
@@ -299,18 +317,9 @@ export class AgentMessageOrchestrator {
       this.debug('Built complete message list', { totalCount: allMessages.length });
 
       const contextPolicy = this.resolveContextPolicy(request);
-      const { contextBuilderConfig, contextManager } = this.assembleRequestContext(request, contextPolicy);
-      const promptBudget = resolveEffectivePromptBudget({
-        // 容量 policy 必须直接读取 sparse 声明，不能从已叠加 framework fallback 的
-        // Context Builder config 反推，否则“未声明”会再次变成隐藏 cap。
-        policyMaxTokens: contextPolicy?.budget?.maxTokens,
-        policyReservedForResponse: contextPolicy?.budget?.reservedForResponse,
-        modelContextWindowTokens: extraOptions?.promptBudgetLimits.modelContextWindowTokens,
-        modelMaxOutputTokens: extraOptions?.promptBudgetLimits.modelMaxOutputTokens,
-        fallbackContextWindowTokens: this.options.tokenBudget.maxTokens,
-        fallbackMaxOutputTokens: this.options.tokenBudget.reservedForResponse,
-        toolDefinitionTokens: extraOptions?.promptBudgetLimits.toolDefinitionTokens ?? 0,
-      });
+      const { contextBuilderConfig, contextManager, promptBudget } = this.assembleRequestContext(
+        request, contextPolicy, extraOptions?.promptBudgetLimits,
+      );
 
       const preprocessorPipeline = this.buildPreprocessorPipelineForRequest(toolManager, request, contextPolicy);
       const modelId = this.resolvePreprocessorModel(request);
@@ -408,7 +417,7 @@ export class AgentMessageOrchestrator {
     },
   ): Promise<AgentContextCompactionApplyResult> {
     const contextPolicy = this.resolveContextPolicy(request);
-    const { contextManager } = this.assembleRequestContext(request, contextPolicy);
+    const { contextManager } = this.assembleRequestContext(request, contextPolicy, input.promptBudgetLimits);
     const draft = contextManager.prepareContextCompactionDraft(input);
     if (draft.kind !== 'ready') return draft;
 

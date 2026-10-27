@@ -441,7 +441,7 @@ describe('GraphAgentExecutor context compaction', () => {
 
   it('压缩请求自身超预算时不发送请求并结算 typed failure', async () => {
     const harness = createHarness({
-      builds: [{ promptTokens: 101 }],
+      builds: [{ promptTokens: 117 }],
     });
 
     await expect(tickInput(harness)).rejects.toMatchObject({
@@ -461,6 +461,7 @@ describe('GraphAgentExecutor context compaction', () => {
     const harness = createHarness({
       builds: [{ promptTokens: 101 }],
       mainOutputLimitTokens: 5,
+      compactionReminderTokens: 20,
     });
 
     const result = await tickInput(harness);
