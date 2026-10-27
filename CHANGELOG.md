@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [Unreleased]
+## [0.39.0] - 2026-10-27
 
 ### Changed
 
@@ -30,6 +30,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   response defaults cannot reject a smaller explicit window. Apply the same budget
   rules to internal compaction, retries, and fallback route admission; successful
   usage snapshots report the actual requested output limit.
+
+### Integration
+
+- This release is based on `0.38.1` and includes only the output-budget fix.
+  Existing explicit response reservations and public message types are preserved.
+  Hosts should expect default input budgets and compaction thresholds to use the
+  effective window rather than subtract the model's entire output capacity.
 
 ## [0.38.1] - 2026-10-21
 
