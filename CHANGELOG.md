@@ -25,6 +25,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Move contract validation to the patched Zod 4 line to address
   GHSA-mrhx-c7xc-m3w5. Zod 3 has no patched release.
+- Update the locked test/build dependencies and pin esbuild 0.28.1 while
+  tsup still requests the vulnerable 0.27 line. This override only affects
+  development tooling; it does not add a runtime dependency for consumers.
 
 ### Changed
 

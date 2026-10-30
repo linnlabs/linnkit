@@ -108,6 +108,9 @@
     "typescript": "^5.5.4",
     "vitest": "^4.1.11"
   },
+  "overrides": {
+    "esbuild": "0.28.1"
+  },
   "linnkit": {
     "phase": "development (0.41.0 — Zod 4 validation contracts)",
     "sourceOfTruth": "CHANGELOG.md",
