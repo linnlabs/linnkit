@@ -8,18 +8,18 @@ export type SerializableJsonValue =
   | SerializableJsonValue[]
   | { [key: string]: SerializableJsonValue };
 
-export const SerializableJsonValue: z.ZodType<SerializableJsonValue> = z.lazy(() =>
+export const SerializableJsonValue: z.ZodType<SerializableJsonValue, SerializableJsonValue> = z.lazy(() =>
   z.union([
     z.string(),
     z.number().finite(),
     z.boolean(),
     z.null(),
     z.array(SerializableJsonValue),
-    z.record(SerializableJsonValue),
+    z.record(z.string(), SerializableJsonValue),
   ]),
 );
 
-export const SerializableJsonRecord = z.record(SerializableJsonValue);
+export const SerializableJsonRecord = z.record(z.string(), SerializableJsonValue);
 export type SerializableJsonRecord = z.infer<typeof SerializableJsonRecord>;
 
 export function toSerializableJsonValue(value: unknown): SerializableJsonValue | undefined {

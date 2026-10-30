@@ -5,6 +5,7 @@ import {
   type SubRunTraceToolCallDecision,
 } from '../../contracts';
 import type { SubRunTraceEnvelope } from './subrunTrace.types';
+import { parseSchemaAtPath } from '../../shared/validation/parseSchemaAtPath';
 
 /**
  * parent trace 是 child fact 的展示投影。该函数只做语义选择与字段映射，
@@ -146,7 +147,7 @@ function readDecisionBatch(
     throw new Error(`[SubrunTrace] tool_call_decision ${event.id} 缺少 canonical tool_calls`);
   }
   return rawCalls.map((rawCall, index) => {
-    const call = ToolCallWire.parse(rawCall, { path: ['payload', 'tool_calls', index] });
+    const call = parseSchemaAtPath(ToolCallWire, rawCall, ['payload', 'tool_calls', index]);
     let decodedArgs: unknown;
     try {
       decodedArgs = JSON.parse(call.function.arguments);
@@ -156,9 +157,9 @@ function readDecisionBatch(
     return {
       tool_call_id: call.id,
       tool_name: call.function.name,
-      args: SerializableJsonRecord.parse(decodedArgs, {
-        path: ['payload', 'tool_calls', index, 'function', 'arguments'],
-      }),
+      args: parseSchemaAtPath(SerializableJsonRecord, decodedArgs, [
+        'payload', 'tool_calls', index, 'function', 'arguments',
+      ]),
     };
   });
 }

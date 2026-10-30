@@ -12,6 +12,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.41.0] - 2026-10-30
+
+### Breaking
+
+- Require Zod `^4.6.6` for all public schemas and validation results. Hosts must
+  migrate their own schemas to Zod 4 before upgrading; Zod 3 schemas are no
+  longer compatible with the framework's public contracts. Validation failures
+  use Zod 4 issue codes and messages.
+
+### Security
+
+- Move contract validation to the patched Zod 4 line to address
+  GHSA-mrhx-c7xc-m3w5. Zod 3 has no patched release.
+
+### Changed
+
+- Preserve recursive JSON input/output types, string-keyed metadata records,
+  and caller field paths in tool-call and child-run validation. Runtime event
+  and message payload shapes remain unchanged.
+
 ## [0.40.0] - 2026-10-27
 
 ### Breaking

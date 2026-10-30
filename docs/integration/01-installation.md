@@ -45,7 +45,7 @@ CLI v0 只包含三个命令：
 
 | peer | 说明 |
 |---|---|
-| `zod` (`^3.22.0`) | 必需。`@linnlabs/linnkit/contracts` 用 zod 定义所有消息/事件 schema，运行时也会校验 |
+| `zod` (`^4.6.6`) | 必需。`@linnlabs/linnkit/contracts` 用 Zod 4 定义消息/事件 schema，运行时也会校验；0.41 起不再接收 Zod 3 schema |
 | `vitest` (`^2 \|\| ^3 \|\| ^4`) | 可选。**只有当你打算 import `@linnlabs/linnkit/testkit` 写测试时才需要装** |
 
 `@linnlabs/linnkit/testkit` 在源码顶层 `import { vi, expect } from 'vitest'`，所以生产代码 **绝对不能** import 这个子入口（详见 [constraints-and-pitfalls.md](./constraints-and-pitfalls.md)）。

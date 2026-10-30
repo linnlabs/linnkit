@@ -45,7 +45,7 @@ export type ToolCallsMeta = z.infer<typeof ToolCallsMeta>;
 
 export const ToolOutputMeta = z.object({
   tool_name: z.string(),
-  args: z.record(z.unknown()).optional(),
+  args: z.record(z.string(), z.unknown()).optional(),
   tool_call_id: ToolCallIdSchema,
 });
 
@@ -91,7 +91,7 @@ export const PersistentMetadata = z
     provider_continuations: ProviderContinuations.optional(),
     assistant_replay_parts: AssistantReplayParts.optional(),
     tool_name: z.string().optional(),
-    args: z.record(z.unknown()).optional(),
+    args: z.record(z.string(), z.unknown()).optional(),
     tool_call_id: ToolCallIdSchema.optional(),
     observationTruncation: ObservationTruncationMeta.optional(),
     data: SerializableJsonValue.optional(),
@@ -110,7 +110,7 @@ export const PersistentMetadata = z
       })
       .optional(),
     fenceKind: z.string().optional(),
-    fenceAttrs: z.record(z.unknown()).optional(),
+    fenceAttrs: z.record(z.string(), z.unknown()).optional(),
     fencePlacement: z.string().optional(),
   })
   .passthrough();
@@ -330,13 +330,13 @@ export function createHistorySummaryMessage(
   };
 }
 
-export function validateAiMessage(data: unknown): z.SafeParseReturnType<unknown, AiMessage> {
+export function validateAiMessage(data: unknown): z.ZodSafeParseResult<AiMessage> {
   return AiMessage.safeParse(data);
 }
 
 export function validateHistorySummaryMeta(
   data: unknown
-): z.SafeParseReturnType<unknown, HistorySummaryMeta> {
+): z.ZodSafeParseResult<HistorySummaryMeta> {
   return HistorySummaryMeta.safeParse(data);
 }
 

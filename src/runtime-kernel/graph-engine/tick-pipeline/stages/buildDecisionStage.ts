@@ -6,6 +6,7 @@ import {
 import type { FinalAnswerEvent, ToolCallDecisionEvent } from '../../../events/agentEvents';
 import { defineTickStage } from '../types';
 import type { TickStage } from '../types';
+import { parseSchemaAtPath } from '../../../../shared/validation/parseSchemaAtPath';
 import {
   extractResponseText,
   normalizeToolCalls,
@@ -33,9 +34,7 @@ export function createBuildDecisionStage(): TickStage {
       if (toolCalls?.length) {
         const normalizedToolCalls = normalizeToolCalls(toolCalls).map((toolCall, index) => ({
           ...toolCall,
-          id: ToolCallIdSchema.parse(toolCall.id, {
-            path: [`tool_calls[${index}].id`],
-          }),
+          id: parseSchemaAtPath(ToolCallIdSchema, toolCall.id, [`tool_calls[${index}].id`]),
         }));
         const firstToolCall = normalizedToolCalls[0];
         if (!firstToolCall) {
