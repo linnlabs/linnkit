@@ -31,7 +31,6 @@ export function createExecuteLlmStage(dependencies: ExecuteLlmStageDependencies)
       'outputProcessor',
       'modelId',
       'llmMessages',
-      'toolModelInputRequirement',
       'toolCallStreamingPolicies',
       'imageInputAdmissionEvidence',
       'llmOptions',
@@ -95,7 +94,6 @@ export function createExecuteLlmStage(dependencies: ExecuteLlmStageDependencies)
           },
           {
             imageInputAdmissionEvidence: ctx.imageInputAdmissionEvidence,
-            additionalModelInputRequirement: ctx.toolModelInputRequirement,
             toolCallStreamingPolicies: ctx.toolCallStreamingPolicies,
             ...(promptBudget && promptUsageMeasurementPolicy
               ? {

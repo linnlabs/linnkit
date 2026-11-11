@@ -1,7 +1,5 @@
 import type { ToolIdempotencyPolicy } from './idempotency/toolIdempotency';
 import type { ToolExecutionContext } from './toolExecutionContext';
-import type { ModelInputRequirement } from '../llm/input-capabilities';
-import type { ToolModelInputDelivery } from './model-input';
 import { formatUnknownToolArguments } from './schema/functions/formatUnknownToolArguments';
 import type {
   JsonSchemaValue,
@@ -47,10 +45,6 @@ export abstract class BaseTool<TArgs extends ToolArgs = ToolArgs, TResult extend
   abstract readonly parameters: ToolParameterSchema;
 
   readonly idempotency?: ToolIdempotencyPolicy;
-  readonly modelInputRequirement?: ModelInputRequirement;
-  /** 模型输入是工具成功的必要结果，还是仅在当前模型支持时提供的增强反馈。 */
-  readonly modelInputDelivery?: ToolModelInputDelivery;
-  readonly resolveModelInputRequirement?: (args: ToolArgs) => ModelInputRequirement | undefined;
   readonly streaming?: ToolCallStreamingPolicy;
 
   getExecutionSummary?(output: string): string {

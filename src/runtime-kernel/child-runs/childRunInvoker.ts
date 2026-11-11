@@ -10,7 +10,6 @@ import { WaitUserNode } from '../graph-engine/nodes/waitUserNode';
 import type { AgentInvocationRequest } from '../../ports';
 import type {
   ObservationPreviewPort,
-  ToolModelInputCapabilityValidatorPort,
   ToolRuntimePort,
 } from '../tools/ports';
 import type { ToolModelInputResolverPort } from '../tools/model-input';
@@ -124,7 +123,6 @@ export class ChildRunInvoker {
   private readonly createLlmNode: () => GraphNode;
   private readonly toolRuntime: Pick<ToolRuntimePort, 'getToolDefinition' | 'executeTool'>;
   private readonly observationPreview: ObservationPreviewPort;
-  private readonly modelInputCapabilityValidator?: ToolModelInputCapabilityValidatorPort;
   private readonly modelInputResolver?: ToolModelInputResolverPort;
   private readonly eventToMessageConverter: (events: RuntimeEvent[]) => unknown[];
   private readonly defaultJudgeToolName?: string;
@@ -136,7 +134,6 @@ export class ChildRunInvoker {
     createLlmNode: () => GraphNode;
     toolRuntime: Pick<ToolRuntimePort, 'getToolDefinition' | 'executeTool'>;
     observationPreview: ObservationPreviewPort;
-    modelInputCapabilityValidator?: ToolModelInputCapabilityValidatorPort;
     modelInputResolver?: ToolModelInputResolverPort;
     eventToMessageConverter: (events: RuntimeEvent[]) => unknown[];
     defaultJudgeToolName?: string;
@@ -147,7 +144,6 @@ export class ChildRunInvoker {
     this.createLlmNode = dependencies.createLlmNode;
     this.toolRuntime = dependencies.toolRuntime;
     this.observationPreview = dependencies.observationPreview;
-    this.modelInputCapabilityValidator = dependencies.modelInputCapabilityValidator;
     this.modelInputResolver = dependencies.modelInputResolver;
     this.eventToMessageConverter = dependencies.eventToMessageConverter;
     this.defaultJudgeToolName = dependencies.defaultJudgeToolName;
@@ -455,7 +451,6 @@ export class ChildRunInvoker {
     graph.registerNode(new ToolNode({
       toolRuntime: this.toolRuntime, observationPreview: this.observationPreview,
       telemetryPort: this.telemetryPort, auditPort: this.auditPort,
-      modelInputCapabilityValidator: this.modelInputCapabilityValidator,
       modelInputResolver: this.modelInputResolver,
     }));
     graph.registerNode(new WaitUserNode({ auditPort: this.auditPort }));

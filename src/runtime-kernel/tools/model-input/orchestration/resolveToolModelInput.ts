@@ -1,26 +1,21 @@
 import { RuntimeResourceRefs, type RuntimeResourceRef } from '../../../../contracts';
-import type { ModelInputRequirement } from '../../../llm/input-capabilities';
 import type { ToolExecutionContext } from '../../toolExecutionContext';
-import type { ToolModelInputCapabilityValidatorPort } from '../../ports';
 import {
   ToolModelInputResolutionError,
   type ToolModelInputAttachmentSelection,
   type ToolModelInputResolverPort,
 } from '../definitions/toolModelInput';
 
-const TOOL_RESULT_IMAGE_REQUIREMENT: ModelInputRequirement = {
-  requires_image_input: true,
-  placements: ['tool_result_image'],
-};
-
+/**
+ * 把工具声明的附件 selection 交给 Host 换成正式资源引用，并核对批次身份与顺序。
+ * 当前模型能否接收这些附件由 Host 在工具执行前决定；下一次 LLM 调用的 preflight 仍按真实请求校验。
+ */
 export async function resolveToolModelInput(input: {
-  readonly activeModelId: string | undefined;
   readonly toolName: string;
   readonly toolCallId: string;
   readonly selections: readonly ToolModelInputAttachmentSelection[] | undefined;
   readonly context: ToolExecutionContext;
   readonly resolver?: ToolModelInputResolverPort;
-  readonly capabilityValidator?: ToolModelInputCapabilityValidatorPort;
 }): Promise<readonly RuntimeResourceRef[] | undefined> {
   if (!input.selections) {
     return undefined;
@@ -42,16 +37,5 @@ export async function resolveToolModelInput(input: {
   if (parsed.data.some((reference, index) => reference.id !== input.selections?.[index]?.id)) {
     throw new ToolModelInputResolutionError('Tool model input resolver changed attachment identity or order.');
   }
-  if (!input.activeModelId) {
-    throw new ToolModelInputResolutionError('Missing successful LLM model for tool input validation.');
-  }
-  if (!input.capabilityValidator) {
-    throw new ToolModelInputResolutionError('Tool model input validator is not configured.');
-  }
-  input.capabilityValidator.assertCompatible({
-    activeModelId: input.activeModelId,
-    requirement: TOOL_RESULT_IMAGE_REQUIREMENT,
-  });
-
   return Object.freeze(parsed.data.map(reference => Object.freeze(reference)));
 }

@@ -3,7 +3,6 @@ import type { SubRunTracePublisher } from '../child-run-trace/subrunTrace.types'
 import type { ChildRunInvokerPort } from '../child-runs/types';
 import type { RunId, ToolCallId } from '../../contracts';
 import type { AgentContextInjection } from '../../ports';
-import type { ToolModelInputAdmission } from './model-input/definitions/toolModelInputPolicy';
 
 /**
  * runtime-owned 工具执行上下文最小合同
@@ -14,13 +13,6 @@ import type { ToolModelInputAdmission } from './model-input/definitions/toolMode
  * - 不包含具体产品 workflow 的语义字段。
  */
 export interface ToolExecutionContext {
-  /**
-   * 当前工具调用的模型输入准入事实，由 ToolNode 按真实 active model 写入。
-   *
-   * 工具只能用它决定是否生产声明为 `when_supported` 的增强附件；不得据此猜模型、Provider 或 route。
-   */
-  modelInputAdmission?: ToolModelInputAdmission;
-
   /** 当前用户请求的原始文本；由 run admission 注入，工具只读。 */
   userQuery?: string;
 

@@ -32,12 +32,9 @@
 
 如果工具 Schema 依赖本次产品配置，Host 应在 `getToolSchemas(ToolSchemaBuildRequest)` 边界校验自己的扩展请求字段，再派生窄小的 Host 上下文交给具体工具。完整 query/history 不应暴露给所有 concrete/plugin tools。不要把用途模型 ID、产品模式或开放 metadata Map 加回 Linnkit；框架只拥有调用时机和通用 invocation。
 
-工具需要把图片交给下一轮模型时，工具只返回 `StructuredToolResult.modelInput.attachments` selection；host 实现并注入 `ToolModelInputResolverPort` 与 `ToolModelInputCapabilityValidatorPort`，负责 scope、完整性和真实 active model 校验。linnkit 只拥有 selection 解析时机、工具配对和失败生命周期，不认识 asset 表、文件路径、具体 provider 或产品工具名。完整规则见 [`tool-development-guide.md §7.4`](./tool-development-guide.md)。
+工具需要把图片交给下一轮模型时，工具只返回 `StructuredToolResult.modelInput.attachments` selection；host 实现并注入 `ToolModelInputResolverPort`，负责 scope 与完整性。linnkit 只拥有 selection 解析时机、工具配对和失败生命周期，不认识 asset 表、文件路径、具体 provider 或产品工具名。
 
-默认 delivery 是 `required`。如果图片只是主操作成功后的增强反馈，工具 definition 可以显式声明
-`modelInputDelivery='when_supported'`：ToolNode 不会因当前模型缺少图片输入能力而隐藏或拒绝工具，
-而会在执行期通过 `ToolExecutionContext.modelInputAdmission` 告知工具是否允许生产 selection。
-这不是 catch 后丢附件；工具必须在创建临时授权或受管副本前读取准入事实。
+调用方能否看图由 Host 判断，linnkit 不在工具定义上声明图片要求，也不在执行前查模型；没有模型的 Host 主动调用照常执行。完整规则见 [`tool-development-guide.md §7.4`](./tool-development-guide.md)。
 
 ## 4. 你不要做的
 

@@ -19,11 +19,8 @@ import type {
   ToolExecutionPort,
   ToolCatalogPort,
   ToolExecutionResult,
-  ToolModelInputCapabilityValidatorPort,
 } from '../../tools/ports';
 import type { ToolModelInputResolverPort } from '../../tools/model-input';
-import type { ToolModelInputDelivery } from '../../tools/model-input';
-import type { ModelInputRequirement } from '../../llm/input-capabilities';
 import { resolveToolModelInput } from '../../tools/model-input';
 import type { GraphNode, EngineState, NodeResult, StandardToolCall } from '../types';
 import { resolveFinalAnswerFromToolControl } from './toolNode.finalAnswerProjector';
@@ -97,15 +94,6 @@ function readHistoryEvents(local: UnknownRecord): RuntimeEvent[] {
   return parseRuntimeEvents(local.history ?? []);
 }
 
-function readLastSuccessfulLlmModelId(local: UnknownRecord): string | undefined {
-  const executorLocal = local.executorLocal;
-  if (!isRecord(executorLocal)) {
-    return undefined;
-  }
-  const value = executorLocal.lastSuccessfulLlmModelId;
-  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined;
-}
-
 function formatCapabilityError(error: unknown): string {
   if (isRecord(error)) {
     const codeValue = error.errorCode ?? error.code;
@@ -116,33 +104,6 @@ function formatCapabilityError(error: unknown): string {
     }
   }
   return error instanceof Error ? error.message : String(error);
-}
-
-function bindModelInputAdmission(input: {
-  readonly context: PreparedToolNodeContext['toolContext'];
-  readonly requirement: ModelInputRequirement;
-  readonly delivery: ToolModelInputDelivery;
-  readonly admitted: boolean;
-}): void {
-  input.context.modelInputAdmission = Object.freeze({
-    requirement: Object.freeze({
-      ...input.requirement,
-      placements: Object.freeze([...input.requirement.placements]),
-    }),
-    delivery: input.delivery,
-    admitted: input.admitted,
-  });
-}
-
-function isOptionalImageInputIncompatibility(reason: string): boolean {
-  return reason === 'image_input_unsupported' || reason === 'placement_unsupported';
-}
-
-function shouldDeliverToolModelInput(input: {
-  readonly context: PreparedToolNodeContext['toolContext'];
-  readonly delivery: ToolModelInputDelivery;
-}): boolean {
-  return input.delivery === 'required' || input.context.modelInputAdmission?.admitted === true;
 }
 
 type ToolNodeSuccessContext = PreparedToolNodeContext & {
@@ -182,7 +143,6 @@ export interface ToolNodeDependencies {
    */
   telemetryPort?: TelemetryPort;
   auditPort?: AuditPort;
-  modelInputCapabilityValidator?: ToolModelInputCapabilityValidatorPort;
   modelInputResolver?: ToolModelInputResolverPort;
 }
 
@@ -193,7 +153,6 @@ export class ToolNode implements GraphNode {
   private readonly observationPreview: ObservationPreviewPort;
   private readonly telemetryPort: TelemetryPort;
   private readonly auditPort: AuditPort;
-  private readonly modelInputCapabilityValidator?: ToolModelInputCapabilityValidatorPort;
   private readonly modelInputResolver?: ToolModelInputResolverPort;
   private readonly idempotencyInFlight: ToolIdempotencyInFlightRegistry = new Map();
 
@@ -202,7 +161,6 @@ export class ToolNode implements GraphNode {
     this.observationPreview = dependencies.observationPreview;
     this.telemetryPort = dependencies.telemetryPort ?? noopTelemetry;
     this.auditPort = dependencies.auditPort ?? noopAudit;
-    this.modelInputCapabilityValidator = dependencies.modelInputCapabilityValidator;
     this.modelInputResolver = dependencies.modelInputResolver;
   }
 
@@ -414,9 +372,6 @@ export class ToolNode implements GraphNode {
       return { kind: 'yield', events: [] };
     }
 
-    // ToolContext 会在同一 run 内复用；每次调用都必须先清除上一工具的准入事实。
-    delete prepared.toolContext.modelInputAdmission;
-
     if (typeof execution.protocolError === 'string') {
       return this.handleError({
         ...prepared,
@@ -432,94 +387,6 @@ export class ToolNode implements GraphNode {
           durationMs: 0,
         },
         bridge: execution.bridge,
-      });
-    }
-
-    if (typeof execution.modelInputRequirementError === 'string') {
-      return this.handleError({
-        ...prepared,
-        calls,
-        call,
-        toolName: execution.toolName,
-        toolCallId: execution.toolCallId,
-        toolArgs: execution.toolArgs,
-        exec: {
-          success: false,
-          error: execution.modelInputRequirementError,
-          errorKind: 'capability',
-          durationMs: 0,
-        },
-        bridge: execution.bridge,
-      });
-    }
-
-    if (execution.modelInputRequirement?.requires_image_input === true) {
-      const activeModelId = readLastSuccessfulLlmModelId(prepared.local);
-      let capabilityError: string | undefined;
-      let admitted = true;
-      if (!activeModelId) {
-        capabilityError =
-          'llm.unsupported_capability: missing successful LLM model for tool input validation';
-      } else if (!this.modelInputCapabilityValidator) {
-        capabilityError =
-          'llm.unsupported_capability: tool model input validator is not configured';
-      } else {
-        const validationInput = {
-          activeModelId,
-          requirement: execution.modelInputRequirement,
-        };
-        if (execution.modelInputDelivery === 'when_supported') {
-          try {
-            const compatibility = this.modelInputCapabilityValidator.evaluate(validationInput);
-            if (!compatibility.compatible) {
-              if (isOptionalImageInputIncompatibility(compatibility.reason)) {
-                admitted = false;
-                logger.debug('optional tool model input omitted for incompatible active model', {
-                  toolName: execution.toolName,
-                  activeModelId,
-                  reason: compatibility.reason,
-                  placements: execution.modelInputRequirement.placements,
-                });
-              } else {
-                this.modelInputCapabilityValidator.assertCompatible(validationInput);
-                capabilityError = 'llm.unsupported_capability: active model is not eligible';
-              }
-            }
-          } catch (error) {
-            capabilityError = formatCapabilityError(error);
-          }
-        } else {
-          try {
-            this.modelInputCapabilityValidator.assertCompatible(validationInput);
-          } catch (error) {
-            capabilityError = formatCapabilityError(error);
-          }
-        }
-      }
-
-      if (capabilityError) {
-        return this.handleError({
-          ...prepared,
-          calls,
-          call,
-          toolName: execution.toolName,
-          toolCallId: execution.toolCallId,
-          toolArgs: execution.toolArgs,
-          exec: {
-            success: false,
-            error: capabilityError,
-            errorKind: 'capability',
-            durationMs: 0,
-          },
-          bridge: execution.bridge,
-        });
-      }
-
-      bindModelInputAdmission({
-        context: prepared.toolContext,
-        requirement: execution.modelInputRequirement,
-        delivery: execution.modelInputDelivery,
-        admitted,
       });
     }
 
@@ -579,24 +446,17 @@ export class ToolNode implements GraphNode {
             bridge: execution.bridge,
           });
         }
-        const deliverModelInput = shouldDeliverToolModelInput({
-          context: prepared.toolContext,
-          delivery: execution.modelInputDelivery,
-        });
-        // 可选附件不是幂等业务结果的一部分。缓存可能来自视觉模型，当前模型不兼容时不得复用。
-        let attachments: readonly RuntimeResourceRef[] | undefined = deliverModelInput
-          ? exec.cachedAttachments
-          : undefined;
+        // 是否返回模型附件由工具与 Host 决定；框架只把声明的 selection 交给 Host resolver 换成正式引用。
+        // 幂等命中复用当时已解析的引用。
+        let attachments: readonly RuntimeResourceRef[] | undefined = exec.cachedAttachments;
         try {
-          if (deliverModelInput && !attachments) {
+          if (!attachments) {
             attachments = await resolveToolModelInput({
-              activeModelId: readLastSuccessfulLlmModelId(prepared.local),
               toolName: execution.toolName,
               toolCallId: execution.toolCallId,
               selections: contract.modelInputAttachments,
               context: prepared.toolContext,
               resolver: this.modelInputResolver,
-              capabilityValidator: this.modelInputCapabilityValidator,
             });
           }
         } catch (error) {

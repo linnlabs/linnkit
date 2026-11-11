@@ -20,7 +20,6 @@ const tickPipelineContextKeys = [
   'runtimeEventCommitPort',
   'modelId',
   'toolSchemas',
-  'toolModelInputRequirement',
   'toolCallStreamingPolicies',
   'llmOptions',
   'toolDefinitionTokens',

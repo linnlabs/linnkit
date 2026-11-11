@@ -408,29 +408,13 @@ const result: StructuredToolResult<{ report: string }> = {
 
 工具不能直接返回 durable attachment，更不能返回本地路径、bytes、base64、hash 或 data URL。工具只在 `StructuredToolResult.modelInput.attachments` 中返回有序 asset selection；selection 只包含调用内 ID、稳定 asset URI 和可选展示标签。
 
-host 必须通过 `ToolModelInputResolverPort` 把 selection 解析为当前 conversation/project 有权引用的 durable 图片身份，并通过 `ToolModelInputCapabilityValidatorPort` 按最近一次成功 LLM attempt 的真实模型做执行期校验。任一 selection 的 scope 或完整性失败时，整个工具结果失败，不产生半组附件。
+host 必须通过 `ToolModelInputResolverPort` 把 selection 解析为当前 conversation/project 有权引用的 durable 图片身份。任一 selection 的 scope 或完整性失败时，整个工具结果失败，不产生半组附件。
 
-静态只会产生图片的工具应在 definition 上声明 `tool_result_image` requirement，让 schema admission 和 fallback 提前排除不兼容模型。既能读文本又能读图片的动态工具不能把图片 requirement 写成静态要求；只有实际返回图片 selection 时，ToolNode 才执行 resolver 与二次能力门禁。
+**是否返回图片由 Host 决定，linnkit 不判断。** 工具调用可能来自模型，也可能来自没有模型的 Host 主动调用（CLI、外部 Agent、测试），只有 Host 知道这次结果交给谁、对方能不能看图。因此 linnkit 不在工具定义上声明图片要求，ToolNode 执行前不查模型、不做能力校验，也不向工具写入准入事实。Host 应在装配 `ToolExecutionContext` 时提供自己的判断（例如按本 run 的模型和模型目录，或对外部调用方默认接收图片），工具据此决定是否创建 selection 和临时授权；不接收时返回完整的文字与结构化主结果，不要先登记资源再靠失败降级。ToolNode 对工具返回的 selection 一律交给 resolver。
 
-模型的 `image_input` 语义能力与 route placement 必须逐项相交。`user_image=true` 只能证明用户附件可编码，不能替代
-`tool_result_image`；反过来也一样。产品不得为了让动态图片工具继续运行而把工具结果改写成 user message。动态图片结果
-若属于主操作的必要输入，缺少 `tool_result_image` 时返回结构化 placement error；若只是可选增强，则使用下述
-`when_supported` 合同。
+真正发往模型时，LLM 调用前的 input preflight 仍按实际请求中的图片和当前 route 校验；Host 判断失误会在那里明确失败，而不是静默丢图。
 
-如果工具的主操作不依赖模型读取图片，而图片只是成功后的增强反馈，应同时声明
-`modelInputDelivery='when_supported'`。这类工具对不兼容模型仍然可见并可执行；ToolNode 根据最近一次
-成功 LLM attempt 的真实模型和 route 写入 `ToolExecutionContext.modelInputAdmission`。工具必须在
-`admitted=true` 时才创建 selection 及其临时授权；`admitted=false` 时返回完整的文字与结构化主结果，
-不得先登记资源再靠 resolver capability error 降级。未配置 validator、模型不具备聊天资格、selection
-越权或内容损坏都不属于“模型不支持图片”的正常分支，仍须明确失败。
-
-`when_supported` 的增强附件也不属于工具幂等主结果。历史成功输出若来自视觉模型，当前非视觉模型
-命中缓存时只复用文字与结构化主结果，不能复用旧附件；当前视觉模型命中一条没有附件的历史结果时，
-也不为它补跑有副作用的工具或额外生成附件。
-
-动态工具的 `resolveModelInputRequirement(args)` 必须是只依赖规范化参数的确定性规则，不得执行 I/O。若 resolver 抛错，ToolNode 会把本次 call 作为 capability deny，生成稳定的 error `tool_output` 和 `tool.deny` 审计后继续消费同批 sibling calls；宿主异常原文不会回显给模型。resolver 不能用异常表达“本次不需要图片”，该场景应正常返回 `undefined`。
-
-历史 cache hit 不能直接复用旧 durable ref。它应复用原始结构化输出，再按当前 workspace scope 重新解析 selection；selection 已失效时明确失败，不能重跑有副作用的工具，也不能退化成“文本成功、图片丢失”。root 与 child runtime 应注入同一类窄 resolver/validator，child 仍受自己的模型和附件继承策略约束。
+幂等历史命中时，ToolNode 复用该输出当时已解析的正式附件，不重跑有副作用的工具。root 与 child runtime 应注入同一类窄 resolver，child 仍受自己的模型和附件继承策略约束。
 
 ---
 
@@ -492,7 +476,7 @@ const toolRuntime = new QuickstartMemoryToolRuntime([
 | 工具配对一致性 | linnkit 协议层 | tool 配对不变量 C10 + `ToolReplayProtocolGuard` |
 | 交互工具的 wait_user 路由 | linnkit 协议层 | `WaitUserNode` + `requires_user_interaction` 事件 |
 | 工具图片 selection 与解析 | host 工具 + host resolver | `StructuredToolResult.modelInput` + `ToolModelInputResolverPort` |
-| 工具图片能力校验与可选交付 | linnkit + host model catalog | definition requirement/delivery + `ToolExecutionContext.modelInputAdmission` + `ToolModelInputCapabilityValidatorPort` |
+| 是否返回工具图片 | host | Host 装配的 ToolContext 判断；linnkit 不规定 |
 | `data` 字段名约定 / 前端 registry 注册 | host（工具作者 + 前端工程师）| linnkit 不规定 |
 | 工具的业务实现（数据库 / 外部服务调用）| host | linnkit 不规定 |
 
@@ -514,8 +498,8 @@ const toolRuntime = new QuickstartMemoryToolRuntime([
 - [ ] 实现 `getExecutionSummary(output)`，给 ToolHistoryCompressor 用
 - [ ] 不在工具内部做超长截断 / 落盘——交给 `ObservationPreviewPort`
 - [ ] 如果是交互工具：第一段返回 `result.control.requireUser = true`，复活路径只从 `tool_call.arguments` 重建
-- [ ] 如果工具让模型读取图片：只返回稳定 asset selection，并验证 scope、cache replay、能力拒绝和附件顺序
-- [ ] 如果图片只是增强反馈：声明 `when_supported`，并在创建受管副本/临时授权前消费 runtime admission
+- [ ] 如果工具让模型读取图片：只返回稳定 asset selection，并验证 scope、cache replay 和附件顺序
+- [ ] 是否返回图片按 Host 提供的判断决定，在创建受管副本/临时授权之前判断
 - [ ] 单测用 `createToolContextFixture()` 直接测 `tool.run(args, fixtureContext)`
 - [ ] 深层 admission 另有真实 `ToolNode + ToolRuntimeDefinition.validateArguments` 用例，证明错误参数不会发布 start 或进入 execute
 - [ ] 在 host 的 `ToolRuntimePort` 实例化里注册

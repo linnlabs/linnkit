@@ -324,71 +324,17 @@ describe('createPrepareCallStage', () => {
     expect(ctx.llmOptions.reasoning_effort).toBeUndefined();
   });
 
-  it('只向当前模型暴露兼容的静态图片工具，并聚合实际暴露工具 requirement', async () => {
+  it('按 Host 给出的工具目录原样暴露，不按模型看图能力过滤或追加 requirement', async () => {
     const { createPrepareCallStage } = await import('./prepareCallStage');
     const ctx = createContext();
-    const textSchema: FunctionToolSchema = {
+    const schemas: FunctionToolSchema[] = ['text_tool', 'image_tool'].map(name => ({
       type: 'function',
       function: {
-        name: 'text_tool',
-        description: 'text',
+        name,
+        description: name,
         parameters: { type: 'object', properties: {} },
       },
-    };
-    const imageSchema: FunctionToolSchema = {
-      type: 'function',
-      function: {
-        name: 'image_tool',
-        description: 'image',
-        parameters: { type: 'object', properties: {} },
-      },
-    };
-    const getToolDefinition = vi.fn((toolName: string) => ({
-      parameters: { type: 'object' as const, properties: {} },
-      ...(toolName === 'image_tool'
-        ? {
-            modelInputRequirement: {
-              requires_image_input: true,
-              placements: ['tool_result_image'] as const,
-            },
-          }
-        : {}),
     }));
-    getModelByIdMock.mockReturnValue({
-      id: 'resolved-model',
-      enabled: true,
-      capabilities: ['chat', 'image_input'],
-      adapter_input_support: { user_image: true, tool_result_image: false },
-    });
-    const stage = createPrepareCallStage({
-      modelResolver: { resolveModelId: vi.fn(() => 'resolved-model') },
-      modelCatalog: { getModelById: getModelByIdMock },
-      toolCatalog: {
-        getToolSchemas: vi.fn(() => [textSchema, imageSchema]),
-        getToolDefinition,
-      },
-    });
-
-    await runStage(ctx, stage);
-
-    expect(ctx.toolSchemas.map(schema => schema.function.name)).toEqual(['text_tool']);
-    expect(ctx.toolModelInputRequirement).toEqual({
-      requires_image_input: false,
-      placements: [],
-    });
-  });
-
-  it('非视觉模型仍可见 when_supported 图片结果工具且初始请求不携带图片 requirement', async () => {
-    const { createPrepareCallStage } = await import('./prepareCallStage');
-    const ctx = createContext();
-    const imageSchema: FunctionToolSchema = {
-      type: 'function',
-      function: {
-        name: 'generate_image',
-        description: 'generate image',
-        parameters: { type: 'object', properties: {} },
-      },
-    };
     getModelByIdMock.mockReturnValue({
       id: 'text-model',
       enabled: true,
@@ -399,72 +345,14 @@ describe('createPrepareCallStage', () => {
       modelResolver: { resolveModelId: vi.fn(() => 'text-model') },
       modelCatalog: { getModelById: getModelByIdMock },
       toolCatalog: {
-        getToolSchemas: vi.fn(() => [imageSchema]),
-        getToolDefinition: vi.fn(() => ({
-          parameters: { type: 'object' as const, properties: {} },
-          modelInputRequirement: {
-            requires_image_input: true,
-            placements: ['tool_result_image'] as const,
-          },
-          modelInputDelivery: 'when_supported' as const,
-        })),
-      },
-    });
-
-    await runStage(ctx, stage);
-
-    expect(ctx.toolSchemas.map(schema => schema.function.name)).toEqual(['generate_image']);
-    expect(ctx.toolModelInputRequirement).toEqual({
-      requires_image_input: false,
-      placements: [],
-    });
-  });
-
-  it('兼容模型保留静态图片工具，动态工具未声明 requirement 时不被整体隐藏', async () => {
-    const { createPrepareCallStage } = await import('./prepareCallStage');
-    const ctx = createContext();
-    const schemas: FunctionToolSchema[] = ['resource_read', 'image_tool'].map(name => ({
-      type: 'function',
-      function: {
-        name,
-        description: name,
-        parameters: { type: 'object', properties: {} },
-      },
-    }));
-    getModelByIdMock.mockReturnValue({
-      id: 'resolved-model',
-      enabled: true,
-      capabilities: ['chat', 'image_input'],
-      adapter_input_support: { user_image: true, tool_result_image: true },
-    });
-    const stage = createPrepareCallStage({
-      modelResolver: { resolveModelId: vi.fn(() => 'resolved-model') },
-      modelCatalog: { getModelById: getModelByIdMock },
-      toolCatalog: {
         getToolSchemas: vi.fn(() => schemas),
-        getToolDefinition: vi.fn((toolName: string) => ({
-          parameters: { type: 'object' as const, properties: {} },
-          ...(toolName === 'image_tool'
-            ? {
-                modelInputRequirement: {
-                  requires_image_input: true,
-                  placements: ['tool_result_image'] as const,
-                },
-              }
-            : {}),
-        })),
+        getToolDefinition: vi.fn(() => ({ parameters: { type: 'object' as const, properties: {} } })),
       },
     });
 
     await runStage(ctx, stage);
 
-    expect(ctx.toolSchemas.map(schema => schema.function.name)).toEqual([
-      'resource_read',
-      'image_tool',
-    ]);
-    expect(ctx.toolModelInputRequirement).toEqual({
-      requires_image_input: true,
-      placements: ['tool_result_image'],
-    });
+    expect(ctx.toolSchemas.map(schema => schema.function.name)).toEqual(['text_tool', 'image_tool']);
+    expect(ctx).not.toHaveProperty('toolModelInputRequirement');
   });
 });

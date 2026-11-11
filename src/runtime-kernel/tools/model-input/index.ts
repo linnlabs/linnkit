@@ -5,10 +5,6 @@ export type {
   ToolModelInputDeclaration,
   ToolModelInputResolverPort,
 } from './definitions/toolModelInput';
-export type {
-  ToolModelInputAdmission,
-  ToolModelInputDelivery,
-} from './definitions/toolModelInputPolicy';
 export { ToolModelInputResolutionError } from './definitions/toolModelInput';
 export { parseToolModelInputDeclaration } from './functions/parseToolModelInputDeclaration';
 export { resolveToolModelInput } from './orchestration/resolveToolModelInput';

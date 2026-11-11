@@ -145,7 +145,6 @@ describe('tick pipeline stage write contracts', () => {
       writes: [
         'modelId',
         'toolSchemas',
-        'toolModelInputRequirement',
         'toolCallStreamingPolicies',
         'llmOptions',
         'toolDefinitionTokens',
@@ -370,7 +369,6 @@ describe('tick pipeline stage write contracts', () => {
         'outputProcessor',
         'modelId',
         'llmMessages',
-        'toolModelInputRequirement',
         'toolCallStreamingPolicies',
         'imageInputAdmissionEvidence',
         'llmOptions',

@@ -7,7 +7,6 @@ import { defineTickStage } from '../types';
 import type { TickStage } from '../types';
 import { readNonEmptyString } from '../helpers';
 import { emitAuditEnvelope } from '../../../audit/emitAudit';
-import { prepareModelCompatibleTools } from '../../functions/prepareModelCompatibleTools';
 import { runIdFromTurnId } from '../../../../contracts';
 import type { ToolCallStreamingPolicy } from '../../../tools/toolContracts';
 import { estimateToolDefinitionTokens } from '../../functions/promptUsageComponents';
@@ -35,7 +34,6 @@ export function createPrepareCallStage(dependencies: PrepareCallStageDependencie
     writes: [
       'modelId',
       'toolSchemas',
-      'toolModelInputRequirement',
       'toolCallStreamingPolicies',
       'llmOptions',
       'toolDefinitionTokens',
@@ -79,12 +77,7 @@ export function createPrepareCallStage(dependencies: PrepareCallStageDependencie
         invocation: ctx.request,
       });
       const modelConfig = dependencies.modelCatalog.getModelById(modelId);
-      const toolPreparation = prepareModelCompatibleTools({
-        schemas: candidateToolSchemas,
-        model: modelConfig,
-        getToolDefinition: toolName => dependencies.toolCatalog.getToolDefinition(toolName),
-      });
-      const toolSchemas = [...toolPreparation.schemas];
+      const toolSchemas = [...candidateToolSchemas];
       const toolCallStreamingPolicies = deriveToolCallStreamingPolicies(
         toolSchemas,
         dependencies.toolCatalog
@@ -147,7 +140,6 @@ export function createPrepareCallStage(dependencies: PrepareCallStageDependencie
       return {
         modelId,
         toolSchemas,
-        toolModelInputRequirement: toolPreparation.requirement,
         toolCallStreamingPolicies,
         llmOptions,
         toolDefinitionTokens,

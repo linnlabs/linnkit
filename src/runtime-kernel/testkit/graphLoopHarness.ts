@@ -4,7 +4,6 @@ import type { LlmCaller } from '../llm/caller';
 import type {
   ObservationPreviewPort,
   ToolExecutionContext,
-  ToolModelInputCapabilityValidatorPort,
   ToolModelInputResolverPort,
   ToolRuntimePort,
 } from '../tools';
@@ -39,7 +38,6 @@ export interface GraphLoopHarnessOptions {
   signal?: AbortSignal;
   auditPort?: AuditPort;
   telemetryPort?: TelemetryPort;
-  modelInputCapabilityValidator?: ToolModelInputCapabilityValidatorPort;
   modelInputResolver?: ToolModelInputResolverPort;
   /** Host/testkit 装配提供的唯一 RuntimeEvent admission/publish 入口。 */
   runtimeEventSink: RuntimeEventSink;
@@ -92,7 +90,6 @@ export function createGraphLoopHarness(options: GraphLoopHarnessOptions): GraphL
         maxSteps,
         auditPort: options.auditPort,
         telemetryPort: options.telemetryPort,
-        modelInputCapabilityValidator: options.modelInputCapabilityValidator,
         modelInputResolver: options.modelInputResolver,
       });
 

@@ -4,8 +4,6 @@ import { computeToolIdempotencyKey } from '../../tools/idempotency/toolIdempoten
 import type { ToolCatalogPort, ToolRuntimeDefinition } from '../../tools/ports';
 import { ensureToolContextRuntimeCapability } from '../../tools/toolContextRuntime';
 import type { EngineState, RuntimeEventSink, StandardToolCall } from '../types';
-import type { ModelInputRequirement } from '../../llm/input-capabilities';
-import type { ToolModelInputDelivery } from '../../tools/model-input';
 import { ToolNodeEventBridge } from './toolNode.eventBridge';
 import { isRecord, parseJsonSafe, type UnknownRecord } from './toolNode.helpers';
 import {
@@ -36,14 +34,8 @@ export type PreparedToolExecution = {
   toolArgs: Record<string, unknown>;
   protocolError?: string;
   idempotencyKey?: string;
-  modelInputRequirement?: ModelInputRequirement;
-  modelInputDelivery: ToolModelInputDelivery;
-  modelInputRequirementError?: string;
   bridge: ToolNodeEventBridge;
 };
-
-const MODEL_INPUT_REQUIREMENT_RESOLUTION_ERROR =
-  'tool.model_input.requirement_resolution_failed: Tool model input requirement could not be resolved';
 
 type ParsedToolArgsResult =
   | { ok: true; value: Record<string, unknown> }
@@ -176,13 +168,6 @@ export function prepareToolExecution(params: {
     toolArgs,
     idempotencyKey,
   });
-  const modelInputRequirement = resolveModelInputRequirement({
-    toolDefinition,
-    toolArgs,
-    hasProtocolError: protocolError !== undefined,
-    toolName,
-  });
-
   return {
     call: params.call,
     toolName,
@@ -191,42 +176,8 @@ export function prepareToolExecution(params: {
     toolArgs,
     protocolError,
     idempotencyKey,
-    ...(modelInputRequirement.requirement
-      ? { modelInputRequirement: modelInputRequirement.requirement }
-      : {}),
-    modelInputDelivery: toolDefinition?.modelInputDelivery ?? 'required',
-    ...(modelInputRequirement.error
-      ? { modelInputRequirementError: modelInputRequirement.error }
-      : {}),
     bridge,
   };
-}
-
-function resolveModelInputRequirement(params: {
-  toolDefinition: ToolRuntimeDefinition | undefined;
-  toolArgs: Record<string, unknown>;
-  hasProtocolError: boolean;
-  toolName: string;
-}): { requirement?: ModelInputRequirement; error?: string } {
-  if (params.hasProtocolError) {
-    return {};
-  }
-  if (!params.toolDefinition?.resolveModelInputRequirement) {
-    return params.toolDefinition?.modelInputRequirement
-      ? { requirement: params.toolDefinition.modelInputRequirement }
-      : {};
-  }
-
-  try {
-    const requirement = params.toolDefinition.resolveModelInputRequirement(params.toolArgs);
-    return requirement ? { requirement } : {};
-  } catch (error) {
-    logger.warn('dynamic model input requirement resolution failed', {
-      toolName: params.toolName,
-      errorName: error instanceof Error ? error.name : 'UnknownError',
-    });
-    return { error: MODEL_INPUT_REQUIREMENT_RESOLUTION_ERROR };
-  }
 }
 
 function attachWorkingHistoryView(params: {

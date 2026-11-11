@@ -273,17 +273,9 @@ describe('ToolNode audit', () => {
     );
   });
 
-  it('静态图片工具在执行前按最近成功模型二次校验', async () => {
+  it('没有模型的 Host 主动调用直接执行，不做模型看图能力检查', async () => {
     const state = buildState(buildCall());
-    if (state.local?.executorLocal) {
-      state.local.executorLocal.lastSuccessfulLlmModelId = 'active-fallback-model';
-    } else if (state.local) {
-      state.local.executorLocal = {
-        stepCount: 1,
-        lastSuccessfulLlmModelId: 'active-fallback-model',
-      };
-    }
-    const assertCompatible = vi.fn();
+    if (state.local) state.local.executorLocal = { stepCount: 0 };
     const executeTool = vi.fn().mockResolvedValue({
       success: true,
       result: '{"data":{},"observation":"ok"}',
@@ -291,158 +283,17 @@ describe('ToolNode audit', () => {
     } satisfies ToolExecutionResult);
     const node = new ToolNode({
       toolRuntime: {
-        getToolDefinition: vi.fn().mockReturnValue({
-          parameters: { type: 'object', properties: {} },
-          modelInputRequirement: toolResultImageRequirement,
-        }),
+        getToolDefinition: vi.fn().mockReturnValue({ parameters: { type: 'object', properties: {} } }),
         executeTool,
       },
       observationPreview,
-      modelInputCapabilityValidator: {
-        evaluate: vi.fn(() => ({ compatible: true as const })),
-        assertCompatible,
-      },
-    });
-
-    await node.run(state);
-
-    expect(assertCompatible).toHaveBeenCalledWith({
-      activeModelId: 'active-fallback-model',
-      requirement: toolResultImageRequirement,
-    });
-    expect(executeTool).toHaveBeenCalledOnce();
-  });
-
-  it('host-forced 静态图片工具能力拒绝时不执行副作用，并产出 deny audit', async () => {
-    const auditPort = buildAuditPort();
-    const executeTool = vi.fn();
-    const state = buildState(buildCall());
-    if (state.local) {
-      state.local.executorLocal = {
-        stepCount: 1,
-        lastSuccessfulLlmModelId: 'text-model',
-      };
-    }
-    const node = new ToolNode({
-      toolRuntime: {
-        getToolDefinition: vi.fn().mockReturnValue({
-          parameters: { type: 'object', properties: {} },
-          modelInputRequirement: toolResultImageRequirement,
-        }),
-        executeTool,
-      },
-      observationPreview,
-      auditPort,
-      modelInputCapabilityValidator: {
-        evaluate() {
-          return {
-            compatible: false,
-            reason: 'placement_unsupported',
-            missing_placements: ['tool_result_image'],
-          };
-        },
-        assertCompatible() {
-          throw new ModelInputCapabilityError(
-            MODEL_INPUT_ERROR_CODES.PLACEMENT_UNSUPPORTED,
-            '当前模型连接不支持请求中的图片来源',
-            {
-              active_model_id: 'text-model',
-              required_placements: ['tool_result_image'],
-            }
-          );
-        },
-      },
     });
 
     const result = await node.run(state);
 
-    expect(executeTool).not.toHaveBeenCalled();
+    expect(executeTool).toHaveBeenCalledOnce();
     expect(result.events).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          type: 'tool_output',
-          status: 'error',
-          error: expect.stringContaining(MODEL_INPUT_ERROR_CODES.PLACEMENT_UNSUPPORTED),
-        }),
-      ])
-    );
-    expect(auditPort.emit).toHaveBeenCalledWith(
-      expect.objectContaining({
-        action: 'tool.deny',
-        decision: expect.objectContaining({
-          outcome: 'denied',
-          metadata: expect.objectContaining({ errorKind: 'capability' }),
-        }),
-      })
-    );
-  });
-
-  it('动态 requirement resolver 异常时配对失败输出并继续同批 sibling call', async () => {
-    const auditPort = buildAuditPort();
-    const firstCall = buildCall({
-      id: ToolCallIdSchema.parse('call-requirement-error'),
-      function: { name: 'dynamic_image_tool', arguments: '{}' },
-    });
-    const secondCall = buildCall({
-      id: ToolCallIdSchema.parse('call-sibling'),
-      function: { name: 'echo', arguments: '{"text":"still runs"}' },
-    });
-    const state = buildState(firstCall);
-    if (state.local) {
-      state.local.pendingToolCalls = [firstCall, secondCall];
-    }
-    const executeTool = vi.fn().mockResolvedValue({
-      success: true,
-      result: '{"data":{},"observation":"ok"}',
-      durationMs: 1,
-    } satisfies ToolExecutionResult);
-    const dynamicImageToolDefinition = {
-      parameters: { type: 'object', properties: {} },
-      resolveModelInputRequirement() {
-        throw new Error('resolver implementation detail');
-      },
-    } satisfies ToolRuntimeDefinition;
-    const node = new ToolNode({
-      toolRuntime: {
-        getToolDefinition: vi.fn((toolName: string) =>
-          toolName === 'dynamic_image_tool' ? dynamicImageToolDefinition : undefined
-        ),
-        executeTool,
-      },
-      observationPreview,
-      auditPort,
-    });
-
-    const result = await node.run(state);
-    const outputs = result.events?.filter(event => event.type === 'tool_output') ?? [];
-
-    expect(outputs).toHaveLength(2);
-    expect(outputs[0]).toMatchObject({
-      tool_call_id: 'call-requirement-error',
-      status: 'error',
-      error: expect.stringContaining('tool.model_input.requirement_resolution_failed'),
-    });
-    expect(outputs[1]).toMatchObject({
-      tool_call_id: 'call-sibling',
-      status: 'success',
-    });
-    expect(JSON.stringify(outputs[0])).not.toContain('resolver implementation detail');
-    expect(executeTool).toHaveBeenCalledOnce();
-    expect(executeTool).toHaveBeenCalledWith('echo', { text: 'still runs' }, expect.any(Object));
-    expect(auditPort.emit).toHaveBeenCalledWith(
-      expect.objectContaining({
-        action: 'tool.deny',
-        decision: expect.objectContaining({
-          metadata: expect.objectContaining({ errorKind: 'capability' }),
-        }),
-        scope: expect.objectContaining({ toolCallId: 'call-requirement-error' }),
-      })
-    );
-    expect(auditPort.emit).toHaveBeenCalledWith(
-      expect.objectContaining({
-        action: 'tool.allow',
-        scope: expect.objectContaining({ toolCallId: 'call-sibling' }),
-      })
+      expect.arrayContaining([expect.objectContaining({ type: 'tool_output', status: 'success' })])
     );
   });
 });

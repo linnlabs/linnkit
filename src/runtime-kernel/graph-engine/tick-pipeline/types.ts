@@ -14,7 +14,6 @@ import type { ToolExecutionContext } from '../../tools/toolExecutionContext';
 import type { FunctionToolSchema } from '../../tools/toolContracts';
 import type { ToolCallStreamingPolicy } from '../../tools/toolContracts';
 import type { LlmCallOptions } from '../../llm/caller';
-import type { ModelInputRequirement } from '../../llm/input-capabilities';
 import type { TelemetryPort } from '../../telemetry/telemetryPort';
 import type { AuditPort } from '../../../ports';
 import type {
@@ -114,7 +113,6 @@ export interface TickPipelineContext {
   runtimeEventCommitPort?: RuntimeEventCommitPort;
   modelId: string;
   toolSchemas: FunctionToolSchema[];
-  toolModelInputRequirement?: ModelInputRequirement;
   toolCallStreamingPolicies: Readonly<Record<string, ToolCallStreamingPolicy>>;
   llmOptions: LlmCallOptions;
   toolDefinitionTokens: number;

@@ -50,14 +50,6 @@ export class QuickstartMemoryToolRuntime implements QuickstartToolRuntime {
       parameters: tool.parameters,
       validateArguments: args => tool['validateArguments'](args),
       idempotency: tool.idempotency,
-      modelInputRequirement: tool.modelInputRequirement,
-      ...(tool.resolveModelInputRequirement
-        ? {
-            resolveModelInputRequirement: (args: ToolArgs) => (
-              tool.resolveModelInputRequirement?.(args)
-            ),
-          }
-        : {}),
     };
   }
 

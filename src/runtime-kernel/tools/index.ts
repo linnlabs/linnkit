@@ -39,7 +39,6 @@ export type {
   ToolCatalogPort,
   ToolExecutionPort,
   ToolExecutionResult,
-  ToolModelInputCapabilityValidatorPort,
   ToolRuntimeDefinition,
   ToolRuntimePort,
   ToolSchemaBuildRequest,
@@ -64,7 +63,5 @@ export type {
   ToolModelInputAttachmentSelection,
   ToolModelInputDeclaration,
   ToolModelInputDeclarationValidation,
-  ToolModelInputAdmission,
-  ToolModelInputDelivery,
   ToolModelInputResolverPort,
 } from './model-input';

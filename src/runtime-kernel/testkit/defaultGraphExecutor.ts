@@ -7,7 +7,6 @@ import { WaitUserNode } from '../graph-engine/nodes/waitUserNode';
 import type { GraphNode } from '../graph-engine/types';
 import type {
   ObservationPreviewPort,
-  ToolModelInputCapabilityValidatorPort,
   ToolModelInputResolverPort,
   ToolRuntimePort,
 } from '../tools';
@@ -22,7 +21,6 @@ export interface DefaultGraphExecutorOptions {
   checkpointer?: Checkpointer;
   auditPort?: AuditPort;
   telemetryPort?: TelemetryPort;
-  modelInputCapabilityValidator?: ToolModelInputCapabilityValidatorPort;
   modelInputResolver?: ToolModelInputResolverPort;
 }
 
@@ -40,7 +38,6 @@ export function createDefaultGraphExecutor(
     observationPreview: options.observationPreview,
     auditPort: options.auditPort,
     telemetryPort: options.telemetryPort,
-    modelInputCapabilityValidator: options.modelInputCapabilityValidator,
     modelInputResolver: options.modelInputResolver,
   }));
   executor.registerNode(new WaitUserNode({ auditPort: options.auditPort }));

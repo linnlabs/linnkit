@@ -149,7 +149,6 @@ export class GraphAgentExecutor {
       modelId: '',
       toolSchemas: [],
       toolCallStreamingPolicies: {},
-      toolModelInputRequirement: undefined,
       llmOptions: {},
       toolDefinitionTokens: 0,
       llmMessages: [],

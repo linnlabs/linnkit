@@ -12,6 +12,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.42.0] - 2026-11-11
+
+### Breaking
+
+- Remove the tool model-input requirement protocol. `ToolRuntimeDefinition`
+  and `BaseTool` no longer accept `modelInputRequirement`,
+  `modelInputDelivery` or `resolveModelInputRequirement`;
+  `ToolExecutionContext.modelInputAdmission`, `ToolModelInputAdmission`,
+  `ToolModelInputDelivery` and `ToolModelInputCapabilityValidatorPort` are
+  gone, and `ToolNode`, `ChildRunInvoker` and the testkit no longer take a
+  `modelInputCapabilityValidator`. Whether a tool returns images is the
+  Host's decision: the caller may be a model or a Host-originated call with no
+  model, and only the Host knows which.
+
+### Changed
+
+- `ToolNode` no longer checks the last successful model before running a tool
+  and no longer rejects Host-originated calls that have no model. Attachments a
+  tool declares are always passed to `ToolModelInputResolverPort`; cache hits
+  reuse the attachments resolved at the time.
+- The LLM prepare stage exposes the tool schemas the Host provides without
+  filtering them by model image support or adding tool image requirements to
+  the request. The input preflight still validates images actually present in
+  the request against the active route.
+
 ## [0.41.0] - 2026-10-30
 
 ### Breaking

@@ -33,7 +33,6 @@ export const TOOL_CONTEXT_RUNTIME_RESERVED_KEYS = [
   'childRunDepth',
   'childRunContextInjections',
   'parentToolCallId',
-  'modelInputAdmission',
 ] as const;
 
 const TOOL_CONTEXT_RUNTIME_BINDINGS_KEY = Symbol.for(
