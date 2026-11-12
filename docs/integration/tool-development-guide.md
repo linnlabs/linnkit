@@ -370,6 +370,7 @@ async run(args, context) {
 2. **第 2 段**：`ToolNode` 不再持久化首条 `tool_output`，而是把 `pendingInteractionSpec` 写入 local state，然后 route 到 `wait_user` 节点。
 3. **第 3 段**：`WaitUserNode` 发出 `requires_user_interaction` 事件，run 进入 `awaiting_user` 状态。
 4. **第 4 段**：用户提交回复后，runtime 用**同一条** `tool_output` 事件继续——`metadata.interaction` 字段承载用户的 `approved / modified / submitted / skipped` 状态。
+5. **第 5 段**：模型可能把交互工具和别的工具放在同一批里。`GraphExecutor.resumeSession` 先由 `ToolNode` 执行同批里排在后面、还没跑的调用，再回到模型；否则这些调用没有结果，整组调用连同用户的回答都进不了模型上下文。Host 恢复时不要把起点指定为 `llm`，同批还有未执行调用时只接受 `tool`。
 
 `metadata.interaction` 是持久化和 UI 的结构化事实，不会自动变成模型可见指令。Host 创建 terminal `tool_output` 时必须同时提供自包含的 observation：尤其 `approved` 要明确说明用户已经批准、原等待条件已经满足；不能只给模型裸的 `{ "action": "approve" }`。领域响应（例如问卷答案、修改后的计划）仍由对应交互 owner 组织 observation，Host 不得用通用文案覆盖。
 

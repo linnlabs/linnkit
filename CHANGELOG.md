@@ -12,6 +12,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.43.0] - 2026-11-12
+
+### Fixed
+
+- `GraphExecutor.resumeSession` now finishes the tool batch that an
+  interactive (`requireUser`) tool interrupted before returning to the model.
+  Previously a resume always went to `llm`, so calls queued after the
+  interactive tool in the same batch never ran. The batch was left with calls
+  that had no results, context building dropped the whole group — including
+  the user's answer — and the model asked the same question again.
+
+### Changed
+
+- Without `nodeId`, `resumeSession` starts at `tool` when the waiting
+  checkpoint still has pending tool calls, and at `llm` otherwise. Passing a
+  `nodeId` other than `tool` while calls are pending now throws. Hosts that
+  passed `nodeId: 'llm'` should drop it.
+
+---
+
 ## [0.42.0] - 2026-11-11
 
 ### Breaking

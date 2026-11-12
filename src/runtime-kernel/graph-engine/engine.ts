@@ -88,9 +88,25 @@ function mergeResumeSessionLocal(
   };
 }
 
+/**
+ * 交互工具可能和别的工具在同一批里。等待点之后必须先跑完同批剩下的调用：
+ * 直接回到 llm 会留下没有结果的调用，整组调用（连同用户的回答）都无法进入模型上下文。
+ */
+function resolveResumeNodeId(local: EngineState['local'], requested: string | undefined): string {
+  const pending = local?.pendingToolCalls;
+  if (!Array.isArray(pending) || pending.length === 0) return requested ?? 'llm';
+  if (requested !== undefined && requested !== 'tool') {
+    throw new Error(
+      `Graph resume must first run ${pending.length} pending tool call(s) from the interrupted batch: requested node=${requested}`,
+    );
+  }
+  return 'tool';
+}
+
 export interface GraphResumeSessionInput {
   expectedRevision: number;
   localPatch: Record<string, unknown>;
+  /** 恢复后的起点。省略时：同批还有未执行的工具调用则先回 tool，否则 llm；有未执行调用时只接受 tool。 */
   nodeId?: string;
   expectedNodeId?: string;
   /** 本次 session execution 使用的步数预算；未传时沿用已持久化预算或 executor 默认值。 */
@@ -249,6 +265,7 @@ export class GraphExecutor {
       }
 
       const resumedLocal = mergeResumeSessionLocal(current.local, input.localPatch);
+      const nodeId = resolveResumeNodeId(resumedLocal, input.nodeId);
       if (this.executionCheckpointPort && current.local?.executorLocal) {
         resumedLocal.executorLocal = { ...current.local.executorLocal };
       }
@@ -257,7 +274,7 @@ export class GraphExecutor {
       this.ephemeralLocals.set(checkpointKey, resumedLocal);
       await this.commitCheckpoint(checkpointKey, {
         ...current,
-        nodeId: input.nodeId ?? 'llm',
+        nodeId,
         ...(this.executionCheckpointPort ? { executionStatus: 'ready' } : {}),
         revision: currentRevision + 1,
         local: sanitizeCheckpointLocal(resumedLocal),
