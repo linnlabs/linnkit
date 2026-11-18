@@ -6,7 +6,7 @@ const { getToolDefinitionMock } = vi.hoisted(() => ({
 }));
 
 import { prepareToolExecution, prepareToolNodeContext } from '../toolNode.executionSetup';
-import { createRuntimeEventAdmissionSink } from './runtimeEventAdmissionFixture';
+import { createRuntimeEventRecorder } from '../../../../testkit';
 import { createToolOutputEvent, RunIdSchema, ToolCallIdSchema } from '../../../../contracts';
 
 describe('toolNode.executionSetup', () => {
@@ -29,7 +29,7 @@ describe('toolNode.executionSetup', () => {
       local: {
         conversationId: 'conv_1',
         turnId: 'turn_1',
-        runtimeEventSink: createRuntimeEventAdmissionSink('conv_1', 'run_1'),
+        runtimeEventSink: createRuntimeEventRecorder({ conversationId: 'conv_1', runId: 'run_1' }).sink,
         toolContext: {
           conversationView: {
             getWorkingHistoryEvents: baseGetHistory,
@@ -77,7 +77,7 @@ describe('toolNode.executionSetup', () => {
         toolContext: {
           conversationId: 'conv_root_1',
         },
-        runtimeEventSink: createRuntimeEventAdmissionSink('internal_1', 'run_1'),
+        runtimeEventSink: createRuntimeEventRecorder({ conversationId: 'internal_1', runId: 'run_1' }).sink,
       },
     };
 
@@ -113,7 +113,7 @@ describe('toolNode.executionSetup', () => {
         conversationId: 'internal_2',
         turnId: 'turn_2',
         toolContext: {},
-        runtimeEventSink: createRuntimeEventAdmissionSink('internal_2', 'run_2'),
+        runtimeEventSink: createRuntimeEventRecorder({ conversationId: 'internal_2', runId: 'run_2' }).sink,
       },
     };
 
@@ -166,7 +166,7 @@ describe('toolNode.executionSetup', () => {
         conversationId: 'internal_3',
         turnId: 'turn_3',
         toolContext: {},
-        runtimeEventSink: createRuntimeEventAdmissionSink('internal_3', 'run_3'),
+        runtimeEventSink: createRuntimeEventRecorder({ conversationId: 'internal_3', runId: 'run_3' }).sink,
       },
     };
 
@@ -212,7 +212,7 @@ describe('toolNode.executionSetup', () => {
         conversationId: '',
         turnId: 'turn_4',
         toolContext: {},
-        runtimeEventSink: createRuntimeEventAdmissionSink('conversation-invalid', 'run-invalid'),
+        runtimeEventSink: createRuntimeEventRecorder({ conversationId: 'conversation-invalid', runId: 'run-invalid' }).sink,
       },
     };
 

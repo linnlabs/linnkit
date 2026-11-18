@@ -1,14 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   createToolCallDecisionEvent,
-  RunIdSchema,
   ToolCallIdSchema,
   type RoutedRuntimeEvent,
 } from '../../../contracts';
-import { EventBus } from '../../execution/event-bus';
+import { createRuntimeEventRecorder } from '../../../testkit';
 import { EventBusEventPersistence } from '../../execution/eventBusEventPersistence';
-import { RuntimeEventPublisher } from '../../execution/runtimeEventPublisher';
-import { EventSequencer } from '../../execution/sequencer';
 import { MemoryCheckpointer } from '../checkpointer/memoryCheckpointer';
 import { GraphExecutor } from '../engine';
 import { createMonotonicEventStoreIdFactory } from '../event-store/base';
@@ -33,12 +30,8 @@ function fixture(batchSizes: readonly number[]) {
   }));
 
   function execution() {
-    const sequencer = new EventSequencer('conversation');
-    const eventBus = new EventBus(sequencer.getExecutionId());
+    const { eventBus, publisher } = createRuntimeEventRecorder();
     eventBus.on('event', envelope => live.push(envelope.payload));
-    const publisher = new RuntimeEventPublisher(eventBus, sequencer, {
-      run_id: RunIdSchema.parse('run'), lane: 'foreground', visibility: 'conversation',
-    });
     const persistence = new EventBusEventPersistence({
       eventBus, eventStore, nextEventStoreId,
       async checkpointWriter({ checkpointKey, checkpoint, events }) {

@@ -5,7 +5,7 @@ import { ToolNode } from '../nodes/toolNode';
 import { WaitUserNode } from '../nodes/waitUserNode';
 import type { EngineState, NodeResult } from '../types';
 import type { ObservationPreviewPort, ToolRuntimePort } from '../../tools/ports';
-import { createRuntimeEventAdmissionSink } from '../nodes/__tests__/runtimeEventAdmissionFixture';
+import { createRuntimeEventRecorder } from '../../../testkit';
 import {
   createToolOutputEvent,
   parseRuntimeEvents,
@@ -62,7 +62,7 @@ function runtimeLocal() {
   return {
     conversationId: CONVERSATION,
     turnId: TURN,
-    runtimeEventSink: createRuntimeEventAdmissionSink(CONVERSATION, RUN),
+    runtimeEventSink: createRuntimeEventRecorder({ conversationId: CONVERSATION, runId: RUN }).sink,
     toolContext: { runId: RUN },
   };
 }

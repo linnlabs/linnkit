@@ -1,18 +1,16 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   createHostToolCallBootstrap,
-  execution,
   GraphExecutor,
   MemoryCheckpointer,
   ToolNode,
   type GraphNode,
-  type RuntimeEventSink,
 } from '../../index';
+import { createRuntimeEventRecorder } from '../../../testkit';
 import {
   createUserInputEvent,
   RuntimeEvent as RuntimeEventSchema,
   type RuntimeEvent,
-  RunIdSchema,
 } from '../../../contracts';
 import type { ObservationPreviewPort, ToolRuntimePort } from '../../tools';
 
@@ -104,14 +102,7 @@ describe('createHostToolCallBootstrap', () => {
       toolCallId: 'call-system',
       args: { value: 42 },
     });
-    const sequencer = new execution.EventSequencer('conversation-system');
-    const eventBus = new execution.EventBus(sequencer.getExecutionId());
-    const publisher = new execution.RuntimeEventPublisher(eventBus, sequencer, {
-      run_id: RunIdSchema.parse('run-system'),
-      lane: 'foreground',
-      visibility: 'conversation',
-    });
-    const runtimeEventSink: RuntimeEventSink = (event, source) => publisher.publish(event, source);
+    const runtimeEventSink = createRuntimeEventRecorder({ conversationId: 'conversation-system', runId: 'run-system' }).sink;
 
     await executor.prime(
       'checkpoint-system',
@@ -164,14 +155,7 @@ describe('createHostToolCallBootstrap', () => {
       args: { locator: 'workspace:/notes.md' },
       completionMode: 'yield_after_batch',
     });
-    const sequencer = new execution.EventSequencer('conversation-cli');
-    const eventBus = new execution.EventBus(sequencer.getExecutionId());
-    const publisher = new execution.RuntimeEventPublisher(eventBus, sequencer, {
-      run_id: RunIdSchema.parse('run-cli'),
-      lane: 'foreground',
-      visibility: 'conversation',
-    });
-    const runtimeEventSink: RuntimeEventSink = (event, source) => publisher.publish(event, source);
+    const runtimeEventSink = createRuntimeEventRecorder({ conversationId: 'conversation-cli', runId: 'run-cli' }).sink;
 
     await executor.prime(
       'checkpoint-cli',

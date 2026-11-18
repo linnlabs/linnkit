@@ -3,7 +3,7 @@ import { createThoughtEvent, ToolCallIdSchema, type RoutedRuntimeEvent } from '.
 import { GraphExecutor } from '../engine';
 import { MemoryCheckpointer } from '../checkpointer/memoryCheckpointer';
 import { ToolNode } from '../nodes/toolNode';
-import { createRuntimeEventAdmissionSink } from '../nodes/__tests__/runtimeEventAdmissionFixture';
+import { createRuntimeEventRecorder } from '../../../testkit';
 import { RunPauseRequested, type ToolRecoveryPort } from '../definitions/runContinuation';
 import type { EngineLocalState, EngineState } from '../types';
 import type { ToolExecutionPort, ToolExecutionResult } from '../../tools/ports';
@@ -17,7 +17,7 @@ function fixture() {
   const durable: RoutedRuntimeEvent[] = [];
   let staged: RoutedRuntimeEvent[] = [];
   let rejectCommit: ((state: EngineState) => boolean) | undefined;
-  const sink = createRuntimeEventAdmissionSink('conversation', 'run');
+  const sink = createRuntimeEventRecorder({ conversationId: 'conversation', runId: 'run' }).sink;
   const capabilities: Pick<EngineLocalState, 'runtimeEventSink' | 'toolContext'> = {
     toolContext: { conversationId: 'conversation', turnId: 'turn' },
     runtimeEventSink(event, source) {

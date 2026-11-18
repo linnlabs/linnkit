@@ -8,7 +8,7 @@ import {
   MODEL_INPUT_ERROR_CODES,
   ModelInputCapabilityError,
 } from '../../../llm/input-capabilities';
-import { createRuntimeEventAdmissionSink } from './runtimeEventAdmissionFixture';
+import { createRuntimeEventRecorder } from '../../../../testkit';
 import { RunIdSchema, ToolCallIdSchema } from '../../../../contracts';
 import { setLlmAuditRecorder } from '../../../../shared/llmAuditRecorder';
 
@@ -33,7 +33,7 @@ function buildState(call: StandardToolCall): EngineState {
       conversationId: 'conv-audit',
       turnId: 'turn-audit',
       history: [],
-      runtimeEventSink: createRuntimeEventAdmissionSink('conv-audit', 'run-audit'),
+      runtimeEventSink: createRuntimeEventRecorder({ conversationId: 'conv-audit', runId: 'run-audit' }).sink,
       toolContext: {
         conversationId: 'conv-audit',
         turnId: 'turn-audit',

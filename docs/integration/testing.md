@@ -1,9 +1,9 @@
 # Testing · 用 testkit 测接入
 
-> **What** · `@linnlabs/linnkit/testkit` 测试底座 —— scripted canonical inference / graph loop harness / tool fixtures / replay harness / 26 条 strict invariants（15 run + 11 contextPolicy + C12 tokenizer）。
+> **What** · `@linnlabs/linnkit/testkit` 测试底座 —— graph scenario（真实 Graph + 脚本模型 / 工具 / 插话）/ scripted canonical inference / graph loop harness / tool fixtures / replay harness / strict invariants（15 run + 11 contextPolicy + C12 tokenizer + 5 steering）。
 > **When to read** · 写第一个 agent 单测；要校验 `contextPolicy` 决策；要 mock LLM / tokenizer / telemetry / audit；做接入回归。
 > **Prerequisites** · [`02-quickstart.md`](./02-quickstart.md)。
-> **Key exports** · `createGraphLoopHarness` / `createScriptedInferenceHarness` / `createContextPipelineHarness` / `createRunSupervisorHarness` / `createCollectingAuditPort` / `createMockTelemetryPort` / `createMockTokenizerPort` from `@linnlabs/linnkit/testkit`。
+> **Key exports** · `createGraphScenario` / `createScriptedToolRuntime` / `createPendingUserInputQueue` / `createRuntimeEventRecorder` / `formatRuntimeTimeline` / `assertSteeringInvariants` / `createGraphLoopHarness` / `createScriptedInferenceHarness` / `createContextPipelineHarness` / `createRunSupervisorHarness` / `createCollectingAuditPort` / `createMockTelemetryPort` / `createMockTokenizerPort` from `@linnlabs/linnkit/testkit`。
 > **Related** · [`context-engineering.md` §9.4.6](./context-engineering.md) · [`audit.md`](./audit.md) · [`telemetry.md`](./telemetry.md) · [`constraints-and-pitfalls.md`](./constraints-and-pitfalls.md)（`AGENT-GUARD-10-no-testkit-in-production`）
 
 `@linnlabs/linnkit/testkit` 是 **package-neutral** 的测试底座。它**只**给你"linnkit 自己的合同"测试用的 primitive；不替代你的 host-bound testkit。
@@ -24,7 +24,13 @@ host application-layer test（产品级）：跟 linnkit 没关系
 
 | primitive | 用途 |
 |---|---|
-| `createScriptedInferenceHarness` | 脚本化 canonical inference port，可验证 request 和结构化事件 |
+| `createGraphScenario` | 在内存里跑真实 Graph（LlmNode / ToolNode / WaitUserNode、事件总线、持久化队列、JSON 往返断点），模型、工具、插话用脚本代替；见 §2.1 |
+| `createScriptedInferenceHarness` | 脚本化 canonical inference port：回合表或按请求决定回合的函数；`assertCall` 可异步，用来断言请求或在这次调用进行中触发动作；`getInferencePort()` 交给 Host 自己的装配 |
+| `createScriptedToolRuntime` | 按名字写工具脚本，得到真实 `ToolRuntimePort`；返回 `{ error }` 是工具报错，抛错是端口失败 |
+| `createPendingUserInputQueue` | 内存版 `PendingUserInputPort`（submit / withdraw / drain） |
+| `createRuntimeEventRecorder` | 正式 `EventSequencer + EventBus + RuntimeEventPublisher` 发布链，并按顺序记下总线事件 |
+| `formatRuntimeTimeline` / `formatModelMessages` | 把事件 / 一次模型调用的消息写成一行一个的可读时间线，用于整体断言和失败现场 |
+| `validateSteeringInvariants` / `assertSteeringInvariants` | 运行中插话的 5 条不变量（S1–S5），按模型实际收到的消息判断 |
 | `createGraphLoopHarness` | 装配 graph loop / LlmNode factory / observationPreview 的最小 harness；`runtimeEventSink` 必须由调用者提供 |
 | `createDefaultGraphExecutor` | 返回一个最小默认 `GraphExecutor`（仅测试用）|
 | `createReplayHarness` | context replay harness |
@@ -45,6 +51,35 @@ import {
   assertions,
 } from '@linnlabs/linnkit/testkit';
 ```
+
+### 2.1 用场景写 Graph 测试
+
+一个场景就是一段会话：可以连续开多次运行，在模型调用或工具执行的任意时刻插话、暂停、取消，最后看时间线与不变量。
+
+```ts
+const scenario = createGraphScenario({
+  model: [
+    { toolCalls: [{ name: 'search', arguments: { q: 'x' } }] },
+    { contentChunks: ['done'] },
+  ],
+  tools: { search: () => { scenario.steer('只看今年的'); return 'found 3'; } },
+});
+
+const run = await scenario.start('查一下 X');     // { status: 'yielded', undeliveredSteers: [] }
+expect(await scenario.timeline()).toEqual([
+  'user "查一下 X"',
+  'call search#call_1_1',
+  'result search#call_1_1 success "found 3"',
+  'steer "只看今年的"',
+  'answer "done"',
+]);
+await scenario.assertInvariants();                // 插话不变量 + 历史 id 唯一
+```
+
+- 运行结果以状态返回（`yielded / awaiting_user / paused / cancelled / failed`），失败不打断测试，适合随机组合；`undeliveredSteers` 是运行停下时 Host 收回的插话。
+- `pause()` 后用 `continue()` 从断点继续；`beforeCheckpointWrite` 抛错即模拟存储失败；`history` 选项预置会话里已有的历史。
+- 默认用 Agent profile 把历史转成模型消息；需要特殊 Prompt 或 `outputProcessor` 时传 `contextBuilder`。
+- Host 有自己的运行装配（持久化、实时通道、插话登记）时，用 `getInferencePort()`、`createScriptedToolRuntime()` 和 `assertSteeringInvariants()` 接进自己的第二层 harness，不必复制这些脚本。
 
 ## 3. 最小 run 协议测试
 
@@ -101,8 +136,9 @@ Child-run 的 host-bound harness 还必须装配真实 lifecycle，不能让 `Ch
 
 | 场景 | 用法 |
 |---|---|
-| 工具抛错 | `harness.tools.injectThrowOnce({ tool: 'echo', error: new Error('boom') })` |
+| 工具报错 / 端口抛错 | 工具脚本返回 `{ error }`（模型看到错误结果）/ 直接抛错（运行失败） |
 | LLM 失败终态 | scripted turn 传入 `failure: { kind, code, retryable }` |
 | LLM 事件后中断 | scripted turn 传入 `throwAfterEvents`，验证截断 stream |
+| 某一时刻插话、暂停、取消 | 在 scripted turn 的 `assertCall` 或工具脚本里调用 `scenario.steer() / pause() / cancel()` |
 
 跑完 scenario 后用 `assertRunInvariants(report)` 验证所有 15 条不变量都没被破坏。

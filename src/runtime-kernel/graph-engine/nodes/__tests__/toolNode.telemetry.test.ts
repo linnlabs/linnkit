@@ -4,7 +4,7 @@ import { ENGINE_STATE_SCHEMA_VERSION } from '../../types';
 import type { EngineState, StandardToolCall } from '../../types';
 import type { TelemetryPort } from '../../../telemetry/telemetryPort';
 import type { ToolExecutionResult } from '../../../tools/ports';
-import { createRuntimeEventAdmissionSink } from './runtimeEventAdmissionFixture';
+import { createRuntimeEventRecorder } from '../../../../testkit';
 import { RunIdSchema } from '../../../../contracts';
 
 function buildCall(overrides: Partial<StandardToolCall> = {}): StandardToolCall {
@@ -28,7 +28,7 @@ function buildState(call: StandardToolCall): EngineState {
       conversationId: 'conv_telemetry',
       turnId: 'turn_telemetry',
       history: [],
-      runtimeEventSink: createRuntimeEventAdmissionSink('conv_telemetry', 'run_telemetry'),
+      runtimeEventSink: createRuntimeEventRecorder({ conversationId: 'conv_telemetry', runId: 'run_telemetry' }).sink,
       toolContext: {
         runId: RunIdSchema.parse('run_telemetry'),
         parentRunId: RunIdSchema.parse('parent_run_telemetry'),
@@ -156,7 +156,7 @@ describe('ToolNode B2-engine Batch 2: TelemetryPort emit', () => {
         conversationId: 'conv',
         turnId: 'turn',
         history: [],
-        runtimeEventSink: createRuntimeEventAdmissionSink('conv', 'run_telemetry_empty'),
+        runtimeEventSink: createRuntimeEventRecorder({ conversationId: 'conv', runId: 'run_telemetry_empty' }).sink,
       },
     };
 

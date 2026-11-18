@@ -60,3 +60,14 @@ interface PendingUserInputPort {
 **不要**把插话塞进 system-reminder 或工具输出：system-reminder 只对当次调用生效，并沿用最后一条消息的角色。
 一批工具做完时最后一条正是工具结果，插话会被模型当作工具输出忽略，或当作提示注入；
 工具读到的内容也能写出同样的文本来冒充用户。
+
+## 4. 测试
+
+- `createPendingUserInputQueue()` 是端口的内存参考实现，可以直接交给 Graph，或对照它写 Host 自己的登记表测试。
+- `createGraphScenario()` 已装好这只队列：在工具脚本或 scripted turn 的 `assertCall` 里调用 `scenario.steer()`，
+  就是“工具执行中 / 第 N 次模型调用中”插话；`start()` 返回的 `undeliveredSteers` 是运行停下时收回的插话。
+- `assertSteeringInvariants({ history, modelCalls })` 按模型实际收到的消息检查五条不变量：只送达一次、
+  只在整批工具结算后送达、下一次模型调用就能看到且排在工具结果之后、每次调用里只出现一次、之后的调用都还带着它。
+  Host 用自己的持久历史和 `createScriptedInferenceHarness().getCalls()` 调用同一组检查。
+
+见 [`testing.md` §2.1](./testing.md#21-用场景写-graph-测试)。

@@ -7,7 +7,7 @@ import type {
   NodeResult,
   RuntimeEventSink,
 } from '../../graph-engine/types';
-import { EventBus, EventSequencer, RuntimeEventPublisher } from '../../execution';
+import { createRuntimeEventRecorder } from '../../../testkit';
 import { ChildRunInvoker } from '../childRunInvoker';
 import { GraphAgentExecutor } from '../../graph-engine/executor';
 import { LlmNode } from '../../graph-engine/nodes/llmNode';
@@ -49,16 +49,11 @@ const noopToolRuntime: Pick<ToolRuntimePort, 'getToolDefinition' | 'executeTool'
 };
 
 function createChildRuntimeEventSink(publishedEvents?: RuntimeEvent[]): RuntimeEventSink {
-  const sequencer = new EventSequencer('child-invoker-test');
-  const eventBus = new EventBus(sequencer.getExecutionId());
-  const publisher = new RuntimeEventPublisher(eventBus, sequencer, {
-    run_id: RunIdSchema.parse('child-invoker-test-run'),
-    parent_run_id: RunIdSchema.parse('child-invoker-test-parent'),
-    lane: 'child',
-    visibility: 'parent-trace',
+  const { sink } = createRuntimeEventRecorder({
+    conversationId: 'child-invoker-test', runId: 'child-invoker-test-run', parentRunId: 'child-invoker-test-parent',
   });
   return (event, source) => {
-    const published = publisher.publish(event, source);
+    const published = sink(event, source);
     publishedEvents?.push(published);
     return published;
   };

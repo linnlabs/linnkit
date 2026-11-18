@@ -2,21 +2,14 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   createFinalAnswerEvent,
   createRunExecutionMetricsEvent,
-  RunIdSchema,
 } from '../../../contracts';
-import { EventBus, EventSequencer, RuntimeEventPublisher } from '../../execution';
+import { createRuntimeEventRecorder } from '../../../testkit';
 import { ChildRunParentTraceProjection } from '../childRunParentTraceProjection';
 
 function createChildExecution() {
-  const sequencer = new EventSequencer('conversation-child-projection');
-  const eventBus = new EventBus(sequencer.getExecutionId());
-  const publisher = new RuntimeEventPublisher(eventBus, sequencer, {
-    run_id: RunIdSchema.parse('child-run-1'),
-    parent_run_id: RunIdSchema.parse('parent-run-1'),
-    lane: 'child',
-    visibility: 'parent-trace',
+  return createRuntimeEventRecorder({
+    conversationId: 'conversation-child-projection', runId: 'child-run-1', parentRunId: 'parent-run-1',
   });
-  return { eventBus, publisher };
 }
 
 describe('ChildRunParentTraceProjection', () => {

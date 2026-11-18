@@ -14,7 +14,7 @@ import {
   RunIdSchema,
   ToolCallIdSchema,
 } from '../../../../contracts';
-import { createRuntimeEventAdmissionSink } from './runtimeEventAdmissionFixture';
+import { createRuntimeEventRecorder } from '../../../../testkit';
 
 const { getToolDefinitionMock, executeToolMock } = vi.hoisted(() => ({
   getToolDefinitionMock: vi.fn(),
@@ -66,7 +66,7 @@ describe('ToolNode - 单元测试', () => {
         local: {
           conversationId: 'conv_1',
           turnId: 'turn_1',
-          runtimeEventSink: createRuntimeEventAdmissionSink('conv_1', 'run_basic'),
+          runtimeEventSink: createRuntimeEventRecorder({ conversationId: 'conv_1', runId: 'run_basic' }).sink,
         },
       };
 
@@ -89,7 +89,7 @@ describe('ToolNode - 单元测试', () => {
         local: {
           conversationId: 'conv_1',
           turnId: 'turn_1',
-          runtimeEventSink: createRuntimeEventAdmissionSink('conv_1', 'run_success'),
+          runtimeEventSink: createRuntimeEventRecorder({ conversationId: 'conv_1', runId: 'run_success' }).sink,
           pendingToolCalls: [
             {
               id: ToolCallIdSchema.parse('call_1'),
@@ -121,7 +121,7 @@ describe('ToolNode - 单元测试', () => {
         local: {
           conversationId: 'conv_1',
           turnId: 'turn_1',
-          runtimeEventSink: createRuntimeEventAdmissionSink('conv_1', 'run_governance'),
+          runtimeEventSink: createRuntimeEventRecorder({ conversationId: 'conv_1', runId: 'run_governance' }).sink,
           executorLocal: {
             stepCount: 0,
             toolObservationPolicy: {
@@ -165,7 +165,7 @@ describe('ToolNode - 单元测试', () => {
           // 模拟 internal 子 run：local.conversationId 是 internal_*
           conversationId: 'internal_1',
           turnId: 'turn_1',
-          runtimeEventSink: createRuntimeEventAdmissionSink('internal_1', 'run_child'),
+          runtimeEventSink: createRuntimeEventRecorder({ conversationId: 'internal_1', runId: 'run_child' }).sink,
           pendingToolCalls: [
             {
               id: ToolCallIdSchema.parse('call_1'),
@@ -209,7 +209,7 @@ describe('ToolNode - 单元测试', () => {
         local: {
           conversationId: 'conv_1',
           turnId: 'turn_1',
-          runtimeEventSink: createRuntimeEventAdmissionSink('conv_1', 'run_wait_user'),
+          runtimeEventSink: createRuntimeEventRecorder({ conversationId: 'conv_1', runId: 'run_wait_user' }).sink,
           pendingToolCalls: [
             {
               id: ToolCallIdSchema.parse('call_confirm_action_1'),
@@ -255,7 +255,7 @@ describe('ToolNode - 单元测试', () => {
         local: {
           conversationId: 'conv_1',
           turnId: 'turn_1',
-          runtimeEventSink: createRuntimeEventAdmissionSink('conv_1', 'run_truncation'),
+          runtimeEventSink: createRuntimeEventRecorder({ conversationId: 'conv_1', runId: 'run_truncation' }).sink,
           pendingToolCalls: [
             {
               id: ToolCallIdSchema.parse('call_1'),
@@ -301,7 +301,7 @@ describe('ToolNode - 单元测试', () => {
         local: {
           conversationId: 'conv_1',
           turnId: 'turn_2',
-          runtimeEventSink: createRuntimeEventAdmissionSink('conv_1', 'run_cache_hit'),
+          runtimeEventSink: createRuntimeEventRecorder({ conversationId: 'conv_1', runId: 'run_cache_hit' }).sink,
           history: [
             createToolOutputEvent(
               'cached-output',
@@ -371,7 +371,7 @@ describe('ToolNode - 单元测试', () => {
         local: {
           conversationId: 'conv_1',
           turnId,
-          runtimeEventSink: createRuntimeEventAdmissionSink('conv_1', `run_${turnId}`),
+          runtimeEventSink: createRuntimeEventRecorder({ conversationId: 'conv_1', runId: `run_${turnId}` }).sink,
           history: [],
           pendingToolCalls: [
             {
@@ -432,7 +432,7 @@ describe('ToolNode - 单元测试', () => {
         local: {
           conversationId: 'conv_1',
           turnId: 'turn_1',
-          runtimeEventSink: createRuntimeEventAdmissionSink('conv_1', 'run_contract_error'),
+          runtimeEventSink: createRuntimeEventRecorder({ conversationId: 'conv_1', runId: 'run_contract_error' }).sink,
           pendingToolCalls: [
             {
               id: ToolCallIdSchema.parse('call_contract'),
@@ -467,7 +467,7 @@ describe('ToolNode - 单元测试', () => {
         local: {
           conversationId: 'conv_1',
           turnId: 'turn_1',
-          runtimeEventSink: createRuntimeEventAdmissionSink('conv_1', 'run_execution_error'),
+          runtimeEventSink: createRuntimeEventRecorder({ conversationId: 'conv_1', runId: 'run_execution_error' }).sink,
           pendingToolCalls: [
             {
               id: ToolCallIdSchema.parse('call_1'),
@@ -508,7 +508,7 @@ describe('ToolNode - 单元测试', () => {
         local: {
           conversationId: 'conv_1',
           turnId: 'turn_1',
-          runtimeEventSink: createRuntimeEventAdmissionSink('conv_1', 'run_batch_error'),
+          runtimeEventSink: createRuntimeEventRecorder({ conversationId: 'conv_1', runId: 'run_batch_error' }).sink,
           pendingToolCalls: [
             {
               id: ToolCallIdSchema.parse('call_1'),
@@ -547,7 +547,7 @@ describe('ToolNode - 单元测试', () => {
         local: {
           conversationId: 'conv_1',
           turnId: 'turn_1',
-          runtimeEventSink: createRuntimeEventAdmissionSink('conv_1', 'run_batch_yield'),
+          runtimeEventSink: createRuntimeEventRecorder({ conversationId: 'conv_1', runId: 'run_batch_yield' }).sink,
           toolBatchCompletionMode: 'yield_after_batch',
           pendingToolCalls: [
             {
@@ -584,7 +584,7 @@ describe('ToolNode - 单元测试', () => {
         local: {
           conversationId: 'conv_1',
           turnId: 'turn_1',
-          runtimeEventSink: createRuntimeEventAdmissionSink('conv_1', 'run_batch_protocol'),
+          runtimeEventSink: createRuntimeEventRecorder({ conversationId: 'conv_1', runId: 'run_batch_protocol' }).sink,
           pendingToolCalls: [
             {
               id: ToolCallIdSchema.parse('call_bad_1'),
@@ -643,7 +643,7 @@ describe('ToolNode - 单元测试', () => {
         local: {
           conversationId: 'conv_1',
           turnId: 'turn_1',
-          runtimeEventSink: createRuntimeEventAdmissionSink('conv_1', 'run_protocol_first'),
+          runtimeEventSink: createRuntimeEventRecorder({ conversationId: 'conv_1', runId: 'run_protocol_first' }).sink,
           pendingToolCalls: [
             {
               id: ToolCallIdSchema.parse('call_1'),
@@ -691,7 +691,7 @@ describe('ToolNode - 单元测试', () => {
         local: {
           conversationId: 'conv_1',
           turnId: 'turn_1',
-          runtimeEventSink: createRuntimeEventAdmissionSink('conv_1', 'run_protocol_third'),
+          runtimeEventSink: createRuntimeEventRecorder({ conversationId: 'conv_1', runId: 'run_protocol_third' }).sink,
           _consecutiveToolProtocolErrors: 2,
           pendingToolCalls: [
             {
@@ -723,7 +723,7 @@ describe('ToolNode - 单元测试', () => {
         local: {
           conversationId: 'conv_1',
           turnId: 'turn_1',
-          runtimeEventSink: createRuntimeEventAdmissionSink('conv_1', 'run_protocol_fourth'),
+          runtimeEventSink: createRuntimeEventRecorder({ conversationId: 'conv_1', runId: 'run_protocol_fourth' }).sink,
           _consecutiveToolProtocolErrors: 3,
           pendingToolCalls: [
             {
@@ -747,7 +747,7 @@ describe('ToolNode - 单元测试', () => {
         local: {
           conversationId: 'conv_1',
           turnId: 'turn_1',
-          runtimeEventSink: createRuntimeEventAdmissionSink('conv_1', 'run_json_error'),
+          runtimeEventSink: createRuntimeEventRecorder({ conversationId: 'conv_1', runId: 'run_json_error' }).sink,
           pendingToolCalls: [
             {
               id: ToolCallIdSchema.parse('call_1'),
@@ -789,7 +789,7 @@ describe('ToolNode - 单元测试', () => {
       abortError.name = 'AbortError';
       executeToolMock.mockRejectedValue(abortError);
       const publishedEvents: RuntimeEvent[] = [];
-      const admittedSink = createRuntimeEventAdmissionSink('conv_1', 'run_abort');
+      const admittedSink = createRuntimeEventRecorder({ conversationId: 'conv_1', runId: 'run_abort' }).sink;
 
       const state: EngineState = {
         nodeId: 'tool',
@@ -830,7 +830,7 @@ describe('ToolNode - 单元测试', () => {
 
   describe('4. SSE 事件分发', () => {
     it('应该通过 runtimeEventSink 分发事件', async () => {
-      const mockSseSink = vi.fn(createRuntimeEventAdmissionSink('conv_1', 'run_dispatch'));
+      const mockSseSink = vi.fn(createRuntimeEventRecorder({ conversationId: 'conv_1', runId: 'run_dispatch' }).sink);
       executeToolMock.mockResolvedValue({
         success: true,
         result: structuredToolResult('OK'),
@@ -912,7 +912,7 @@ describe('ToolNode - 单元测试', () => {
         local: {
           conversationId: 'conv_1',
           turnId: 'turn_1',
-          runtimeEventSink: createRuntimeEventAdmissionSink('conv_1', 'run_history'),
+          runtimeEventSink: createRuntimeEventRecorder({ conversationId: 'conv_1', runId: 'run_history' }).sink,
           history: existingHistory,
           pendingToolCalls: [
             {

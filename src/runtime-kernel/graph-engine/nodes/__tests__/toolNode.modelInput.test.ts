@@ -13,7 +13,7 @@ import type {
 } from '../../../tools/ports';
 import type { EngineState } from '../../types';
 import { ToolNode } from '../toolNode';
-import { createRuntimeEventAdmissionSink } from './runtimeEventAdmissionFixture';
+import { createRuntimeEventRecorder } from '../../../../testkit';
 import { MemoryEventStore } from '../../event-store/memoryEventStore';
 import { describeRuntimeEventLifecycle } from '../../../events';
 
@@ -59,7 +59,7 @@ function buildState(history: RuntimeEvent[] = []): EngineState {
       conversationId: 'conv-model-input',
       turnId: 'turn-model-input',
       history,
-      runtimeEventSink: createRuntimeEventAdmissionSink('conv-model-input', 'run-model-input'),
+      runtimeEventSink: createRuntimeEventRecorder({ conversationId: 'conv-model-input', runId: 'run-model-input' }).sink,
       executorLocal: {
         stepCount: 1,
         lastSuccessfulLlmModelId: 'vision-model',

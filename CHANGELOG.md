@@ -39,6 +39,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `delivery: 'mid_run'`, so clients learn where a steer was delivered while
   the run is still going. Starting inputs are still not sent back. Clients
   that switch exhaustively over `SSEEvent['type']` need a `user_input` case.
+- testkit: `createGraphScenario` runs the real Graph in memory (LlmNode,
+  ToolNode, WaitUserNode, the event bus, the persistence queue and a JSON
+  round-trip of every checkpoint) with a scripted model, scripted tools and an
+  in-memory steering queue. A scenario can start several runs in one
+  conversation, steer, pause, continue or cancel at any point, and returns the
+  run status instead of throwing. Supporting exports:
+  `createScriptedToolRuntime`, `createPendingUserInputQueue`,
+  `createRuntimeEventRecorder`, `formatRuntimeTimeline`,
+  `formatModelMessages`, `userInputText`, and the steering invariants
+  `validateSteeringInvariants` / `assertSteeringInvariants` (S1–S5).
+- testkit: `createScriptedInferenceHarness` also accepts a function that
+  chooses each turn from the request, awaits an async `assertCall`, exposes
+  `getInferencePort()`, and lets a scripted tool call omit `id` (generated per
+  call) and pass `arguments` as an object instead of `argumentsJson`.
 
 ---
 

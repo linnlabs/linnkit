@@ -1,46 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { RunIdSchema, SSEFinalAnswerChunkEvent, runtimeEventToSSEEvent, type RoutedRuntimeEvent } from '../../../contracts';
-import { createScriptedInferenceHarness, type ScriptedLlmTurn } from '../../../testkit';
-import { EventBus } from '../../execution/event-bus';
-import { EventBusEventPersistence } from '../../execution/eventBusEventPersistence';
-import { RuntimeEventPublisher } from '../../execution/runtimeEventPublisher';
-import { EventSequencer } from '../../execution/sequencer';
-import type { ToolRuntimePort } from '../../tools/ports';
-import { GraphAgentExecutor } from '../executor';
-import { GraphExecutor } from '../engine';
-import { MemoryCheckpointer } from '../checkpointer/memoryCheckpointer';
-import { createMonotonicEventStoreIdFactory } from '../event-store/base';
-import { MemoryEventStore } from '../event-store/memoryEventStore';
-import { parseEngineCheckpoint } from '../functions/parseEngineCheckpoint';
-import { LlmNode } from '../nodes/llmNode';
+import { SSEFinalAnswerChunkEvent, runtimeEventToSSEEvent } from '../../../contracts';
+import { createGraphScenario, type ScriptedLlmTurn } from '../../../testkit';
 
 async function runStream(turns: ScriptedLlmTurn[], processStreamChunk: (chunk: string) => string) {
-  const ai = createScriptedInferenceHarness(turns);
-  const checkpointer = new MemoryCheckpointer();
-  const eventStore = new MemoryEventStore();
-  const live: RoutedRuntimeEvent[] = [];
-  const sequencer = new EventSequencer('conversation');
-  const eventBus = new EventBus(sequencer.getExecutionId());
-  eventBus.on('event', envelope => live.push(envelope.payload));
-  const publisher = new RuntimeEventPublisher(eventBus, sequencer, {
-    run_id: RunIdSchema.parse('run'), lane: 'foreground', visibility: 'conversation',
-  });
-  const persistence = new EventBusEventPersistence({
-    eventBus, eventStore, nextEventStoreId: createMonotonicEventStoreIdFactory(),
-    async checkpointWriter({ checkpointKey, checkpoint, events }) {
-      const serialized: unknown = JSON.parse(JSON.stringify(checkpoint));
-      await checkpointer.save(checkpointKey, parseEngineCheckpoint(serialized));
-      for (const event of events) await eventStore.append(event);
-    },
-  });
-  persistence.connect();
-  const toolRuntime: ToolRuntimePort = {
-    getToolSchemas: () => [],
-    getToolDefinition: () => undefined,
-    async executeTool() { throw new Error('Text stream must not execute tools'); },
-  };
-  const reasoner = new GraphAgentExecutor({
-    llmCaller: ai.getLlmCaller(), toolRuntime,
+  const scenario = createGraphScenario({
+    model: turns,
     contextBuilder: {
       async build() {
         return {
@@ -50,27 +14,15 @@ async function runStream(turns: ScriptedLlmTurn[], processStreamChunk: (chunk: s
       },
     },
   });
-  const graph = new GraphExecutor(checkpointer, {
-    executionCheckpointPort: { commit: (key, state) => persistence.commitCheckpoint(key, state) },
-  });
-  graph.registerNode(new LlmNode({ reasoner }));
-  try {
-    await graph.startSession('run', {
-      conversationId: 'conversation', turnId: 'turn', history: [],
-      request: { query: 'Complete the answer', promptKey: 'agent', model_id: 'model', enableTools: false },
-      toolContext: { conversationId: 'conversation', turnId: 'turn' },
-      runtimeEventSink: (event, source) => publisher.publish(event, source),
-    }, 'llm');
-    persistence.finishCheckpointWrites();
-    await persistence.drain();
-    ai.assertAllTurnsConsumed();
-    return {
-      live, calls: ai.getCalls(), checkpoint: await checkpointer.load('run'),
-      stored: (await eventStore.range('conversation')).map(item => item.event),
-    };
-  } finally {
-    eventBus.close();
-  }
+  const run = await scenario.start('Complete the answer');
+  if (run.status === 'failed') throw run.error;
+  scenario.model.assertAllTurnsConsumed();
+  return {
+    live: scenario.live,
+    calls: scenario.modelCalls(),
+    checkpoint: await scenario.checkpoint(),
+    stored: await scenario.history(),
+  };
 }
 
 describe('filtered text chunks across the real LLM, Graph and persistence boundary', () => {

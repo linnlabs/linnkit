@@ -4,7 +4,7 @@ import type { EngineState } from '../../types';
 import type { PendingUserInput, PendingUserInputPort } from '../../definitions/pendingUserInput';
 import { RunPauseRequested } from '../../definitions/runContinuation';
 import type { ObservationPreviewPort, ToolRuntimePort } from '../../../tools/ports';
-import { createRuntimeEventAdmissionSink } from './runtimeEventAdmissionFixture';
+import { createPendingUserInputQueue, createRuntimeEventRecorder } from '../../../../testkit';
 import { ToolCallIdSchema, type RuntimeEvent } from '../../../../contracts';
 
 function call(id: string, name: string) {
@@ -12,22 +12,13 @@ function call(id: string, name: string) {
 }
 
 function createPort(initial: PendingUserInput[]) {
-  let pending = [...initial];
-  const claimed: string[][] = [];
-  const port: PendingUserInputPort & { claimed: string[][] } = {
-    claimed,
-    claim: vi.fn(() => {
-      const taken = pending;
-      pending = [];
-      claimed.push(taken.map(input => input.id));
-      return taken;
-    }),
-    confirm: vi.fn(),
-    release: vi.fn((ids: readonly string[]) => {
-      pending = [...initial.filter(input => ids.includes(input.id)), ...pending];
-    }),
-  };
-  return port;
+  const queue = createPendingUserInputQueue();
+  for (const input of initial) queue.submit(input.content, { id: input.id, timestamp: input.timestamp });
+  const port = queue.port;
+  vi.spyOn(port, 'claim');
+  vi.spyOn(port, 'confirm');
+  vi.spyOn(port, 'release');
+  return Object.assign(port, { queue });
 }
 
 function createState(input: {
@@ -42,7 +33,7 @@ function createState(input: {
     local: {
       conversationId: 'conv_steer',
       turnId: 'turn_steer',
-      runtimeEventSink: createRuntimeEventAdmissionSink('conv_steer', 'run_steer'),
+      runtimeEventSink: createRuntimeEventRecorder({ conversationId: 'conv_steer', runId: 'run_steer' }).sink,
       toolContext: {},
       pendingToolCalls: input.calls ?? [call('call_a', 'tool_a'), call('call_b', 'tool_b')],
       ...(input.port ? { pendingUserInputPort: input.port } : {}),
@@ -118,6 +109,7 @@ describe('ToolNode 运行中插话', () => {
     await expect(node.run(state)).rejects.toThrow('disk full');
     expect(port.release).toHaveBeenCalledWith(['steer_2']);
     expect(port.confirm).not.toHaveBeenCalled();
+    expect(port.queue.pending().map(input => input.id)).toEqual(['steer_2']);
   });
 
   it('剩余步数不够再调用一次模型时不取用', async () => {

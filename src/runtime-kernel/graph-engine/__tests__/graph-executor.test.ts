@@ -9,7 +9,7 @@ import type { Checkpointer } from '../checkpointer/base';
 import { MemoryCheckpointer } from '../checkpointer/memoryCheckpointer';
 import type { EngineState, GraphNode, NodeResult } from '../types';
 import { createThoughtEvent, routeRuntimeEvent, RunIdSchema } from '../../../contracts';
-import { EventBus, EventSequencer, RuntimeEventPublisher } from '../../execution';
+import { createRuntimeEventRecorder } from '../../../testkit';
 
 function createRoutedTestEvent(id: string) {
   return routeRuntimeEvent(
@@ -19,15 +19,7 @@ function createRoutedTestEvent(id: string) {
 }
 
 function createRuntimeEventSink() {
-  const sequencer = new EventSequencer('conv_test');
-  const eventBus = new EventBus(sequencer.getExecutionId());
-  const publisher = new RuntimeEventPublisher(eventBus, sequencer, {
-    run_id: RunIdSchema.parse('run_test'),
-    lane: 'foreground',
-    visibility: 'conversation',
-  });
-  return (event: Parameters<typeof routeRuntimeEvent>[0], source: string) =>
-    publisher.publish(event, source);
+  return createRuntimeEventRecorder({ conversationId: 'conv_test', runId: 'run_test' }).sink;
 }
 
 async function nextTask(): Promise<void> {

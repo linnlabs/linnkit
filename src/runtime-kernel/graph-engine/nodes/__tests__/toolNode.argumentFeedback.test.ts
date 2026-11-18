@@ -4,7 +4,7 @@ import { BaseTool, type ToolArgs, type ToolParameterSchema } from '../../../tool
 import type { ToolRuntimePort } from '../../../tools/ports';
 import type { EngineState } from '../../types';
 import { ToolNode } from '../toolNode';
-import { createRuntimeEventAdmissionSink } from './runtimeEventAdmissionFixture';
+import { createRuntimeEventRecorder } from '../../../../testkit';
 
 class SearchFixture extends BaseTool {
   readonly name = 'search_fixture';
@@ -53,7 +53,7 @@ describe('default argument feedback in the real tool lifecycle', () => {
     const state: EngineState = {
       nodeId: 'tool', local: {
         conversationId: 'argument-feedback', turnId: 'turn-argument-feedback',
-        runtimeEventSink: createRuntimeEventAdmissionSink('argument-feedback', 'run-argument-feedback'),
+        runtimeEventSink: createRuntimeEventRecorder({ conversationId: 'argument-feedback', runId: 'run-argument-feedback' }).sink,
         pendingToolCalls: pending('typo-call', original), toolContext: {},
       },
     };

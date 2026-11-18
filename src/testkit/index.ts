@@ -17,6 +17,17 @@ export {
   validateRunInvariants,
 } from './run-harness';
 export { createMockTokenizerPort } from './mocks/tokenizerPort';
+export {
+  assertSteeringInvariants,
+  createGraphScenario,
+  createPendingUserInputQueue,
+  createRuntimeEventRecorder,
+  createScriptedToolRuntime,
+  formatModelMessages,
+  formatRuntimeTimeline,
+  userInputText,
+  validateSteeringInvariants,
+} from './scenario';
 export { createToolContextFixture } from './tool-fixtures/toolContext';
 
 export type {
@@ -31,6 +42,7 @@ export type {
 export type {
   ScriptedInferenceHarness,
   ScriptedInferenceHarnessOptions,
+  ScriptedInferenceScript,
   ScriptedLlmCall,
   ScriptedLlmTurn,
   ScriptedToolCall,
@@ -60,3 +72,26 @@ export type {
   ToolContextFixtureOptions,
 } from './tool-fixtures/toolContext';
 export type { MockTokenizerPortOptions } from './mocks/tokenizerPort';
+export type {
+  GraphScenario,
+  GraphScenarioOptions,
+  GraphScenarioRun,
+  GraphScenarioStartInput,
+  GraphScenarioStatus,
+  PendingUserInputQueue,
+  PendingUserInputWithdrawResult,
+  RuntimeEventRecorder,
+  RuntimeEventRecorderOptions,
+  ScriptedToolExecution,
+  ScriptedToolHandler,
+  ScriptedToolInvocation,
+  ScriptedToolMap,
+  ScriptedToolOutcome,
+  ScriptedToolRuntime,
+  ScriptedToolSpec,
+  SteeringInvariantContext,
+  SteeringInvariantFailure,
+  SteeringInvariantId,
+  TimelineOptions,
+  ValidateSteeringInvariantsOptions,
+} from './scenario';

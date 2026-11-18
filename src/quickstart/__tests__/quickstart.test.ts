@@ -1,28 +1,22 @@
 import { describe, expect, it } from 'vitest';
 import type { CanonicalInferencePort } from '../../ports';
+import { createScriptedInferenceHarness } from '../../testkit';
 import { defineAgent } from '../defineAgent';
 import { defineConfig } from '../defineConfig';
 import { runAgent } from '../runAgent';
 
 function createScriptedInference(answer: string): CanonicalInferencePort {
-  return {
-    async *stream(request) {
-      yield { type: 'start', model_id: request.model_id, attempt_id: request.invocation.attempt_id };
-      yield { type: 'answer_delta', text: answer };
-      yield {
-        type: 'usage',
-        usage: {
-          inputTokens: 3,
-          outputTokens: 2,
-          totalTokens: 5,
-          source: 'provider-response-usage',
-          confidence: 'actual',
-          rawUsage: { prompt_tokens: 3, completion_tokens: 2, total_tokens: 5 },
-        },
-      };
-      yield { type: 'finish', reason: 'stop' };
+  return createScriptedInferenceHarness(() => ({
+    contentChunks: [answer],
+    canonicalUsage: {
+      inputTokens: 3,
+      outputTokens: 2,
+      totalTokens: 5,
+      source: 'provider-response-usage',
+      confidence: 'actual',
+      rawUsage: { prompt_tokens: 3, completion_tokens: 2, total_tokens: 5 },
     },
-  };
+  })).getInferencePort();
 }
 
 describe('quickstart helpers', () => {

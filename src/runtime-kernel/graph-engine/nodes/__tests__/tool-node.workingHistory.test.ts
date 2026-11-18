@@ -14,7 +14,7 @@ import { ToolNode } from '../toolNode';
 import type { EngineState } from '../../types';
 import type { ObservationPreviewPort, ToolRuntimePort } from '../../../tools/ports';
 import type { ToolExecutionContext } from '../../../tools/toolExecutionContext';
-import { createRuntimeEventAdmissionSink } from './runtimeEventAdmissionFixture';
+import { createRuntimeEventRecorder } from '../../../../testkit';
 import { ToolCallIdSchema } from '../../../../contracts';
 
 const { getToolDefinitionMock, executeToolMock } = vi.hoisted(() => ({
@@ -79,7 +79,7 @@ describe('ToolNode - working history injection', () => {
       local: {
         conversationId: 'conv_1',
         turnId: 'turn_1',
-        runtimeEventSink: createRuntimeEventAdmissionSink('conv_1', 'run_working_history'),
+        runtimeEventSink: createRuntimeEventRecorder({ conversationId: 'conv_1', runId: 'run_working_history' }).sink,
         toolContext: sharedToolContext,
         pendingToolCalls: [
           {

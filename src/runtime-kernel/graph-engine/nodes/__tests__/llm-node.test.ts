@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { RuntimeEvent, RuntimeEventRoutingIdentity } from '../../../../contracts';
 import { LlmNode, type LlmNodeReasoner } from '../llmNode';
 import type { EngineState } from '../../types';
-import { createRuntimeEventAdmissionSink } from './runtimeEventAdmissionFixture';
+import { createRuntimeEventRecorder } from '../../../../testkit';
 import { RunIdSchema, ToolCallIdSchema } from '../../../../contracts';
 
 const contextUsage = {
@@ -31,7 +31,7 @@ const identity: RuntimeEventRoutingIdentity = {
   visibility: 'conversation',
 };
 
-const runtimeEventSink = createRuntimeEventAdmissionSink('conv_test', identity.run_id);
+const runtimeEventSink = createRuntimeEventRecorder({ conversationId: 'conv_test', runId: identity.run_id }).sink;
 
 function createState(local: NonNullable<EngineState['local']> = {}): EngineState {
   return {
@@ -126,7 +126,7 @@ describe('LlmNode orchestration', () => {
       contextUsage,
     }));
     const node = new LlmNode({ reasoner });
-    const admissionSink = createRuntimeEventAdmissionSink('conv_test', identity.run_id);
+    const admissionSink = createRuntimeEventRecorder({ conversationId: 'conv_test', runId: identity.run_id }).sink;
     const state = createState({
       runtimeEventSink: (event, source) => {
         const routed = admissionSink(event, source);
@@ -187,7 +187,7 @@ describe('LlmNode orchestration', () => {
       };
     });
     const node = new LlmNode({ reasoner });
-    const admissionSink = createRuntimeEventAdmissionSink('conv_test', identity.run_id);
+    const admissionSink = createRuntimeEventRecorder({ conversationId: 'conv_test', runId: identity.run_id }).sink;
     const state = createState({
       runtimeEventSink: (event, source) => {
         const routed = admissionSink(event, source);

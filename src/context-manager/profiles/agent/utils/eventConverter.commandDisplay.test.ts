@@ -1,15 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
-  execution,
   ToolNode,
   type EngineState,
 } from '../../../../runtime-kernel';
+import { createRuntimeEventRecorder } from '../../../../testkit';
 import type {
   ObservationPreviewPort,
   ToolRuntimePort,
 } from '../../../../runtime-kernel/tools';
 import {
-  RunIdSchema,
   ToolCallIdSchema,
   type RuntimeEvent,
 } from '../../../../contracts';
@@ -64,12 +63,8 @@ describe('command display data isolation', () => {
     const observationPreview: ObservationPreviewPort = {
       truncateObservation: async ({ text }) => ({ truncated: false, preview: text }),
     };
-    const sequencer = new execution.EventSequencer('conv-command-display');
-    const eventBus = new execution.EventBus(sequencer.getExecutionId());
-    const publisher = new execution.RuntimeEventPublisher(eventBus, sequencer, {
-      run_id: RunIdSchema.parse('run-command-display'),
-      lane: 'foreground',
-      visibility: 'conversation',
+    const { sink } = createRuntimeEventRecorder({
+      conversationId: 'conv-command-display', runId: 'run-command-display',
     });
     const state: EngineState = {
       nodeId: 'tool',
@@ -77,7 +72,7 @@ describe('command display data isolation', () => {
         conversationId: 'conv-command-display',
         turnId: 'turn-command-display',
         toolContext: {},
-        runtimeEventSink: (event, source) => publisher.publish(event, source),
+        runtimeEventSink: sink,
         pendingToolCalls: [{
           id: ToolCallIdSchema.parse('call-command-display'),
           type: 'function',
