@@ -253,6 +253,8 @@ Host 如持久化 compact trace，必须同时保存共享 retry/failure payload
 
 | RuntimeEvent | persist | replayToUi | enterAgentContext | realtime |
 |---|---|---|---|---|
+| `user_input`（运行起点）| ✓ | ✓ | ✓ | ✗ |
+| `user_input`（`delivery: 'mid_run'`）| ✓ | ✓ | ✓ | ✓ |
 | `final_answer_chunk` | ✗（ephemeral）| ✗ | ✗ | ✓ |
 | `final_answer` | ✓ | ✓ | ✓ | ✓ |
 | `tool_process` | ✗ | ✗ | ✗ | ✓ |
@@ -268,6 +270,8 @@ Host 如持久化 compact trace，必须同时保存共享 retry/failure payload
 | `audit_envelope` | ✓ | ✗ | ✗ | ✗ |
 
 `final_answer` 仍进入 realtime channel，但它不是第二条正文输入，只用于验证 chunk 聚合结果与规范身份、记录封口原因并结束该 answer segment。它不得替换 live message id。只有 `completion_reason=terminal` 可以被 settlement、复制与操作栏视为最终交付；`tool_call` 和 `interrupted` 仍可展示，但不得冒充终答。缺少 chunk 的非空完整答案是协议错误，不能静默渲染。
+
+运行起点的 `user_input` 由客户端在发送时自己先显示，不经实时通道回传。运行中途送达的插话（见 [`mid-run-user-input.md`](./mid-run-user-input.md)）由 Graph 在一批工具结算后写入，客户端事先不知道它落在哪里，因此投影为 SSE `user_input`：只带用户原文和 `delivery: 'mid_run'`，`id` 与客户端提交插话时给的编号相同，客户端据此确认送达并把它放进时间线。
 
 `tool_call_decision` 表示模型提交了调用清单，不等于所有调用正在执行。普通 ToolNode 串行消费清单，实际开始由 ephemeral `tool_process(start)` 表达。客户端不应为 decision 创建 queued/pending 可见行；未来 ToolNode 并行化时只是多个 process 同时开始，协议不变。无论成功、失败还是 run 取消，decision 中每个 `tool_call_id` 都必须有 durable `tool_output` 配对；未启动就取消的调用使用 error output 明确结算，不能让 Host 或 Renderer 把永久 loading 当成可恢复状态。
 

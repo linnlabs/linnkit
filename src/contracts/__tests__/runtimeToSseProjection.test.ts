@@ -465,4 +465,21 @@ describe('runtimeEventToSSEEvent', () => {
 
     expect(runtimeEventToSSEEvent(runtimeEvent)).toBeNull();
   });
+
+  it('运行中途送达的用户输入投影为 user_input，只带用户原文', () => {
+    const runtimeEvent = createUserInputEvent('evt_steer_1', 'conv_1', 'turn_1', '顺便看看机器学习', {
+      timestamp: 5,
+      delivery: 'mid_run',
+    });
+
+    expect(expectValidSSE(runtimeEvent)).toMatchObject({
+      id: 'evt_steer_1',
+      type: 'user_input',
+      content: '顺便看看机器学习',
+      delivery: 'mid_run',
+      turn_id: 'turn_1',
+    });
+    // 起点输入不能借这个类型回传。
+    expect(validateSSEEvent({ ...runtimeEventToSSEEvent(runtimeEvent), delivery: undefined }).success).toBe(false);
+  });
 });

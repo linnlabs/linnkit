@@ -312,6 +312,9 @@ export function describeRuntimeEventLifecycle(
       case 'run_execution_metrics':
       case 'history_summary':
         return 'event_bus_sse';
+      case 'user_input':
+        // 起点输入由客户端自己先显示；只有运行中途送达的插话需要实时告知客户端。
+        return event.type === 'user_input' && event.delivery === 'mid_run' ? 'event_bus_sse' : 'none';
       case 'audit_envelope':
         return 'none';
       default:

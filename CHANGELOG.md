@@ -33,6 +33,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cleanup, tool history grouping and working-memory protection are unchanged.
   Steers in the current run are core context and are protected from
   compaction; steers from earlier runs are treated as historical user text.
+- `SSEUserInputEvent` in the `SSEEvent` union. A mid-run `user_input` goes to
+  the realtime channel (`shouldEmitRuntimeEventToSse` is true) and
+  `runtimeEventToSSEEvent` projects it with the user's text and
+  `delivery: 'mid_run'`, so clients learn where a steer was delivered while
+  the run is still going. Starting inputs are still not sent back. Clients
+  that switch exhaustively over `SSEEvent['type']` need a `user_input` case.
 
 ---
 

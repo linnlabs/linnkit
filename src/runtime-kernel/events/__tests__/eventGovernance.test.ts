@@ -309,6 +309,19 @@ describe('eventGovernance contract', () => {
     expect(shouldPersistRuntimeEvent(hiddenUserInput)).toBe(true);
   });
 
+  it('只有运行中途送达的 user_input 走实时通道', () => {
+    const startInput = createBaseEvent({ type: 'user_input', id: 'user_start', content: '开始', source: 'user' });
+    const steer = createBaseEvent({
+      type: 'user_input', id: 'user_steer', content: '补充', source: 'user', delivery: 'mid_run',
+    });
+
+    expect(shouldEmitRuntimeEventToSse(startInput)).toBe(false);
+    expect(shouldEmitRuntimeEventToSse(steer)).toBe(true);
+    expect(shouldPersistRuntimeEvent(steer)).toBe(true);
+    expect(shouldReplayRuntimeEventToUi(steer)).toBe(true);
+    expect(shouldEnterAgentContext(steer)).toBe(true);
+  });
+
   it('final_answer_chunk 应只走实时 SSE，不应进入历史回放', () => {
     const chunkEvent = createBaseEvent({
       type: 'final_answer_chunk',

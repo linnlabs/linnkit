@@ -69,6 +69,18 @@ export function parseSSEExecutionScope(
   });
 }
 
+/**
+ * 运行中途送达的用户输入（插话）。运行起点的用户输入由客户端自己先显示，不经 SSE 回传；
+ * 插话由 Host 在一批工具结算后写入，客户端只能从这里得知它送达的位置。
+ */
+export const SSEUserInputEvent = BaseSSEEvent.extend({
+  type: z.literal('user_input'),
+  content: z.string(),
+  delivery: z.literal('mid_run'),
+});
+
+export type SSEUserInputEvent = z.infer<typeof SSEUserInputEvent>;
+
 export const SSEThoughtEvent = BaseSSEEvent.extend({
   type: z.literal('thought'),
   thought_message_id: ThoughtMessageIdSchema.optional(),
@@ -292,6 +304,7 @@ export type SSESummarizationErrorEvent = z.infer<typeof SSESummarizationErrorEve
 
 export const SSEEvent = z
   .discriminatedUnion('type', [
+    SSEUserInputEvent,
     SSEThoughtEvent,
     SSEFinalAnswerChunkEvent,
     SSEFinalAnswerResetEvent,
@@ -379,6 +392,10 @@ export function runtimeEventToSSEEvent(event: RuntimeEvent): SSEEvent | null {
 
   switch (event.type) {
     case 'user_input':
+      // 只有插话需要实时送到客户端；起点输入客户端已经有了。
+      return event.delivery === 'mid_run'
+        ? { ...base, type: 'user_input', content: event.raw_content ?? event.content, delivery: 'mid_run' }
+        : null;
     case 'audit_envelope':
     case 'control':
       return null;

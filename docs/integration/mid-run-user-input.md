@@ -45,6 +45,10 @@ interface PendingUserInputPort {
 
 子运行不应装配该端口。没有装配时行为与以前完全相同。
 
+发布时机：插话在取用时经 `RuntimeEventSink` 发布，所以实时通道里它排在本批所有 `tool_output` 之后、
+下一次模型调用的事件之前。它是唯一走实时通道的 `user_input`：`runtimeEventToSSEEvent` 投影为 SSE
+`user_input`（用户原文 + `delivery: 'mid_run'`），客户端按 `id` 确认送达。运行起点的输入仍不回传。
+
 ## 3. 上下文里的形态
 
 - 事件层仍是 `user_input`，Host 的时间线投影、搜索等按普通用户消息处理即可。

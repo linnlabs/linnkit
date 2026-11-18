@@ -105,6 +105,7 @@ exports[`src/agent/contracts public exports snapshot > exposes the documented A-
   "SSEToolProcessEvent",
   "SSETransportEndEvent",
   "SSETransportErrorEvent",
+  "SSEUserInputEvent",
   "SYSTEM_REMINDER_BUILTIN_TRIGGER_KINDS",
   "SerializableJsonRecord",
   "SerializableJsonValue",
