@@ -99,7 +99,7 @@ export const AGENT_CONTEXT_BUILDER_CONFIG = {
   P1_CONTENT_TYPES: ['tool_calls', 'tool_output'] as const,
   
   /** P2优先级内容类型 - Agent专用 */
-  P2_CONTENT_TYPES: ['final_answer', 'user_input'] as const,
+  P2_CONTENT_TYPES: ['final_answer', 'user_input', 'user_steer'] as const,
   
   /** P3优先级内容类型 - Agent专用 */
   P3_CONTENT_TYPES: ['historical_tool_calls', 'historical_tool_result'] as const,

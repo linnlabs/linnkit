@@ -16,6 +16,17 @@ import { type ConversationMemoryPort } from './provider-sidecar';
 export function applyRuntimeEventToMemory(event: RuntimeEvent, memory: ConversationMemoryPort): void {
   switch (event.type) {
     case 'user_input': {
+      if (event.delivery === 'mid_run') {
+        // 插话是普通的用户话语，但不能成为“当前轮”的起点；上下文治理只认运行起点的 user_input。
+        memory.appendMessage({
+          id: event.id,
+          role: 'user',
+          type: 'user_steer',
+          content: event.content,
+          timestamp: event.timestamp,
+        });
+        break;
+      }
       memory.addUserMessage(event.content, event.id, event.attachments);
       break;
     }

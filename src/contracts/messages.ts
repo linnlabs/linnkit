@@ -137,6 +137,15 @@ const UserInputMessage = BaseMessage.extend({
   attachments: RuntimeResourceRefs.optional(),
 });
 
+/**
+ * 运行中途送达的用户输入（插话）。发给模型时是普通的用户消息；
+ * 与 `user_input` 分开，是为了让“当前轮从哪里开始”仍以运行起点的输入为准。
+ */
+const UserSteerMessage = BaseMessage.extend({
+  role: z.literal('user'),
+  type: z.literal('user_steer'),
+});
+
 const UserContextMessage = BaseMessage.extend({
   role: z.literal('user'),
   // 产品上下文种类由 Host fence metadata 表达，不进入框架消息枚举。
@@ -146,7 +155,7 @@ const UserContextMessage = BaseMessage.extend({
   ]),
 });
 
-export const UserMessage = z.union([UserInputMessage, UserContextMessage]);
+export const UserMessage = z.union([UserInputMessage, UserSteerMessage, UserContextMessage]);
 
 export type UserMessage = z.infer<typeof UserMessage>;
 
@@ -239,9 +248,9 @@ export function createSystemMessage(
   };
 }
 
-type UserContextMessageType = Exclude<UserMessage['type'], 'user_input'>;
+type UserContextMessageType = Exclude<UserMessage['type'], 'user_input' | 'user_steer'>;
 type UserInputMessage = Extract<UserMessage, { type: 'user_input' }>;
-type UserContextMessage = Exclude<UserMessage, UserInputMessage>;
+type UserContextMessage = Exclude<UserMessage, UserInputMessage | { type: 'user_steer' }>;
 
 export function createUserMessage(
   type: 'user_input',

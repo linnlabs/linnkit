@@ -220,8 +220,10 @@ function collectProtectedMessageIds(input: {
 }): Set<string> {
   const protectedIds = new Set(input.retainedToolMessageIds);
   input.messages.forEach((message, index) => {
-    const alwaysKeepType = input.mustKeepPolicy.alwaysKeepTypes.includes(message.type)
-      && (message.type !== 'user_input' || index === input.latestUserIndex);
+    const alwaysKeepType = (input.mustKeepPolicy.alwaysKeepTypes.includes(message.type)
+      && (message.type !== 'user_input' || index === input.latestUserIndex))
+      // 本次运行中途的插话与起点输入一起保护，不能被摘要掉。
+      || (message.type === 'user_steer' && input.latestUserIndex !== -1 && index > input.latestUserIndex);
     const alwaysKeepFence = typeof message.metadata?.fenceKind === 'string'
       && input.mustKeepPolicy.alwaysKeepFenceKinds.includes(message.metadata.fenceKind);
     if (alwaysKeepType || alwaysKeepFence || hasAttachments(message)) {

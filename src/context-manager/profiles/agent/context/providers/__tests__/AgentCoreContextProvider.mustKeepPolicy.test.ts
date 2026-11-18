@@ -104,4 +104,22 @@ describe('AgentCoreContextProvider MustKeepPolicy', () => {
     expect(result.states.find(state => state.message.id === 'summary-old')?.action).toBe('skip');
     expect(result.states.find(state => state.message.id === 'summary-latest')?.action).toBe('keep_core');
   });
+
+  it('keeps the run start and this run\'s steers as core; earlier steers stay historical', async () => {
+    const messages: AiMessage[] = [
+      { id: 'old-start', role: 'user', type: 'user_input', content: 'old request', timestamp: 1 },
+      { id: 'old-steer', role: 'user', type: 'user_steer', content: 'old steer', timestamp: 2 },
+      { id: 'start', role: 'user', type: 'user_input', content: 'current request', timestamp: 3 },
+      { id: 'steer', role: 'user', type: 'user_steer', content: 'change direction', timestamp: 4 },
+    ];
+    const provider = new AgentCoreContextProvider();
+
+    const result = await provider.provide(messages.map(createState), 1000, createContext(messages));
+    const action = (id: string) => result.states.find(state => state.message.id === id)?.action;
+
+    expect(action('start')).toBe('keep_core');
+    expect(action('steer')).toBe('keep_core');
+    expect(action('old-start')).toBe('skip');
+    expect(action('old-steer')).toBe('skip');
+  });
 });

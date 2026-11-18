@@ -205,6 +205,29 @@ describe('selectContextCompactionCandidate', () => {
     ]);
   });
 
+  it('本次运行中途的插话和起点消息一样不被压缩替换', () => {
+    const candidate = selectContextCompactionCandidate({
+      messages: [
+        message({ id: 'system', role: 'system', type: 'system_prompt', timestamp: 1 }),
+        message({ id: 'user', role: 'user', type: 'user_input', timestamp: 2 }),
+        ...toolGroup('before_steer', 10),
+        message({ id: 'steer', role: 'user', type: 'user_steer', timestamp: 20 }),
+        ...toolGroup('after_steer', 30),
+      ],
+      totalBudget: 10,
+      inputBudgetTokens: 10,
+      policy: resolveContextCompactionPolicy({ keepLatestToolGroups: 0 }),
+      mustKeepPolicy: DEFAULT_MUST_KEEP_POLICY,
+      estimateTokens,
+    });
+
+    expect(candidate?.plan.replacedMessageIds).not.toContain('steer');
+    expect(candidate?.plan.replacedMessageIds).toEqual([
+      'assistant_before_steer',
+      'output_before_steer_0',
+    ]);
+  });
+
   it('不会跨过 must-keep fence 拼出离散替换区段', () => {
     const candidate = selectContextCompactionCandidate({
       messages: [

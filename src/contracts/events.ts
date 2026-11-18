@@ -98,6 +98,11 @@ const RuntimeEventShape = z.discriminatedUnion('type', [
     raw_content: z.string().optional(),
     source: z.enum(['user', 'editor', 'system']).default('user'),
     attachments: RuntimeResourceRefs.optional(),
+    /**
+     * 运行中途送达的用户输入（插话）。缺省表示运行起点的输入。
+     * 上下文里投影为 `user_steer`，不改变“当前轮从哪条 user_input 开始”的判定。
+     */
+    delivery: z.literal('mid_run').optional(),
   }),
   BaseEvent.extend({
     type: z.literal('thought'),

@@ -59,6 +59,7 @@ import {
 import { recordToolProtocolError } from '../../../shared/llmAuditRecorder';
 import { commitToolBoundary, executeRecoverableTool } from './toolNode.recovery';
 import { isRunPauseSignal, RunRecoveryBlockedError } from '../definitions/runContinuation';
+import { claimPendingUserInputs } from './toolNode.pendingUserInput';
 
 const logger = new Logger('ToolNode');
 
@@ -312,7 +313,20 @@ export class ToolNode implements GraphNode {
         });
         throw result.error;
       }
-      await commitToolBoundary(state, result);
+      // 插话只在整批结算、回到模型前送达，并与本次边界同一次提交。
+      const steering = await claimPendingUserInputs(state, result);
+      if (steering) {
+        result = { ...result, events: [...(result.events ?? []), ...steering.events] };
+        try {
+          await commitToolBoundary(state, result);
+        } catch (error) {
+          await steering.release();
+          throw error;
+        }
+        await steering.confirm();
+      } else {
+        await commitToolBoundary(state, result);
+      }
       if (Array.isArray(result.events) && result.events.length > 0) {
         events.push(...result.events);
       }

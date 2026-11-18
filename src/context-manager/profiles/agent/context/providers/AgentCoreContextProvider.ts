@@ -174,6 +174,11 @@ export class AgentCoreContextProvider extends BaseContextProvider {
     if (msg.type === 'user_input') {
       return index === latestUserInputIndex;
     }
+
+    // 规则2b: 本轮运行中途收到的插话和起点输入同等重要；更早运行里的插话按历史文本处理。
+    if (msg.type === 'user_steer') {
+      return latestUserInputIndex !== -1 && index > latestUserInputIndex;
+    }
     
     const fenceKind = msg.metadata?.fenceKind;
     if (fenceKind && this.mustKeepPolicy.alwaysKeepFenceKinds.includes(fenceKind)) {

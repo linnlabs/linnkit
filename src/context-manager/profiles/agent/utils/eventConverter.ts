@@ -87,6 +87,7 @@ export function convertAiMessageToEvent(
         type: 'user_input',
         content: message.content,
         source: 'user',
+        ...(message.type === 'user_steer' ? { delivery: 'mid_run' as const } : {}),
         ...(message.type === 'user_input' && message.attachments
           ? { attachments: message.attachments }
           : {}),

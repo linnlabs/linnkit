@@ -12,6 +12,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.44.0] - 2026-11-18
+
+### Added
+
+- Mid-run user input. A Host can give the Graph an optional
+  `pendingUserInputPort` (`PendingUserInput` / `PendingUserInputPort` in the
+  graph exports). After a tool batch settles and before the run returns to the
+  model, `ToolNode` claims the pending inputs, publishes each as a `user_input`
+  fact with `delivery: 'mid_run'` after all the batch's tool outputs, and
+  commits them with the same tool boundary. It confirms after the commit and
+  releases them back to the Host if the commit fails. Nothing is claimed when
+  the batch does not return to the model, when a pause or cancel signal has
+  arrived, or when no step is left for another model call. Child runs should
+  not receive the port. Hosts without the port behave as before.
+- `user_input.delivery` (optional, `'mid_run'`) and the `AiMessage` type
+  `user_steer`. A mid-run input enters the context as `user_steer` and is sent
+  to the model as an ordinary user message. The start of the current turn is
+  still the run's starting `user_input`, so current-turn fence assembly and
+  cleanup, tool history grouping and working-memory protection are unchanged.
+  Steers in the current run are core context and are protected from
+  compaction; steers from earlier runs are treated as historical user text.
+
+---
+
 ## [0.43.0] - 2026-11-12
 
 ### Fixed

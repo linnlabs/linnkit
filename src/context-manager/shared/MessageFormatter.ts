@@ -118,6 +118,8 @@ class MessageFormatter {
           content,
           ...(message.attachments ? { attachments: message.attachments } : {}),
         };
+      case 'user_steer':
+        return { role: 'user', content };
       case 'context_injection': {
         const fenceKind = metadata?.fenceKind;
         if (!fenceKind) {

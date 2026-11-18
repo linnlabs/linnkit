@@ -133,7 +133,8 @@ export interface GraphContinuationInput {
   /** 只能重建运行能力，不能覆盖持久请求、历史、模型或预算。 */
   readonly capabilities: Pick<EngineLocalState,
     'signal' | 'toolContext' | 'runtimeEventSink' | 'runtimeEventCommitPort'
-    | 'runtimeFailureFactSink' | 'summarizationCallbacks' | 'toolRecoveryPort'>;
+    | 'runtimeFailureFactSink' | 'summarizationCallbacks' | 'toolRecoveryPort'
+    | 'pendingUserInputPort'>;
 }
 
 export class GraphExecutor {

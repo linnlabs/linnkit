@@ -158,6 +158,7 @@ Memory fallback 补齐缺失依赖。需要接入多 agent、多 workspace 或�
 | 配置工具历史保留策略（per-pair / per-run / none；drop / compress）                              | [tool-history.md](./tool-history.md)                                                                                        |
 | 接持久化（Checkpointer / EventStore / RunRegistryStore）                                    | [persistence.md](./persistence.md)                                                                                          |
 | 接 RunSupervisor + RunHandle                                                           | [run-supervisor.md](./run-supervisor.md)                                                                                    |
+| 让用户在 Agent 跑工具时插话（运行中送达）                                            | [mid-run-user-input.md](./mid-run-user-input.md)                                                                            |
 | 接 wait_user / HITL 一次性恢复与跨 transport 观察                                      | [run-supervisor.md](./run-supervisor.md) / [realtime.md](./realtime.md)                                                     |
 | 同步嵌入 vs 异步后台子 agent                                                                   | [child-runs.md](./child-runs.md)                                                                                            |
 | 接 AuditPort（决策账本）                                                                     | [audit.md](./audit.md)                                                                                                      |

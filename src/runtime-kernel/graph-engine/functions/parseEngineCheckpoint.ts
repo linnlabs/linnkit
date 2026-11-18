@@ -47,7 +47,8 @@ const checkpoint = z.object({
 export function parseEngineCheckpoint(value: unknown): EngineState {
   const result = checkpoint.parse(SerializableJsonRecord.parse(value));
   for (const key of ['memory', 'signal', 'toolContext', 'runtimeEventSink', 'runtimeEventCommitPort',
-    'runtimeFailureFactSink', 'summarizationCallbacks', 'commitExecutionBoundary', 'toolRecoveryPort']) {
+    'runtimeFailureFactSink', 'summarizationCallbacks', 'commitExecutionBoundary', 'toolRecoveryPort',
+    'pendingUserInputPort']) {
     if (result.local && Object.hasOwn(result.local, key)) {
       throw new Error(`Checkpoint must not contain execution capability: ${key}`);
     }
