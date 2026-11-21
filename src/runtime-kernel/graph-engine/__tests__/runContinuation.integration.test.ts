@@ -26,7 +26,7 @@ function fixture() {
       return routed;
     },
   };
-  function engine(executeTool: ToolExecutionPort['executeTool']) {
+  function engine(executeTool: ToolExecutionPort['executeTool'], options: { abortGraceMs?: number } = {}) {
     const graph = new GraphExecutor(checkpointer, {
       maxSteps: 10,
       executionCheckpointPort: {
@@ -43,6 +43,7 @@ function fixture() {
     graph.registerNode(new ToolNode({
       toolRuntime: { getToolDefinition: () => ({ parameters: { type: 'object', properties: {} } }), executeTool },
       observationPreview: { async truncateObservation() { return { truncated: false, preview: 'saved' }; } },
+      ...options,
     }));
     return graph;
   }
@@ -205,6 +206,73 @@ describe('durable graph continuation', () => {
     const input = { expectedRevision: (await f.checkpoint()).revision, capabilities: f.capabilities };
     const results = await Promise.allSettled([engine.continueSession('run', input), engine.continueSession('run', input)]);
     expect(results.map(result => result.status)).toEqual(['fulfilled', 'rejected']);
+    expect(execute).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('停止期限：工具不理会停止信号', () => {
+  /** 一直不结束、也不理会 abort 的工具；release 后才返回。 */
+  function stuckTool() {
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    let started!: () => void;
+    const running = new Promise<void>(resolve => { started = resolve; });
+    const execute = vi.fn(async () => { started(); await gate; return success; });
+    return { execute, running, release };
+  }
+
+  it('暂停后超过期限就停下：当前调用留待对账，迟到的结果不写入', async () => {
+    const f = fixture();
+    const controller = new AbortController();
+    const tool = stuckTool();
+    const outcome = f.start(f.engine(tool.execute, { abortGraceMs: 20 }), controller.signal);
+    await tool.running;
+    const pausedAt = Date.now();
+    controller.abort(new RunPauseRequested());
+    await expect(outcome).rejects.toMatchObject({ name: 'AbortError' });
+    expect(Date.now() - pausedAt).toBeLessThan(1_000);
+    const { state } = await f.checkpoint();
+    // 与工具自己响应停止、结果未知时相同：继续前先对账。
+    expect(state.local?.executingToolCallId).toBe('call-1');
+    expect(state.local?.pendingToolCalls?.map(tool => tool.id)).toEqual(['call-1', 'call-2']);
+    tool.release();
+    await new Promise(resolve => setTimeout(resolve, 10));
+    expect(f.durable).toEqual([]);
+  });
+
+  it('取消后超过期限就停下：当前与未开始的调用都结算为已取消', async () => {
+    const f = fixture();
+    const controller = new AbortController();
+    const tool = stuckTool();
+    const outcome = f.start(f.engine(tool.execute, { abortGraceMs: 20 }), controller.signal);
+    await tool.running;
+    controller.abort();
+    await expect(outcome).rejects.toMatchObject({ name: 'AbortError' });
+    expect(f.durable.map(event => event.type === 'tool_output' && [event.tool_call_id, event.status]))
+      .toEqual([['call-1', 'error'], ['call-2', 'error']]);
+    tool.release();
+  });
+
+  it('期限内自己结束的工具保留真实结果', async () => {
+    const f = fixture();
+    const controller = new AbortController();
+    const execute = vi.fn(async () => {
+      controller.abort(new RunPauseRequested());
+      await new Promise(resolve => setTimeout(resolve, 5));
+      return success;
+    });
+    await expect(f.start(f.engine(execute, { abortGraceMs: 200 }), controller.signal)).rejects.toMatchObject({ name: 'AbortError' });
+    expect(f.durable.map(event => event.type === 'tool_output' && event.tool_call_id)).toEqual(['call-1']);
+  });
+
+  it('没有停止信号时不限制工具运行时长', async () => {
+    const f = fixture();
+    const execute = vi.fn(async () => {
+      await new Promise(resolve => setTimeout(resolve, 40));
+      return success;
+    });
+    const result = await f.start(f.engine(execute, { abortGraceMs: 5 }), new AbortController().signal);
+    expect(result.checkpoint).toMatchObject({ executionStatus: 'yielded' });
     expect(execute).toHaveBeenCalledTimes(2);
   });
 });

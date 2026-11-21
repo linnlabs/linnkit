@@ -54,6 +54,7 @@ const handle = await supervisor.registerRun({
 - transport `EventBus.close()` 不等于 run 终态。`awaiting_user` 会保留 handle/slot；恢复时 `claimResume.activate()` 把同一 RunHandle 换绑到新的 transport EventBus，并轮换 execution controller，`observeRun()` 可跨 transport 连续观察。同步 run 在 completed/failed/cancelled 后释放；detached 取消还必须等 executor settlement。
 - detached run 执行中如果 EventBus 提前 close，不会提前释放 active slot，避免后台 run 绕过并发限制；slot 会等 detached executor 终态 cleanup。
 - `pause()` 先持久化暂停意图，再以 `RunPauseRequested` 中断当前 attempt；此时 `status=paused` 且 `pausedAt` 缺失，表示仍在收口。Host 保存断点、收口当前 execution 后调用 `markPaused()`，才允许 `resumePausedRun()` 激活。它不创建用户消息，也不提交任何审批。
+- 收口不依赖工具配合：暂停或取消信号发出后，`ToolNode` 最多再等 `abortGraceMs`（默认 3 秒）。工具仍未结束就按 AbortError 处理，与工具自己响应停止走同一路径：暂停时当前调用留待继续前对账，取消时结算为已取消；迟到的结果丢弃，不进入历史。期限只从停止信号发出时计时，不限制工具正常运行时长。被放弃的工具若仍在后台运行，其副作用由 Host 的对账负责。
 - 面向异步客户端的暂停使用 `pause(runId, reason, expectedExecutionId)`；execution 身份在控制锁内核对，排队期间已经发生的继续不能被旧暂停命令中断。
 - `resumePausedRun({ runId, expectedUpdatedAt, executionId, eventBus })` 保留同一 run 并轮换 execution identity / signal。Host 必须先完成前一 execution 的收口，之后再启动 Graph `continueSession`。原本抛 NotImplementedError 的 `RunHandle.resume()` 已移除，避免把“改状态”误当成“调度 Graph”。`runTree/handleFailure` 仍未实现。
 

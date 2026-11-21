@@ -145,6 +145,8 @@ export interface ToolNodeDependencies {
   telemetryPort?: TelemetryPort;
   auditPort?: AuditPort;
   modelInputResolver?: ToolModelInputResolverPort;
+  /** 停止信号发出后等工具自行结束的期限；默认 3 秒，超时按中断处理并丢弃迟到结果。 */
+  abortGraceMs?: number;
 }
 
 export class ToolNode implements GraphNode {
@@ -156,8 +158,10 @@ export class ToolNode implements GraphNode {
   private readonly auditPort: AuditPort;
   private readonly modelInputResolver?: ToolModelInputResolverPort;
   private readonly idempotencyInFlight: ToolIdempotencyInFlightRegistry = new Map();
+  private readonly abortGraceMs?: number;
 
   constructor(dependencies: ToolNodeDependencies) {
+    this.abortGraceMs = dependencies.abortGraceMs;
     this.toolRuntime = dependencies.toolRuntime;
     this.observationPreview = dependencies.observationPreview;
     this.telemetryPort = dependencies.telemetryPort ?? noopTelemetry;
@@ -427,6 +431,13 @@ export class ToolNode implements GraphNode {
         state,
         call,
         context: prepared.toolContext,
+        abortGraceMs: this.abortGraceMs,
+        onAbandon: () => logger.warn('[ToolNode] 工具未在停止期限内结束，按中断处理并丢弃迟到结果', {
+          toolName: execution.toolName,
+          toolCallId: execution.toolCallId,
+          conversationId: prepared.conversationId,
+          turnId: prepared.turnId,
+        }),
         execute: () => executeToolWithIdempotency({
         idempotencyKey: execution.idempotencyKey,
         inFlight: this.idempotencyInFlight,

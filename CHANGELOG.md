@@ -12,6 +12,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.45.0] - 2026-11-21
+
+### Added
+
+- Abort grace period for tools. After a pause or cancel signal, `ToolNode`
+  waits at most `abortGraceMs` (new optional `ToolNodeDependencies` field,
+  default 3000 ms) for the running tool to
+  finish. A tool that ignores the signal is then treated as an `AbortError`,
+  exactly like a tool that honoured it: a pause leaves the call for
+  reconciliation before continuing, a cancel settles it as cancelled. Its late
+  result is discarded and never reaches history. The deadline starts only when
+  the signal fires and does not limit normal tool run time. Previously a
+  pause could stay unsettled (`status=paused`, no `pausedAt`) for as long as
+  such a tool ran, holding the conversation's concurrency slot.
+
+---
+
 ## [0.44.0] - 2026-11-18
 
 ### Added
