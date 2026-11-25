@@ -12,6 +12,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+### Removed
+
+- `ExecutorLocalState.lastSuccessfulLlmModelId` and its `ExecutorLocalPatch`
+  key. The LLM stage still wrote it, but nothing has read it since 0.42.0.
+  Checkpoints saved by 0.45.0 and earlier that carry the field still load; the
+  value is dropped on load.
+
+### Documentation
+
+- Tool development guide §7.4 now spells out why the Host must decide about
+  returning images before the tool runs: once an image reaches history, every
+  later LLM call on a route without image input fails preflight.
+
+---
+
 ## [0.45.0] - 2026-11-21
 
 ### Added

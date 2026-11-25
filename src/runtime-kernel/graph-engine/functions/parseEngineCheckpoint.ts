@@ -13,13 +13,15 @@ const executor = z.object({
   finalStepForcedTools: z.array(z.string()).optional(), lastStepsHintThreshold: counter.optional(),
   systemReminderPolicy: AgentSpecSystemReminderPolicy.optional(),
   toolObservationPolicy: AgentSpecToolObservationGovernancePolicy.optional(),
-  runLockedModelId: z.string().optional(), lastSuccessfulLlmModelId: z.string().optional(),
+  runLockedModelId: z.string().optional(),
+  // 0.45 及更早的 checkpoint 可能带这个已删除字段；照常接受，读入时丢弃。
+  lastSuccessfulLlmModelId: z.string().optional(),
   llmInvocationKind: z.enum(['user_initiated', 'continuation']).optional(),
   llmInvocationCount: counter.optional(), lockRequestedModelId: z.boolean().optional(),
   contextCompaction: z.object({
     attemptCount: counter, committedCount: counter, lastCommittedFingerprint: z.string().optional(),
   }).strict().optional(),
-}).strict();
+}).strict().transform(({ lastSuccessfulLlmModelId: _retired, ...state }) => state);
 
 const checkpoint = z.object({
   nodeId: z.string().min(1), schemaVersion: z.literal(ENGINE_STATE_SCHEMA_VERSION).optional(),

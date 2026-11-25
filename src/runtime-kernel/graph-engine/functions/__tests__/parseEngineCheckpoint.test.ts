@@ -16,4 +16,12 @@ describe('persisted checkpoint admission', () => {
     expect(() => parseEngineCheckpoint({ ...state, local: { signal: {} } })).toThrow('capability');
     expect(() => parseEngineCheckpoint({ ...state, local: { request: { callback: () => {} } } })).toThrow();
   });
+
+  it('旧 checkpoint 带已删除的 lastSuccessfulLlmModelId 时照常恢复并丢弃该字段', () => {
+    const parsed = parseEngineCheckpoint({
+      nodeId: 'llm',
+      local: { executorLocal: { stepCount: 3, runLockedModelId: 'locked', lastSuccessfulLlmModelId: 'old-model' } },
+    });
+    expect(parsed.local?.executorLocal).toEqual({ stepCount: 3, runLockedModelId: 'locked' });
+  });
 });

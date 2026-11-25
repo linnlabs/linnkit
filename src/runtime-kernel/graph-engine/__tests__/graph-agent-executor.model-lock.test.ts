@@ -151,7 +151,6 @@ describe('GraphAgentExecutor - run 内 quota 模型锁定', () => {
     expect(executorLocal.runLockedModelId).toBeUndefined();
     Object.assign(executorLocal, firstTick.executorLocalPatch);
     expect(executorLocal.runLockedModelId).toBe('cloud-deepseek-reasoner');
-    expect(executorLocal.lastSuccessfulLlmModelId).toBe('cloud-deepseek-reasoner');
 
     await executor.tick({
       request,

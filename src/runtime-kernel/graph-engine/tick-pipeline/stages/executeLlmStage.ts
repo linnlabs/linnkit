@@ -49,13 +49,11 @@ export function createExecuteLlmStage(dependencies: ExecuteLlmStageDependencies)
       'llmCallStartedAt',
       'llmResp',
       'llmCallDurationMs',
-      'executorLocalPatch',
       'contextUsage',
     ],
     async run(ctx) {
       let cloudQuotaFallbackAppliedModelId: string | undefined;
       let modelFallbackAudit: ModelFallbackAudit | undefined;
-      let lastSuccessfulLlmModelId: string | undefined;
       let contextUsage: ContextUsageSnapshot | undefined;
       const modelFallbackRejections: ModelFallbackRejectedInfo[] = [];
       const promptBudget = ctx.promptBudget;
@@ -81,8 +79,7 @@ export function createExecuteLlmStage(dependencies: ExecuteLlmStageDependencies)
             onCloudQuotaFallbackApplied(fallbackModelId) {
               cloudQuotaFallbackAppliedModelId = readNonEmptyString(fallbackModelId);
             },
-            onLlmAttemptSucceeded(activeModelId, attemptContextUsage) {
-              lastSuccessfulLlmModelId = readNonEmptyString(activeModelId);
+            onLlmAttemptSucceeded(_activeModelId, attemptContextUsage) {
               contextUsage = attemptContextUsage;
             },
             onModelFallbackApplied(info) {
@@ -194,7 +191,6 @@ export function createExecuteLlmStage(dependencies: ExecuteLlmStageDependencies)
         llmCallStartedAt,
         llmResp,
         llmCallDurationMs,
-        executorLocalPatch: lastSuccessfulLlmModelId ? { lastSuccessfulLlmModelId } : undefined,
         contextUsage,
       };
     },

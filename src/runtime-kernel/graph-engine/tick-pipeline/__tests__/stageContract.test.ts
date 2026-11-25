@@ -387,7 +387,6 @@ describe('tick pipeline stage write contracts', () => {
         'llmCallStartedAt',
         'llmResp',
         'llmCallDurationMs',
-        'executorLocalPatch',
         'contextUsage',
       ],
     });

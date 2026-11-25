@@ -62,7 +62,6 @@ function buildState(history: RuntimeEvent[] = []): EngineState {
       runtimeEventSink: createRuntimeEventRecorder({ conversationId: 'conv-model-input', runId: 'run-model-input' }).sink,
       executorLocal: {
         stepCount: 1,
-        lastSuccessfulLlmModelId: 'vision-model',
       },
       toolContext: { conversationId: 'conv-model-input', turnId: 'turn-model-input' },
       pendingToolCalls: [

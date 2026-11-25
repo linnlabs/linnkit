@@ -415,6 +415,8 @@ host 必须通过 `ToolModelInputResolverPort` 把 selection 解析为当前 con
 
 真正发往模型时，LLM 调用前的 input preflight 仍按实际请求中的图片和当前 route 校验；Host 判断失误会在那里明确失败，而不是静默丢图。
 
+preflight 只是最后一道检查，不能代替 Host 的判断：走到 preflight 时工具已经执行完，副作用已经发生，图片也已作为工具结果写进对话历史。此后只要 route 仍不支持图片，这个对话的每一次 LLM 调用都会在 preflight 失败。所以 Host 必须在工具执行前按实际要调用的模型决定是否返回图片。
+
 幂等历史命中时，ToolNode 复用该输出当时已解析的正式附件，不重跑有副作用的工具。root 与 child runtime 应注入同一类窄 resolver，child 仍受自己的模型和附件继承策略约束。
 
 ---

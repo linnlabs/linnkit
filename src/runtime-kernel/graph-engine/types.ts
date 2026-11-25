@@ -28,8 +28,6 @@ export interface ExecutorLocalState {
   systemReminderPolicy?: AgentSpecSystemReminderPolicy;
   toolObservationPolicy?: AgentSpecToolObservationGovernancePolicy;
   runLockedModelId?: string;
-  /** 最近一次成功产生当前工具调用决策的真实 provider model。 */
-  lastSuccessfulLlmModelId?: string;
   /**
    * 当前这一次 LLM 调用的业务来源。
    *
@@ -66,7 +64,7 @@ export interface ExecutorLocalState {
 export type ExecutorLocalPatch = Partial<
   Pick<
     ExecutorLocalState,
-    'runLockedModelId' | 'lastSuccessfulLlmModelId' | 'contextCompaction'
+    'runLockedModelId' | 'contextCompaction'
   >
 >;
 
