@@ -82,6 +82,7 @@
     "prepublishOnly": "npm run build:clean && npm run build && npm run test:smoke && npm run test:smoke:dist",
     "publish:npm": "npm publish",
     "publish:dry-run": "npm pack --dry-run",
+    "check:docs": "node scripts/check-markdown-links.ts",
     "typecheck": "tsc --noEmit -p tsconfig.src.json && tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
     "test:smoke": "vitest run __tests__/package.shell.test.ts",

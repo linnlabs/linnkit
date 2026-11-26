@@ -23,6 +23,7 @@ jobs:
       - name: Verify Linnkit core
         run: |
           npm run typecheck
+          npm run check:docs
           npm run build
           npm run test
           npm run test:smoke

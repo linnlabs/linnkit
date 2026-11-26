@@ -76,6 +76,7 @@ or changing contracts use a patch version; new public contracts still require a 
 - [ ] `npm run typecheck` passes
 - [ ] `npm run build` succeeds
 - [ ] `npm run test` passes (all suites green)
+- [ ] `npm run check:docs` passes: repository links in Markdown stay inside the repository and point at existing files and headings. `docs/integration` ships in the npm package while `src/` does not, so integration guides link to source code with absolute GitHub URLs
 - [ ] New public exports are documented in the relevant `docs/integration/` guide
 - [ ] If you modified a public sub-entrypoint, check the snapshot test in `src/runtime-kernel/__tests__/__snapshots__/` and `src/testkit/__tests__/__snapshots__/` — update snapshots intentionally, not blindly
 
