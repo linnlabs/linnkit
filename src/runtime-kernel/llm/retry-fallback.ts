@@ -15,7 +15,7 @@ import type { LlmCallOptions, LlmRequestMessage, LlmRetryConfig } from './caller
 import type { LLMPolicyErrorDecision, LLMPolicyMatchContext } from './policies/types';
 import type { ModelCatalogLike } from './modelCatalog';
 import type { ModelResolverLike } from './modelResolver';
-import { tryCloudQuotaFallback, tryPolicyModelSwitch } from './retry-fallback-routing';
+import { tryPolicyModelSwitch } from './retry-fallback-routing';
 import { callLlmStream } from './streaming-adapter';
 import { Logger } from '../../shared/logger';
 import {
@@ -90,14 +90,12 @@ export async function callWithRetryFallback(params: CallWithRetriesParams): Prom
   let previousAttemptTracker: LiveAttemptStreamTracker | undefined;
 
   if (!clientRetryEnabled) {
-    const activeCfg = deps.modelCatalog.getModelById(modelId);
     logger.debug('客户端重试已禁用', {
       modelId,
-      billing_mode: activeCfg?.billing_mode,
       reason:
         options.retry_policy === 'none'
           ? 'options.retry_policy=none'
-          : 'model config (cloud billing or enable_client_retry=false)',
+          : 'model config enable_client_retry=false',
     });
   }
 
@@ -265,29 +263,6 @@ export async function callWithRetryFallback(params: CallWithRetriesParams): Prom
             attempt -= 1;
             continue;
           }
-
-          const quotaFallbackModelId = tryCloudQuotaFallback({
-            deps,
-            activeModelId,
-            options,
-            excludedModelIds,
-            requirement,
-            error: lastError,
-            fallbackObserver,
-            evaluateFallbackPromptCapacity: invocationContext?.evaluateFallbackPromptCapacity,
-          });
-          if (quotaFallbackModelId) {
-            fallbackObserver?.onModelFallbackApplied?.({
-              fromModelId: activeModelId,
-              toModelId: quotaFallbackModelId,
-              reason: lastError.message,
-              policy: 'cloud-quota',
-            });
-            activeModelId = quotaFallbackModelId;
-            excludedModelIds.add(quotaFallbackModelId);
-            attempt -= 1;
-            continue;
-          }
         }
 
         if (classification.category === ErrorCategory.NON_RETRYABLE) {
@@ -360,13 +335,8 @@ function isClientRetryEnabledForModel(
 ): boolean {
   if (options.retry_policy === 'none') return false;
 
-  const cfg = modelCatalog.getModelById(modelId);
-  // Cloud 每个 attempt 都可能已计费，因此不允许调用参数或模型配置破坏单次调用合同。
-  if (cfg?.billing_mode === 'cloud') return false;
-  if (options.retry_policy === 'client') return true;
-  if (!cfg) return true;
-  if (cfg.enable_client_retry === false) return false;
-  return true;
+  // 模型声明不允许客户端重试（如每次请求单独计费）时，retry_policy='client' 也不能打开它，保持单次调用合同。
+  return modelCatalog.getModelById(modelId)?.enable_client_retry !== false;
 }
 
 function throwIfAborted(signal: AbortSignal | undefined, message: string): void {

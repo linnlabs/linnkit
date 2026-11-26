@@ -7,7 +7,6 @@ import type {
   GraphExecutorContextBuildOutput,
 } from '../../executorContextBuilder';
 import { llmTelemetryMiddleware } from '../middlewares/llmTelemetryMiddleware';
-import { runModelLockMiddleware } from '../middlewares/runModelLockMiddleware';
 import { runTickPipeline } from '../runTickPipeline';
 import { createApplySystemReminderStage } from '../stages/applySystemReminderStage';
 import { createBuildContextStage } from '../stages/buildContextStage';
@@ -151,7 +150,7 @@ describe('tick pipeline side-effect isolation baseline', () => {
         }),
         createBuildDecisionStage(),
       ],
-      [llmTelemetryMiddleware, runModelLockMiddleware]
+      [llmTelemetryMiddleware]
     );
 
     expect(audit.emitMock).toHaveBeenCalledWith(

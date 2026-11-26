@@ -41,7 +41,6 @@ const tickPipelineContextKeys = [
   'decision',
   'systemReminderHitRuleIds',
   'contextTrace',
-  'cloudQuotaFallbackAppliedModelId',
   'modelFallbackAudit',
   'telemetry',
   'audit',

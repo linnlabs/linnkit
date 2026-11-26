@@ -1,7 +1,7 @@
 import type { ModelInputPlacement } from '../input-capabilities';
 import type { ContextUsageSnapshot } from '../../../contracts';
 
-export type ModelFallbackPolicy = 'policy-switch' | 'cloud-quota';
+export type ModelFallbackPolicy = 'policy-switch';
 
 export interface ModelFallbackAppliedInfo {
   readonly fromModelId: string;
@@ -24,7 +24,6 @@ export interface LlmFallbackObserver {
     activeModelId: string,
     contextUsage?: ContextUsageSnapshot,
   ) => void;
-  readonly onCloudQuotaFallbackApplied?: (fallbackModelId: string) => void;
   readonly onModelFallbackApplied?: (info: ModelFallbackAppliedInfo) => void;
   readonly onModelFallbackRejected?: (info: ModelFallbackRejectedInfo) => void;
 }

@@ -26,7 +26,6 @@ export const TOOL_CONTEXT_RUNTIME_RESERVED_KEYS = [
   'conversationView',
   'userQuery',
   'modelId',
-  'activeModelId',
   'conversationId',
   'turnId',
   'runId',

@@ -14,6 +14,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- Cloud quota fallback. `GraphAgentExecutorDependencies.cloudQuotaFallbackModelId`,
+  `LlmCallOptions.cloud_quota_fallback_model_id`,
+  `LlmFallbackObserver.onCloudQuotaFallbackApplied`, the `'cloud-quota'`
+  `ModelFallbackPolicy`, `ErrorClassifier.isCloudQuotaError` and the run model
+  lock (`ExecutorLocalState.runLockedModelId`) are gone. The quota detection
+  matched one host's Chinese error wording and keyed off its billing mode, which
+  does not belong in a general framework; a service that wants to fall back to
+  another model on quota errors should do it server-side. Checkpoints saved by
+  0.46.0 and earlier that carry `runLockedModelId` still load; the field is
+  dropped and the run continues with the requested model.
+- The two quota message patterns in `ErrorClassifier` ("已达上限", "免费期已结束").
+  Such errors are now classified by the generic rules.
+- `ToolExecutionContext.activeModelId`, added in 0.46.0. Without the run model
+  lock it always equalled `modelId`; decide tool result delivery from `modelId`.
+- `ModelCatalogEntry.billing_mode`. Linnkit no longer reads billing modes.
+
+### Changed
+
+- A model with `enable_client_retry: false` is never retried by the client, even
+  when the call passes `retry_policy: 'client'`. This replaces the hard
+  "no client retry for cloud billing" rule: hosts mark models whose every request
+  is billed (or retried server-side) with `enable_client_retry: false`.
+
 ---
 
 ## [0.46.0] - 2026-11-26

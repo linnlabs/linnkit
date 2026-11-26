@@ -27,7 +27,6 @@ function modelCatalog(): ModelCatalogLike {
     enabled: true,
     capabilities: ['chat'],
     adapter_input_support: { user_image: false, tool_result_image: false },
-    billing_mode: 'byok' as const,
   };
   return {
     getModelById: id => ({ ...entry, id }),

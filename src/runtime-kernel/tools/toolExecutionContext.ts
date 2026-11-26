@@ -20,17 +20,6 @@ export interface ToolExecutionContext {
   modelId?: string;
 
   /**
-   * 工具结果接下来交给的模型 ID（由 ToolNode 在执行工具前注入）。
-   *
-   * 中文备注：
-   * - 平时等于 `modelId`；云端额度兜底后 run 锁定到兜底模型，此时是兜底模型；
-   * - 决定工具结果里放什么给模型看（如是否附图）时按它判断，不能按 `modelId`，
-   *   否则会给不能看图的兜底模型附图，下一次请求在输入预检被拒；
-   * - child-run 继承模型仍读 `modelId`。
-   */
-  activeModelId?: string;
-
-  /**
    * 当前对话 run 的唯一标识（由 host admission 注入）。
    * 说明：工具不得把 runId 当作业务数据身份；它只服务运行链路追踪和关联。
    */

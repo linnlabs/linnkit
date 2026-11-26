@@ -2,7 +2,6 @@ import type { AnyAgentEvent } from '../../../events/agentEvents';
 import type { LlmCaller } from '../../../llm/caller';
 import { defineTickStage } from '../types';
 import type { ModelFallbackAudit, TickPipelineContext, TickStage } from '../types';
-import { readNonEmptyString } from '../helpers';
 import { emitAuditEnvelope } from '../../../audit/emitAudit';
 import type { GraphExecutorOutputProcessor } from '../../executorContextBuilder';
 import type { ModelFallbackRejectedInfo } from '../../../llm';
@@ -44,7 +43,6 @@ export function createExecuteLlmStage(dependencies: ExecuteLlmStageDependencies)
       'turnId',
     ],
     writes: [
-      'cloudQuotaFallbackAppliedModelId',
       'modelFallbackAudit',
       'llmCallStartedAt',
       'llmResp',
@@ -52,7 +50,6 @@ export function createExecuteLlmStage(dependencies: ExecuteLlmStageDependencies)
       'contextUsage',
     ],
     async run(ctx) {
-      let cloudQuotaFallbackAppliedModelId: string | undefined;
       let modelFallbackAudit: ModelFallbackAudit | undefined;
       let contextUsage: ContextUsageSnapshot | undefined;
       const modelFallbackRejections: ModelFallbackRejectedInfo[] = [];
@@ -76,9 +73,6 @@ export function createExecuteLlmStage(dependencies: ExecuteLlmStageDependencies)
           streamEventHandler,
           ctx.signal,
           {
-            onCloudQuotaFallbackApplied(fallbackModelId) {
-              cloudQuotaFallbackAppliedModelId = readNonEmptyString(fallbackModelId);
-            },
             onLlmAttemptSucceeded(_activeModelId, attemptContextUsage) {
               contextUsage = attemptContextUsage;
             },
@@ -186,7 +180,6 @@ export function createExecuteLlmStage(dependencies: ExecuteLlmStageDependencies)
       }
 
       return {
-        cloudQuotaFallbackAppliedModelId,
         modelFallbackAudit,
         llmCallStartedAt,
         llmResp,

@@ -12,7 +12,7 @@
 `LlmCaller` 仍然属于 Linnkit 内核，它拥有：
 
 - 输入能力校验、每次 attempt 的图片物化与总调用预算；
-- 同模型重试、产品已批准的模型 fallback 和 Cloud quota 续跑策略；
+- 同模型重试与 Host 策略批准的模型 fallback；
 - canonical stream 到 AgentEvent / RuntimeEvent 的唯一映射；
 - thought、answer、tool call、usage 和 continuation 的持久化语义。
 

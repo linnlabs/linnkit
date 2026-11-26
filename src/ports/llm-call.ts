@@ -74,14 +74,10 @@ export interface LlmCallOptions {
   /**
    * 重试策略（仅影响客户端侧 `LlmCaller.callWithRetries`）。
    *
-   * 背景（中文说明）：
-   * - BYOK（本地直连）模式下，客户端重试是合理的：成本由用户自带 key 承担；
-   * - Cloud（积分计费）模式下，客户端重试会导致"一次点击一个 request_id"的账单语义被破坏，
-   *   因为同一次点击可能触发多次上游调用，造成对账困难或平台资损。
-   *
    * 约定：
    * - `client`：允许客户端按本地 retryConfig 重试（默认）；
-   * - `none`：强制不重试（只执行一次，失败直接返回错误）。Cloud 模式推荐使用该值或在模型配置中关闭客户端重试。
+   * - `none`：强制不重试（只执行一次，失败直接返回错误）。
+   * - 模型目录里 `enable_client_retry: false` 的模型（如每次请求单独计费）始终不重试，`client` 也不能打开。
    */
   retry_policy?: 'client' | 'none';
 
@@ -95,16 +91,6 @@ export interface LlmCallOptions {
    */
   allow_model_fallback?: boolean;
 
-  /**
-   * 云端模型限额降级目标（同一个 run 内续跑专用）
-   *
-   * 中文说明：
-   * - 仅当"同一个 run 内已经不是第一次 LLM 调用"时由上层传入；
-   * - 如果本次 LLM 调用因为云端 quota/限额被拒，LlmCaller 会静默切到该模型继续，
-   *   不向前端发 error 事件（前端无感知）；
-   * - 若为 undefined 或空字符串，则 quota 错误仍按"不可重试"处理（即新请求直接报错）。
-   */
-  cloud_quota_fallback_model_id?: string;
   /**
    * 思考努力程度（统一语义，prepareCallStage 已降级后的最终档位）。
    * adapter 负责翻译为 provider 原生字段，不得原样进入请求体。

@@ -672,34 +672,6 @@ describe('GraphAgentExecutor context compaction', () => {
     expect(result.executorLocalPatch).not.toHaveProperty('maxSteps');
   });
 
-  it('同一个 run 的压缩与主调用都复用已锁定模型', async () => {
-    const harness = createHarness({ builds: [{ promptTokens: 85 }] });
-
-    await tickInput(harness, {
-      executorLocal: {
-        stepCount: 4,
-        phase: 'running',
-        runLockedModelId: 'locked-model',
-      },
-    });
-
-    expect(harness.build).toHaveBeenCalledWith(expect.objectContaining({
-      modelId: 'locked-model',
-    }));
-    expect(harness.applyCompaction).toHaveBeenCalledWith(expect.objectContaining({
-      modelId: 'locked-model',
-    }));
-    expect(harness.compactionCall.mock.calls[0]?.[0]).toBe('locked-model');
-    expect(harness.compactionCall.mock.calls[0]?.[2]).toMatchObject({
-      allow_model_fallback: false,
-    });
-    expect(harness.mainCall.mock.calls[0]?.[0]).toBe('locked-model');
-    expect(contextCompactionTelemetry(harness)).toContainEqual(expect.objectContaining({
-      modelId: 'locked-model',
-      outcome: 'completed',
-    }));
-  });
-
   it('摘要 commit 后主调用失败，durable 摘要仍供下一次 rebuild 复用且不重复发布', async () => {
     const harness = createHarness({
       builds: [

@@ -350,55 +350,6 @@ describe('LlmCaller 图片输入能力门禁', () => {
     expect(onLlmAttemptSucceeded).toHaveBeenCalledWith('compatible-fallback');
   });
 
-  it('quota fallback 不兼容时保留原额度错误且不重放图片消息', async () => {
-    const catalog = createCatalog([
-      model({ id: 'cloud-primary', billing_mode: 'cloud', enable_client_retry: false }),
-      model({
-        id: 'cloud-fallback',
-        billing_mode: 'cloud',
-        enable_client_retry: false,
-        capabilities: ['chat'],
-      }),
-    ]);
-    const quotaError = new Error('今日使用次数已达上限（3次），明天再来吧');
-    const chatCompletion = vi.fn().mockRejectedValue(quotaError);
-    const onQuotaFallback = vi.fn();
-    const onModelFallbackRejected = vi.fn();
-    const callerOptions: LlmCallerOptions = {
-      inferencePort: createInferencePort(chatCompletion),
-      modelCatalog: catalog,
-      maxRetries: 0,
-    };
-
-    await expect(callWithRetryFallback({
-      invocationContext: { imageInputAdmissionEvidence: admissionEvidence },
-      deps: {
-        ...buildLlmCallerDeps({
-          ...callerOptions,
-          llmInputMaterializer: createTestMaterializer(),
-        }),
-        modelCatalog: catalog,
-      },
-      modelId: 'cloud-primary',
-      messages: userImageMessages,
-      requirement: { requires_image_input: true, placements: ['user_image'] },
-      options: { cloud_quota_fallback_model_id: 'cloud-fallback' },
-      fallbackObserver: {
-        onCloudQuotaFallbackApplied: onQuotaFallback,
-        onModelFallbackRejected,
-      },
-    })).rejects.toBe(quotaError);
-    expect(chatCompletion).toHaveBeenCalledOnce();
-    expect(onQuotaFallback).not.toHaveBeenCalled();
-    expect(onModelFallbackRejected).toHaveBeenCalledWith({
-      fromModelId: 'cloud-primary',
-      candidateModelId: 'cloud-fallback',
-      policy: 'cloud-quota',
-      reason: 'image_input_unsupported',
-      requiredPlacements: ['user_image'],
-    });
-  });
-
   it('policy fallback 没有兼容候选时保留原错误并给出安全拒绝证据', async () => {
     const providerError = new Error('provider failed');
     const models = [

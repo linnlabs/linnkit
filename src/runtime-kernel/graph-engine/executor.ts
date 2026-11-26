@@ -16,9 +16,8 @@ import type { TokenizerPort } from '../../ports';
 import type { ToolCatalogPort } from '../tools/ports';
 import { Logger } from '../../shared/logger';
 import type { GraphExecutorContextBuilder } from './executorContextBuilder';
-import { readNonEmptyString, requireRuntimeIdentity } from './tick-pipeline/helpers';
+import { requireRuntimeIdentity } from './tick-pipeline/helpers';
 import { llmTelemetryMiddleware } from './tick-pipeline/middlewares/llmTelemetryMiddleware';
-import { runModelLockMiddleware } from './tick-pipeline/middlewares/runModelLockMiddleware';
 import { runTickPipeline } from './tick-pipeline/runTickPipeline';
 import { createApplySystemReminderStage } from './tick-pipeline/stages/applySystemReminderStage';
 import { createBuildContextStage } from './tick-pipeline/stages/buildContextStage';
@@ -44,7 +43,6 @@ export type { AgentStepDecision, TickEvent, TickInput, TickOutput } from './tick
 const logger = new Logger('GraphAgentExecutor');
 
 export interface GraphAgentExecutorOptions {
-  cloudQuotaFallbackModelId?: string;
   modelCatalog?: ModelCatalogLike;
   modelResolver?: Pick<ModelResolverLike, 'resolveModelId'>;
 }
@@ -77,7 +75,6 @@ export class GraphAgentExecutor {
   private readonly llmCaller: GraphAgentExecutorLlmCaller;
   private readonly toolRuntime: GraphAgentExecutorToolRuntime;
   private readonly contextBuilder: GraphExecutorContextBuilder;
-  private readonly cloudQuotaFallbackModelId?: string;
   private readonly modelResolver: Pick<ModelResolverLike, 'resolveModelId'>;
   private readonly modelCatalog: ModelCatalogLike;
   private readonly telemetryPort: TelemetryPort;
@@ -90,7 +87,6 @@ export class GraphAgentExecutor {
     this.llmCaller = dependencies.llmCaller;
     this.toolRuntime = dependencies.toolRuntime;
     this.contextBuilder = dependencies.contextBuilder;
-    this.cloudQuotaFallbackModelId = readNonEmptyString(dependencies.cloudQuotaFallbackModelId);
     this.modelCatalog = dependencies.modelCatalog ?? createEmptyModelCatalog();
     this.modelResolver =
       dependencies.modelResolver ??
@@ -110,7 +106,6 @@ export class GraphAgentExecutor {
         modelResolver: this.modelResolver,
         modelCatalog: this.modelCatalog,
         toolCatalog: this.toolRuntime,
-        cloudQuotaFallbackModelId: this.cloudQuotaFallbackModelId,
       }),
       createBuildContextStage({
         contextBuilder: this.contextBuilder,
@@ -132,7 +127,7 @@ export class GraphAgentExecutor {
       }),
       createBuildDecisionStage(),
     ];
-    this.middlewares = [llmTelemetryMiddleware, runModelLockMiddleware];
+    this.middlewares = [llmTelemetryMiddleware];
   }
 
   async tick(input: TickInput, eventHandler?: (event: TickEvent) => void): Promise<TickOutput> {

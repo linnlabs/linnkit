@@ -141,7 +141,7 @@ describe('runTickPipeline', () => {
       await next();
       return {
         executorLocalPatch: {
-          runLockedModelId: 'cloud-fallback-model',
+          contextCompaction: { attemptCount: 1, committedCount: 1 },
         },
       };
     };
@@ -150,7 +150,7 @@ describe('runTickPipeline', () => {
 
     expect(ctx.executorLocal).toEqual({ stepCount: 1 });
     expect(ctx.executorLocalPatch).toEqual({
-      runLockedModelId: 'cloud-fallback-model',
+      contextCompaction: { attemptCount: 1, committedCount: 1 },
     });
   });
 

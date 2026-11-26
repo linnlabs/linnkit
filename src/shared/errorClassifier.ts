@@ -257,19 +257,6 @@ export class ErrorClassifier {
       }
     }
 
-    const quotaPatterns = ['已达上限', '免费期已结束'];
-    for (const pattern of quotaPatterns) {
-      if (errorMessage.includes(pattern)) {
-        logClassification(context, '检测到云端额度限制，不重试', { matchedPattern: pattern });
-        return createClassification(ErrorCategory.NON_RETRYABLE, `云端额度限制: ${pattern}`, null, {
-          errorCode: ENGINE_ERROR_CODES.LLM_PROVIDER_DOWN,
-          recoverable: false,
-          hint: 'check_billing_or_provider_status',
-          metadata: { matchedPattern: pattern },
-        });
-      }
-    }
-
     const authPatterns = [
       { pattern: 'unauthorized', code: '401' },
       { pattern: 'forbidden', code: '403' },
@@ -569,18 +556,6 @@ export class ErrorClassifier {
 
     // Host 的等待下限不能被分类器的默认建议缩短；更长的错误建议仍然优先。
     return Math.max(baseDelay, classification.suggestedDelay ?? 0);
-  }
-
-  static isCloudQuotaError(error: Error): boolean {
-    const msg = (error.message || '').toLowerCase();
-    const patterns = [
-      '额度上限',
-      '已达上限',
-      '免费期已结束',
-      '该模型暂不可用',
-      'cloud_quota_exhausted',
-    ];
-    return patterns.some((pattern) => msg.includes(pattern));
   }
 }
 

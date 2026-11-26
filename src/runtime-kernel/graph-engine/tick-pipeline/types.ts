@@ -43,7 +43,7 @@ export interface ModelFallbackAudit {
   fromModelId: string;
   toModelId: string;
   reason: string;
-  policy: 'policy-switch' | 'cloud-quota';
+  policy: 'policy-switch';
 }
 
 export type TickEvent = AnyAgentEvent | RuntimeEvent;
@@ -149,7 +149,6 @@ export interface TickPipelineContext {
   decision?: AgentStepDecision;
   systemReminderHitRuleIds?: string[];
   contextTrace?: SerializableJsonRecord;
-  cloudQuotaFallbackAppliedModelId?: string;
   modelFallbackAudit?: ModelFallbackAudit;
   /**
    * 由 GraphAgentExecutor 注入；middleware/stage 通过 ctx.telemetry.emit() 上报观测事件。

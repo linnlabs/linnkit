@@ -56,7 +56,7 @@ function fixture() {
     start: (graph: GraphExecutor, signal?: AbortSignal) => graph.startSession('run', {
       ...capabilities, signal, conversationId: 'conversation', turnId: 'turn',
       request: { query: 'original', promptKey: 'agent' }, history: [],
-      executorLocal: { stepCount: 0, maxSteps: 10, runLockedModelId: 'original-model' },
+      executorLocal: { stepCount: 0, maxSteps: 10 },
       pendingToolCalls: [call('call-1'), call('call-2')], toolBatchCompletionMode: 'yield_after_batch',
     }, 'tool'),
     crash() { staged = []; },
@@ -146,7 +146,7 @@ describe('durable graph continuation', () => {
     expect(nextExecute).toHaveBeenCalledOnce();
     expect(result.checkpoint).toMatchObject({ executionStatus: 'yielded', local: {
       request: { query: 'original', promptKey: 'agent' },
-      executorLocal: { stepCount: 2, maxSteps: 10, runLockedModelId: 'original-model' },
+      executorLocal: { stepCount: 2, maxSteps: 10 },
     } });
     expect(f.durable).toHaveLength(2);
   });

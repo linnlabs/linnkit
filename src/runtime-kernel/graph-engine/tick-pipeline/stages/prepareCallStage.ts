@@ -5,7 +5,6 @@ import { resolveEffectiveEffort } from '../../../llm/functions/reasoningEffort';
 import type { ToolCatalogPort } from '../../../tools/ports';
 import { defineTickStage } from '../types';
 import type { TickStage } from '../types';
-import { readNonEmptyString } from '../helpers';
 import { emitAuditEnvelope } from '../../../audit/emitAudit';
 import { runIdFromTurnId } from '../../../../contracts';
 import type { ToolCallStreamingPolicy } from '../../../tools/toolContracts';
@@ -15,7 +14,6 @@ export interface PrepareCallStageDependencies {
   modelResolver: Pick<ModelResolverLike, 'resolveModelId'>;
   modelCatalog: Pick<ModelCatalogLike, 'getModelById'>;
   toolCatalog: Pick<ToolCatalogPort, 'getToolSchemas' | 'getToolDefinition'>;
-  cloudQuotaFallbackModelId?: string;
 }
 
 export function createPrepareCallStage(dependencies: PrepareCallStageDependencies): TickStage {
@@ -39,22 +37,16 @@ export function createPrepareCallStage(dependencies: PrepareCallStageDependencie
       'toolDefinitionTokens',
     ],
     async run(ctx) {
-      const lockedRunModelId = readNonEmptyString(ctx.executorLocal?.runLockedModelId);
-      const requestedModelId = lockedRunModelId ?? ctx.request.model_id;
+      const requestedModelId = ctx.request.model_id;
       const modelId = dependencies.modelResolver.resolveModelId(requestedModelId);
       await emitAuditEnvelope(ctx.audit, {
         action: 'model.select',
         actor: { kind: 'system' },
         decision: {
           outcome: 'recorded',
-          reason: lockedRunModelId
-            ? 'run model lock'
-            : requestedModelId
-              ? 'request model id'
-              : 'default model resolver',
+          reason: requestedModelId ? 'request model id' : 'default model resolver',
           metadata: {
             requestedModelId,
-            lockedRunModelId,
             selectedModelId: modelId,
           },
         },
@@ -105,21 +97,6 @@ export function createPrepareCallStage(dependencies: PrepareCallStageDependencie
 
       if (ctx.executorLocal?.lockRequestedModelId === true) {
         llmOptions.allow_model_fallback = false;
-      }
-
-      // 云端限额降级仅在 run 内续跑时生效，用户发起的首次 LLM 调用不降级（直接报错）。
-      // 中文备注：
-      // - 这里必须读取 GraphExecutor 注入的显式调用语义；
-      // - stepCount 会受 child-run 直接从 llm 启动、checkpoint reset、收尾强制跳转影响，不能表达“首次/续跑”。
-      const isRunContinuation = ctx.executorLocal?.llmInvocationKind === 'continuation';
-      if (
-        dependencies.cloudQuotaFallbackModelId &&
-        modelConfig?.billing_mode === 'cloud' &&
-        modelId !== dependencies.cloudQuotaFallbackModelId &&
-        isRunContinuation &&
-        ctx.executorLocal?.lockRequestedModelId !== true
-      ) {
-        llmOptions.cloud_quota_fallback_model_id = dependencies.cloudQuotaFallbackModelId;
       }
 
       const effectiveEffort = resolveEffectiveEffort(

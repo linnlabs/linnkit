@@ -135,106 +135,7 @@ describe('createPrepareCallStage', () => {
     );
   });
 
-  it('run 内续跑时，cloud 模型应附加 quota fallback 选项', async () => {
-    const { createPrepareCallStage } = await import('./prepareCallStage');
-    const ctx = createContext();
-    ctx.executorLocal = {
-      stepCount: 1,
-      llmInvocationKind: 'continuation',
-      runLockedModelId: 'locked-model',
-    };
-    const modelResolver = {
-      resolveModelId: vi.fn(() => 'locked-model'),
-    };
-    const toolCatalog = {
-      getToolSchemas: vi.fn(() => []),
-      getToolDefinition: vi.fn(() => undefined),
-    };
-
-    getModelByIdMock.mockReturnValue({
-      id: 'locked-model',
-      billing_mode: 'cloud',
-    });
-
-    const stage = createPrepareCallStage({
-      modelResolver,
-      modelCatalog: { getModelById: getModelByIdMock },
-      toolCatalog,
-      cloudQuotaFallbackModelId: 'cloud-deepseek-reasoner',
-    });
-
-    await runStage(ctx, stage);
-
-    expect(modelResolver.resolveModelId).toHaveBeenCalledWith('locked-model');
-    expect(ctx.llmOptions.cloud_quota_fallback_model_id).toBe('cloud-deepseek-reasoner');
-  });
-
-  it('用户发起的首次 LLM 调用不应设置 quota fallback', async () => {
-    const { createPrepareCallStage } = await import('./prepareCallStage');
-    const ctx = createContext();
-    ctx.executorLocal = {
-      stepCount: 1,
-      llmInvocationKind: 'user_initiated',
-      runLockedModelId: 'locked-model',
-    };
-    const modelResolver = {
-      resolveModelId: vi.fn(() => 'locked-model'),
-    };
-    const toolCatalog = {
-      getToolSchemas: vi.fn(() => []),
-      getToolDefinition: vi.fn(() => undefined),
-    };
-
-    getModelByIdMock.mockReturnValue({
-      id: 'locked-model',
-      billing_mode: 'cloud',
-    });
-
-    const stage = createPrepareCallStage({
-      modelResolver,
-      modelCatalog: { getModelById: getModelByIdMock },
-      toolCatalog,
-      cloudQuotaFallbackModelId: 'cloud-deepseek-reasoner',
-    });
-
-    await runStage(ctx, stage);
-
-    expect(ctx.llmOptions.cloud_quota_fallback_model_id).toBeUndefined();
-  });
-
-  it('没有显式 llmInvocationKind 时不应用 stepCount 推断 quota fallback', async () => {
-    const { createPrepareCallStage } = await import('./prepareCallStage');
-    const ctx = createContext();
-    ctx.executorLocal = {
-      stepCount: 3,
-      runLockedModelId: 'locked-model',
-    };
-    const modelResolver = {
-      resolveModelId: vi.fn(() => 'locked-model'),
-    };
-    const toolCatalog = {
-      getToolSchemas: vi.fn(() => []),
-      getToolDefinition: vi.fn(() => undefined),
-    };
-
-    getModelByIdMock.mockReturnValue({
-      id: 'locked-model',
-      billing_mode: 'cloud',
-    });
-
-    const stage = createPrepareCallStage({
-      modelResolver,
-      modelCatalog: { getModelById: getModelByIdMock },
-      toolCatalog,
-      cloudQuotaFallbackModelId: 'cloud-deepseek-reasoner',
-    });
-
-    await runStage(ctx, stage);
-
-    expect(ctx.llmOptions.cloud_quota_fallback_model_id).toBeUndefined();
-  });
-
-  it('固定模型运行时约束应禁止模型 fallback，并且不注入 quota fallback 目标', async () => {
+  it('固定模型运行时约束应禁止模型 fallback', async () => {
     const { createPrepareCallStage } = await import('./prepareCallStage');
     const ctx = createContext();
     ctx.executorLocal = {
@@ -250,22 +151,17 @@ describe('createPrepareCallStage', () => {
       getToolDefinition: vi.fn(() => undefined),
     };
 
-    getModelByIdMock.mockReturnValue({
-      id: 'cloud-primary-model',
-      billing_mode: 'cloud',
-    });
+    getModelByIdMock.mockReturnValue({ id: 'cloud-primary-model' });
 
     const stage = createPrepareCallStage({
       modelResolver,
       modelCatalog: { getModelById: getModelByIdMock },
       toolCatalog,
-      cloudQuotaFallbackModelId: 'cloud-deepseek-reasoner',
     });
 
     await runStage(ctx, stage);
 
     expect(ctx.llmOptions.allow_model_fallback).toBe(false);
-    expect(ctx.llmOptions.cloud_quota_fallback_model_id).toBeUndefined();
   });
 
   it('应把用户 reasoning_effort 降级后写入 llmOptions', async () => {

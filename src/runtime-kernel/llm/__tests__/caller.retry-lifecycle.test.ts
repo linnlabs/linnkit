@@ -11,7 +11,7 @@ import { describeRuntimeEventLifecycle } from '../../events/eventGovernance';
 import { LlmCaller, type LlmCallerOptions } from '../caller';
 import type { ModelCatalogLike } from '../modelCatalog';
 
-const model = { id: 'test', enabled: true, capabilities: ['chat'], billing_mode: 'byok' as const,
+const model = { id: 'test', enabled: true, capabilities: ['chat'],
   adapter_input_support: { user_image: false, tool_result_image: false } };
 const catalog: ModelCatalogLike = {
   getModelById: () => model, getModelsByCapability: () => [model], getModelsByUIVisibility: () => [model],
@@ -165,7 +165,7 @@ describe('category retry budget and durable retry lifecycle', () => {
   });
 
   it('关闭客户端重试和认证错误不产生伪造重试 episode', async () => {
-    for (const options of [{ maxRetries: 0, maxRetriesByCategory: undefined }, { modelCatalog: { ...catalog, getModelById: () => ({ ...model, billing_mode: 'cloud' as const }) } }]) {
+    for (const options of [{ maxRetries: 0, maxRetriesByCategory: undefined }, { modelCatalog: { ...catalog, getModelById: () => ({ ...model, enable_client_retry: false }) } }]) {
       const f = fixture(['transport'], options);
       await expect(f.call()).rejects.toBeInstanceOf(Error);
       expect(f.requests).toHaveLength(1);

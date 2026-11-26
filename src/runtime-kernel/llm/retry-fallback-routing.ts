@@ -1,6 +1,4 @@
-import { ErrorClassifier } from '../../shared/errorClassifier';
 import { Logger } from '../../shared/logger';
-import type { LlmCallOptions } from './caller.types';
 import type { RetryFallbackDeps } from './retry-fallback';
 import {
   evaluateModelInputCompatibility,
@@ -58,88 +56,5 @@ export function tryPolicyModelSwitch(
     activeModelId,
     fallbackModelId,
   });
-  return fallbackModelId;
-}
-
-export function tryCloudQuotaFallback({
-  deps,
-  activeModelId,
-  options,
-  excludedModelIds,
-  requirement,
-  error,
-  fallbackObserver,
-  evaluateFallbackPromptCapacity,
-}: {
-  deps: RetryFallbackDeps;
-  activeModelId: string;
-  options: LlmCallOptions;
-  excludedModelIds: Set<string>;
-  requirement: ModelInputRequirement;
-  error: Error;
-  fallbackObserver?: LlmFallbackObserver;
-  evaluateFallbackPromptCapacity?: (candidateModelId: string) => FallbackPromptCapacityAdmission;
-}): string | null {
-  const fallbackModelId = options.cloud_quota_fallback_model_id;
-  if (
-    !fallbackModelId ||
-    !ErrorClassifier.isCloudQuotaError(error) ||
-    excludedModelIds.has(fallbackModelId)
-  ) {
-    return null;
-  }
-
-  const fallbackConfig = deps.modelCatalog.getModelById(fallbackModelId);
-  if (!fallbackConfig?.api_key) {
-    fallbackObserver?.onModelFallbackRejected?.({
-      fromModelId: activeModelId,
-      candidateModelId: fallbackModelId,
-      policy: 'cloud-quota',
-      reason: 'fallback_model_unavailable',
-      requiredPlacements: requirement.placements,
-    });
-    logger.warn('云端限额降级目标不可用（未注册或缺少 API Key）', { fallbackModelId });
-    return null;
-  }
-
-  const compatibility = evaluateModelInputCompatibility(fallbackConfig, requirement);
-  if (!compatibility.compatible) {
-    fallbackObserver?.onModelFallbackRejected?.({
-      fromModelId: activeModelId,
-      candidateModelId: fallbackModelId,
-      policy: 'cloud-quota',
-      reason: compatibility.reason,
-      requiredPlacements: requirement.placements,
-    });
-    logger.warn('云端限额降级目标不满足当前输入能力，保留原始错误', {
-      fallbackModelId,
-      requiredPlacements: requirement.placements,
-      reason: compatibility.reason,
-    });
-    return null;
-  }
-
-  const capacityAdmission = evaluateFallbackPromptCapacity?.(fallbackModelId);
-  if (capacityAdmission && !capacityAdmission.admitted) {
-    fallbackObserver?.onModelFallbackRejected?.({
-      fromModelId: activeModelId,
-      candidateModelId: fallbackModelId,
-      policy: 'cloud-quota',
-      reason: capacityAdmission.reason,
-      requiredPlacements: requirement.placements,
-    });
-    logger.warn('云端限额降级目标不满足当前 Prompt 容量要求，保留原始错误', {
-      fallbackModelId,
-      reason: capacityAdmission.reason,
-    });
-    return null;
-  }
-
-  logger.warn('云端限额降级（run 内续跑）', {
-    activeModelId,
-    fallbackModelId,
-    reason: error.message,
-  });
-  fallbackObserver?.onCloudQuotaFallbackApplied?.(fallbackModelId);
   return fallbackModelId;
 }

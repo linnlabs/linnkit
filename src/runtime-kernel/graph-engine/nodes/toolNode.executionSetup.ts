@@ -69,13 +69,6 @@ export function parseToolArgs(call: StandardToolCall): ParsedToolArgsResult {
   }
 }
 
-function readRunLockedModelId(local: UnknownRecord): string | undefined {
-  const executorLocal = local.executorLocal;
-  if (!isRecord(executorLocal)) return undefined;
-  const lockedModelId = executorLocal.runLockedModelId;
-  return typeof lockedModelId === 'string' && lockedModelId.trim() ? lockedModelId : undefined;
-}
-
 export function prepareToolNodeContext(state: EngineState): PreparedToolNodeContext {
   const local: UnknownRecord = state.local || {};
   const toolContext: ToolExecutionContext = isRecord(local.toolContext)
@@ -98,9 +91,6 @@ export function prepareToolNodeContext(state: EngineState): PreparedToolNodeCont
     },
   });
   attachWorkingHistoryView({ state, toolContext });
-  // 云端额度兜底后本 run 锁定到兜底模型，工具结果会交给它而不是选定模型；工具据此决定结果里放什么
-  // （如能否附图）。每次进入工具节点都按当前锁定重写，child-run 沿用父上下文对象时也会被自己的状态覆盖。
-  toolContext.activeModelId = readRunLockedModelId(local) ?? toolContext.modelId;
 
   return {
     state,

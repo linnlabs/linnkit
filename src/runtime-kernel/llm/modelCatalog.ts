@@ -14,13 +14,12 @@ export interface ModelCatalogEntry {
   id: string;
   enabled?: boolean;
   api_key?: string;
-  billing_mode?: 'byok' | 'cloud';
   /**
    * 是否允许客户端侧重试。
    *
    * 说明：
-   * - runtime-kernel 会基于该字段与 billing_mode 决定重试策略；
-   * - 该字段来自上层 Model Catalog（对齐 `src/domains/model-catalog/definitions/modelCatalog.ts`），避免在 runtime 侧出现类型漂移。
+   * - 每次请求都会单独计费、或由服务端自行重试的模型，Host 应设为 false；
+   * - 计费方式等产品概念由 Host 自己换算成这个开关，runtime-kernel 不解释。
    */
   enable_client_retry?: boolean;
   model_name?: string;

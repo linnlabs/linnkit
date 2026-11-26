@@ -265,21 +265,21 @@ describe('LlmNode orchestration', () => {
   it('合并 executorLocalPatch 时不修改上一状态对象', async () => {
     const { reasoner } = createReasoner(async () => ({
       decision: { kind: 'yield' },
-      executorLocalPatch: { runLockedModelId: 'cloud-deepseek-reasoner' },
+      executorLocalPatch: { contextCompaction: { attemptCount: 2, committedCount: 1 } },
     }));
     const node = new LlmNode({ reasoner });
     const previousExecutorLocal = {
       stepCount: 2,
-      runLockedModelId: 'cloud-primary-model',
+      contextCompaction: { attemptCount: 1, committedCount: 0 },
     };
     const state = createState({ executorLocal: previousExecutorLocal });
 
     await node.run(state);
 
-    expect(previousExecutorLocal.runLockedModelId).toBe('cloud-primary-model');
+    expect(previousExecutorLocal.contextCompaction).toEqual({ attemptCount: 1, committedCount: 0 });
     expect(state.local?.executorLocal).toEqual({
       stepCount: 2,
-      runLockedModelId: 'cloud-deepseek-reasoner',
+      contextCompaction: { attemptCount: 2, committedCount: 1 },
     });
     expect(state.local?.executorLocal).not.toBe(previousExecutorLocal);
   });

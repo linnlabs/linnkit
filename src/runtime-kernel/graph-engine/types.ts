@@ -27,7 +27,6 @@ export interface ExecutorLocalState {
   lastStepsHintThreshold?: number;
   systemReminderPolicy?: AgentSpecSystemReminderPolicy;
   toolObservationPolicy?: AgentSpecToolObservationGovernancePolicy;
-  runLockedModelId?: string;
   /**
    * 当前这一次 LLM 调用的业务来源。
    *
@@ -64,7 +63,7 @@ export interface ExecutorLocalState {
 export type ExecutorLocalPatch = Partial<
   Pick<
     ExecutorLocalState,
-    'runLockedModelId' | 'contextCompaction'
+    'contextCompaction'
   >
 >;
 

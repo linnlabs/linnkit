@@ -382,7 +382,6 @@ describe('tick pipeline stage write contracts', () => {
         'turnId',
       ],
       writes: [
-        'cloudQuotaFallbackAppliedModelId',
         'modelFallbackAudit',
         'llmCallStartedAt',
         'llmResp',
