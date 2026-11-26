@@ -171,7 +171,7 @@ defineContextPolicy({
 - `keepLatestToolGroups` 保护最近完整工具组；附件和不完整工具组也不进入可替换区段。
 - `maxOutputTokens` 限制本次压缩输出；`maxCompactionsPerRun` 限制单次 run 真正到达 Provider 的压缩 attempt，失败调用也会消耗这项产品护栏。
 - 压缩不增加 Agent 、工具或 Graph 节点，不重置步数预算，前端也无需新的配置与交互。
-- System Reminder 的普通 tick 与压缩专用位置合同见 [`runtime-kernel/system-reminder/README.md`](../../src/runtime-kernel/system-reminder/README.md)。
+- System Reminder 的普通 tick 与压缩专用位置合同见 [Context Engineering §6](./context-engineering.md#6-system-reminder注册表--agentspec-已接线-有一项不开放)。
 
 ---
 

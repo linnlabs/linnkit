@@ -11,7 +11,7 @@
 > 本文是一份**全机制速查表**：列出 linnkit 当前所有作用在"发给 LLM 的 messages"上的机制，**说人话**讲清楚它在做什么、什么时候触发、在哪里改它、当前可以配到什么粒度。
 >
 > 想看 fence 一等接入面的具体落地骨架，跳到 [`context-fences.md`](./context-fences.md)。
-> 想看 context-manager 的代码层架构、三阶段 provider 与预处理器实现细节，读 [`src/context-manager/README.md`](../../src/context-manager/README.md)。
+> 想看 context-manager 的代码层架构、三阶段 provider 与预处理器实现，读 GitHub 上的 [`src/context-manager/`](https://github.com/linnlabs/linnkit/tree/main/src/context-manager) 源码与测试。
 
 ---
 
@@ -54,7 +54,7 @@ Tool definitions 会先从有效输入预算扣除，剩余的 `messageBudgetTok
 - 定义 agent 与 `defineContextPolicy()`：[`agent-registration-guide.md §4`](./agent-registration-guide.md)
 - 工具历史窗口：[`tool-history.md`](./tool-history.md)
 - fence / must-keep 注入：[`context-fences.md`](./context-fences.md)
-- 代码层实现说明：[`src/context-manager/README.md`](../../src/context-manager/README.md)
+- 代码层实现：GitHub 上的 [`src/context-manager/`](https://github.com/linnlabs/linnkit/tree/main/src/context-manager) 源码与测试
 
 ---
 
@@ -360,7 +360,7 @@ System Reminder 是统一的 `<system-reminder>...</system-reminder>` 瞬态控�
 
 `R′` 不是从旧 Prompt 复制出来的文本。运行时会用相同的 `request`、`history`、`executorLocal` 和 reminder policy 重新执行一次注册规则；符合纯函数合同的规则应得到与 `R` 等价、通常逐字相同的内容，但它会被追加到**重建后**的最后一条 message。专用 `C` 不进入重建后的主调用。若原 phase 是强制收尾，phase 与 tool choice 也保持不变。随后整份 Prompt 必须重新计量并通过容量门禁。
 
-模块维护者还必须阅读 [`runtime-kernel/system-reminder/README.md`](../../src/runtime-kernel/system-reminder/README.md)。那里规定 owner、文件职责、扩展方式与验证门禁；接入方不要绕过 Graph stage 手工拼接 Reminder。
+模块维护者以 GitHub 上的 [`src/runtime-kernel/system-reminder/`](https://github.com/linnlabs/linnkit/tree/main/src/runtime-kernel/system-reminder) 源码与测试为准；接入方不要绕过 Graph stage 手工拼接 Reminder。
 
 **触发方式**：framework 内置 4 条规则，按顺序判定：
 
@@ -372,7 +372,7 @@ System Reminder 是统一的 `<system-reminder>...</system-reminder>` 瞬态控�
 | `periodic_progress_reflection` | `stepCount` 是 30 的倍数 | 长程任务定期反思 |
 
 `phase` 只在实际进入 LLM 节点时决定工具视图；步数策略不得覆盖 ToolNode 或删除已经接受的工具批次。
-完整边界与 798→799→800 示例见 [Graph Engine §2.2](../../src/runtime-kernel/graph-engine/README.md#22-步数预算与收尾)。
+例：`maxSteps = 800` 时，`stepCount = 798` 进入 LLM 仍是 `running`（剩 2 步，还能完成一次 ToolNode → LLM 闭环）；`stepCount = 799` 进入 LLM 改为 `force_final_answer`（只剩 1 步，禁用工具）；`stepCount = 800` 时若停在已经接受的 ToolNode，这批工具照常执行，pending batch 不丢弃。
 
 **配置开放状态**：
 
@@ -480,7 +480,7 @@ Host 仍必须让 `assistant_part_end.text` 与该 part 已发送的 `thought_de
 | `context_injection` / `task_request` | 当前没有 per-fence 硬上限 | `FenceDescriptor.maxBudgetFraction` 目前只校验声明，尚未形成运行时裁决；当前只受最终总门禁约束 | [Context Fence](./context-fences.md) |
 | `thought` / canonical reasoning | `thought` 不进入模型输入；reasoning 与其他 Assistant 输出共享 `outputLimitTokens` | 全量 reasoning 通过所属 `assistant_replay_parts` 回放并计入消息 token，直到正式压缩替换 | [Reasoning 所有权 §8](#reasoning-retention) |
 | `final_answer` / `tool_code` / `task_completion` | 无独立 token 上限 | 当前一次模型生成共享 `outputLimitTokens`；历史消息按工作记忆预算取舍 | [Token 管理](./token-management.md) |
-| `tool_calls` | 与 thought / text 共享本次生成的 `outputLimitTokens`，没有第二份独立上限 | 普通 route 会把上限发给 Provider；ChatGPT Codex 订阅 route 按其客户端合同省略 wire 上限，只保留本地预算预留。进入历史后与全部 sibling `tool_output` 整组同进同退 | [Tool History](./tool-history.md) / [Provider catalog](../../../../docs/source-acquisition/provider-catalog.md) |
+| `tool_calls` | 与 thought / text 共享本次生成的 `outputLimitTokens`，没有第二份独立上限 | 普通 route 会把上限发给 Provider；ChatGPT Codex 订阅 route 按其客户端合同省略 wire 上限，只保留本地预算预留。进入历史后与全部 sibling `tool_output` 整组同进同退 | [Tool History](./tool-history.md)；Provider 的模型目录与上限由 host 提供 |
 | `tool_output` | 默认在超过 20,000 字符或 1,200 行时落盘并替换为 preview | 这是执行期字符/行阈值，不是 token 上限；preview 仍受最终总门禁约束 | [Tools](./tools.md) |
 | `user_input` / `tool_output` 的图片附件 | Linnkit 不固定数量、字节或分辨率上限 | Host 的 `LlmInputMaterializerPort` / route profile 负责 admission；图片 token 估算计入最终输入，附件随所属消息或完整工具组同进同退 | [图片输入](./llm-provider.md#5-图片输入) |
 | `<system-reminder>` | 无独立 token 上限 | 普通 Reminder 拼入末条 content；压缩专用 Reminder 是独立末尾 wire 消息。两者都重新计量并接受同一总门禁 | [System Reminder §6](#system-reminder) |

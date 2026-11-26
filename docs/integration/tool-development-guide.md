@@ -517,4 +517,4 @@ const toolRuntime = new QuickstartMemoryToolRuntime([
 - [`context-engineering.md`](./context-engineering.md) — 10 大分组 `contextPolicy` 总览，含 `toolOutput.observationGovernance`
 - [`audit.md`](./audit.md) — tool retry / tool deny 等审计决策
 - [`testing.md`](./testing.md) — testkit 提供的 26 条 strict invariants（含工具相关的 C10）
-- [`../../src/runtime-kernel/tools/README.md`](../../src/runtime-kernel/tools/README.md) — runtime-kernel Tool 合同与幂等 owner
+- GitHub 上的 [`src/runtime-kernel/tools/`](https://github.com/linnlabs/linnkit/tree/main/src/runtime-kernel/tools) — runtime-kernel Tool 合同与幂等 owner 的源码与测试
