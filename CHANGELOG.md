@@ -14,6 +14,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `ToolExecutionContext.activeModelId`: the model that will receive this tool
+  result, set by ToolNode before each tool runs. It equals `modelId` until a
+  cloud quota fallback locks the run to the fallback model, and then names the
+  fallback model. Hosts deciding whether a tool result may carry images should
+  read it instead of `modelId`; otherwise a text-only fallback model gets an
+  image and the next LLM call fails input preflight. It is a runtime-reserved
+  key, so Host tool-context patches cannot set it.
+
 ### Removed
 
 - `ExecutorLocalState.lastSuccessfulLlmModelId` and its `ExecutorLocalPatch`

@@ -411,7 +411,7 @@ const result: StructuredToolResult<{ report: string }> = {
 
 host 必须通过 `ToolModelInputResolverPort` 把 selection 解析为当前 conversation/project 有权引用的 durable 图片身份。任一 selection 的 scope 或完整性失败时，整个工具结果失败，不产生半组附件。
 
-**是否返回图片由 Host 决定，linnkit 不判断。** 工具调用可能来自模型，也可能来自没有模型的 Host 主动调用（CLI、外部 Agent、测试），只有 Host 知道这次结果交给谁、对方能不能看图。因此 linnkit 不在工具定义上声明图片要求，ToolNode 执行前不查模型、不做能力校验，也不向工具写入准入事实。Host 应在装配 `ToolExecutionContext` 时提供自己的判断（例如按本 run 的模型和模型目录，或对外部调用方默认接收图片），工具据此决定是否创建 selection 和临时授权；不接收时返回完整的文字与结构化主结果，不要先登记资源再靠失败降级。ToolNode 对工具返回的 selection 一律交给 resolver。
+**是否返回图片由 Host 决定，linnkit 不判断。** 工具调用可能来自模型，也可能来自没有模型的 Host 主动调用（CLI、外部 Agent、测试），只有 Host 知道这次结果交给谁、对方能不能看图。因此 linnkit 不在工具定义上声明图片要求，ToolNode 执行前不查模型、不做能力校验，也不向工具写入准入事实。ToolNode 只在 `ToolExecutionContext.activeModelId` 写入工具结果接下来交给的模型：平时等于 `modelId`，云端额度兜底后 run 锁定到兜底模型，此时是兜底模型。Host 应在装配 `ToolExecutionContext` 时提供自己的判断（例如按 `activeModelId` 和模型目录，或对外部调用方默认接收图片；不要按 `modelId` 判断，兜底后它仍是原选定模型），工具据此决定是否创建 selection 和临时授权；不接收时返回完整的文字与结构化主结果，不要先登记资源再靠失败降级。ToolNode 对工具返回的 selection 一律交给 resolver。
 
 真正发往模型时，LLM 调用前的 input preflight 仍按实际请求中的图片和当前 route 校验；Host 判断失误会在那里明确失败，而不是静默丢图。
 
