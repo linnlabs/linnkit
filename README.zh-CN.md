@@ -159,7 +159,7 @@ console.log(result.finalAnswer);
 | [docs/integration/agent-registration-guide.md](./docs/integration/agent-registration-guide.md) | agent 注册与 `AgentSpec` |
 | [docs/integration/context-engineering.md](./docs/integration/context-engineering.md) | 上下文策略、trace、tokenizer |
 | [docs/integration/context-fences.md](./docs/integration/context-fences.md) | host 上下文注入 |
-| [docs/integration/tools.md](./docs/integration/tools.md) | 工具接入总览 |
+| [docs/integration/tools.md](./docs/integration/tools.md) | 工具接入总览，含工具并行执行（`parallel: true`） |
 | [docs/integration/tool-development-guide.md](./docs/integration/tool-development-guide.md) | 工具开发细节 |
 | [docs/integration/run-supervisor.md](./docs/integration/run-supervisor.md) | run 生命周期管理 |
 | [docs/integration/testing.md](./docs/integration/testing.md) | testkit 和不变量 |

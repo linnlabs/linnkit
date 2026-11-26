@@ -16,6 +16,7 @@
 - `ensureToolContextRuntimeCapability`（同上）：把 runtime 必需的保留字段补进 host 的 patch，避免手抖漏字段。
 - `ToolIdempotencyPolicy` / `computeToolIdempotencyKey`（同上）：声明 `conversation | turn` scope，并按正式 32-hex 合同生成稳定 key。详细语义见 [`tool-development-guide.md §3.2`](./tool-development-guide.md#32-幂等执行合同)。
 - `ToolCallStreamingPolicy`（同上）：工具按需声明早期占位或参数快照；未声明时不发布未接纳的流式生命周期事件。该 policy 只进入 Linnkit invocation context，不进入 provider options。
+- `ToolRuntimeDefinition.parallel` / `BaseTool.parallel`（0.48.0+，同上）：声明该工具可与同一次回复里相邻的可并行调用同时执行；未声明即串行，行为与以前相同。规则见 [§5.1](#51-并行执行)。
 
 ## 2. linnkit 自带的 mock primitive
 
@@ -29,6 +30,7 @@
 4. 实现 `ObservationPreviewPort`，决定超长 observation 的完整副本写到哪里；再在 runtime assembly 里传给 `createDefaultGraphExecutor({ observationPreview })` 或你的自定义 `ToolNode` 装配。
 5. 把 AgentSpec 与工具集合装配在一起；详细规范见 [`agent-registration-guide.md`](./agent-registration-guide.md)。
 6. 只有真正有副作用且同参重试必须复用成功结果的工具才声明 `idempotency`；确认 scope 身份注入、成功缓存复用和跨进程边界，见 [`tool-development-guide.md §3.2`](./tool-development-guide.md#32-幂等执行合同)。
+7. 只给互不依赖、耗时长、不改同一份数据的工具声明 `parallel: true`，并在 `getToolDefinition` 里原样返回该字段；需要时在 ToolNode 装配处设置 `maxParallelToolCalls`。见 [§5.1](#51-并行执行)。
 
 如果工具 Schema 依赖本次产品配置，Host 应在 `getToolSchemas(ToolSchemaBuildRequest)` 边界校验自己的扩展请求字段，再派生窄小的 Host 上下文交给具体工具。完整 query/history 不应暴露给所有 concrete/plugin tools。不要把用途模型 ID、产品模式或开放 metadata Map 加回 Linnkit；框架只拥有调用时机和通用 invocation。
 
@@ -62,6 +64,38 @@ Host 接入测试应通过真实 publisher 与 persistence consumer 验证：执
 tool call 仍有且只有一个 durable output；提交失败不会假报收口完成；显式继续不重跑
 已结算调用。仅断言 ToolNode 抛出错误或实时收到 output，不能证明持久化完整。
 继续与未知副作用的边界见 [Persistence](./persistence.md#6-最小验证)。
+
+### 5.1 并行执行
+
+模型一次回复里有多个工具调用时，ToolNode 按顺序把**相邻的、都声明了 `parallel: true`** 的调用分成一组同时执行。没有声明的调用是屏障：前面那组全部结算后它才开始，它结束后才开始下一个调用。例如 `[A*, B*, C, D*]`（`*` 表示可并行）分三段执行：A 和 B 同时跑，C 等两者都结束后跑，D 等 C 结束后跑。
+
+```ts
+class ResearchTool extends BaseTool<ResearchArgs> {
+  readonly name = 'research';
+  readonly parallel = true;
+  // ...
+}
+
+// Host 的工具目录必须把声明交给 ToolNode：
+getToolDefinition(name) {
+  const tool = this.tools.get(name);
+  return tool && { parameters: tool.parameters, idempotency: tool.idempotency, parallel: tool.parallel };
+}
+
+// 组内同时在跑的上限，默认 3；由 Host 决定，模型无法通过参数改变。
+new ToolNode({ toolRuntime, observationPreview, maxParallelToolCalls: 3 });
+```
+
+合同：
+
+- **上限**：一组里同时在跑的调用不超过 `maxParallelToolCalls`（默认 3，必须是正整数），超出的按原顺序排队，一个结束补一个。`ChildRunInvoker` 内部装配的 ToolNode 使用默认值。
+- **失败互不影响**：组内一个调用返回失败，同伴照常执行并各自返回结果，和串行时单个工具失败一样，模型在下一轮看到全部结果。工具端口抛出异常（不是返回失败）时，不再启动新调用，等已在跑的同伴结束并提交后再上报该异常。
+- **每个调用有自己的 ToolContext**：ToolNode 为每个调用派生一份 `ToolExecutionContext`，`parentToolCallId` 只写在这份上；会话历史视图仍读同一份运行历史。工具对 context 的写入不会被同批其他调用看到。Host 不能假设 `executeTool` 收到的对象就是装配时传入的 `toolContext`，也不能在调用之间通过它传值。
+- **结果顺序**：每个结果在各自完成时发布、写入历史并提交，所以历史里的结果按完成先后排列；发给模型前 Linnkit 会把同一次回复的结果按调用顺序排回去。实时事件里多个 `tool_process(start)` 同时出现，协议不变。
+- **控制字段**：可并行工具不能返回 `control.requireUser`、`control.terminateRun` 或 `control.finalAnswer`；返回时按 `TOOL_RESULT_CONTRACT_VIOLATION` 结算为错误（副作用已经发生，Host 要据此决定是否声明并行）。
+- **取消与暂停**：组内调用共用同一个停止信号（`state.local.signal` 与 `toolContext.abortSignal`），取消时每个在跑的调用都会收到；在跑的结算为“执行中被取消”，未启动的和后面的调用结算为“执行前被取消”。暂停时已完成的结果照常提交，在跑的调用保留为在途意图，继续前逐个对账，见 [Persistence](./persistence.md#并行组的断点)。
+- **协议熔断**：组内的协议错误在整组结束后按调用原顺序计数，不随完成先后变化。
+- **只开给合适的工具**：并行适合互相独立、读多写少、耗时长（如子运行、深度搜索）的调用。会改同一份数据、需要审批、或依赖前一个调用结果的工具不要声明；Linnkit 不加锁，也不检测写冲突。
 
 ## 6. ObservationPreviewPort：配置超长 observation 存储路径
 

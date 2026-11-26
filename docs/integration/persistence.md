@@ -82,10 +82,29 @@ LLM、工具与取消结算在合并原历史和新事实时统一复用 `should
 原请求、预算、pending call、执行意图、结果和 owner 凭据，不依赖实时分片。
 
 Graph 在节点调用前保存进度，每个工具 call 前保存执行意图、结束后保存结果与下一位置。
+执行意图记录在 `local.executingToolCallIds`（数组），它始终是 `pendingToolCalls` 的子集。
 `continueSession` 只挂载新的临时能力，保留原请求、历史、模型和累计预算；不创建用户输入，
 也不从 `user` 重启。`yielded` checkpoint 只返回已完成状态，不能重跑最终节点。
 未决工具必须经 `ToolRecoveryPort` 查询 owner；无 owner 证明时抛 `RunRecoveryBlockedError`，
 不按相同参数猜测成功。允许安全重试是 owner 的显式决定。
+
+#### 并行组的断点
+
+一组可并行调用（见 [Tools §5.1](./tools.md#51-并行执行)）里每个调用各自提交执行意图和结果，
+所以断点里可能同时有多个在途调用。组内的提交由 ToolNode 排队，`commitExecutionBoundary`
+不会被并发调用，revision 仍逐次 +1。继续时：
+
+- 已提交结果的调用不在 `pendingToolCalls` 里，不会重跑；
+- `executingToolCallIds` 里的每个调用都单独经过 `ToolRecoveryPort.reconcile`：`settled` 直接用
+  owner 记录的结果，`retry` 重新执行，`blocked` 让继续受阻；
+- 没有意图的待执行调用正常执行。
+
+Host 校验“工具结果凭据属于当前在途调用”时，要判断调用 ID 是否在 `executingToolCallIds` 里，
+不能再要求它等于唯一的在途调用。
+
+0.47.0 及更早的断点只有单个 `executingToolCallId`。`graph.parseEngineCheckpoint` 照常读取，
+读入后变成只有一个成员的 `executingToolCallIds`，无需迁移数据；同时带两种写法的断点视为损坏。
+不经过 `parseEngineCheckpoint` 直接读 JSON 的 Host 需要自己做同样的转换。
 
 `RunPauseRequested` 是临时停止的 signal reason；它不等于取消，也不结算尚未执行的
 工具为失败。Host 仍负责 RunDescriptor、权限重建、唯一 activation、生命周期和资源保留。

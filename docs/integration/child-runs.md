@@ -90,6 +90,7 @@ const outcome = await supervisor.waitForTerminal(handle.runId);
 - EventStore 的默认 `readEvents()` 必须保持无损事实读取，供审计与 child 恢复使用；foreground Agent 构建历史时必须显式请求 `lane=foreground / visibility=conversation` 的 routing scope。缺少 routing identity 的 payload 不属于当前 Runtime 合同，读取主链必须拒绝，不能根据存储关系恢复或猜测身份。
 - 同步 child-run 的失败统一走 Result：普通失败返回 `{ success:false, error }`，取消返回 `{ success:false, cancelled:true, error }`。执行开始后，传给 Graph/provider 的受控 `AbortSignal.aborted` 是取消判定权威；provider 即使把取消包装成普通 Error，也不得把 child lifecycle 写成 failed。错误名称只作为标准 AbortError 的补充识别。
 - 同步 child-run 不支持 `wait_user`。一旦路由到交互节点或产生 `requires_user_interaction`，必须返回明确失败并保留该事实事件，交互应上提给 foreground run；禁止把 child run 伪装为 completed，或让多个 child 共用正文 interaction。
+- 多个同步 child 可以并行：发起 child 的工具声明 `parallel: true` 后，模型一次回复里相邻的多个调用会同时执行（见 [Tools §5.1](./tools.md#51-并行执行)）。每个调用拿到自己的 ToolContext，`parentToolCallId` 互不覆盖，trace 挂在各自的父工具卡上；取消父 run 时组内所有 child 都收到停止信号。嵌套时并发会相乘（每层上限各自生效），嵌套深度上限不变。
 - 同步 child-run 默认最多嵌套 4 层。父上下文 `childRunDepth` 已到上限时，`invokeChildRun` 直接返回 `{ success:false, error }`，不会继续启动子图，避免工具递归耗尽资源。
 - 异步 `spawnDetached` 不创建同步 child-run 的内部 checkpoint key；它注册的就是一个真实 run，`RunExecutionContext.conversationId/runId/parentRunId` 必须与 `RunRecord` 对齐。executor 读取的是注册时的 `AgentSpec` / request / metadata 快照，不应依赖调用方之后继续修改对象。
 - child lifecycle 汇总的唯一 owner 是 `RunRegistryStore`。按父级读取必须使用 `supervisor.list({ parentRunId })`；EventStore、parent trace、Telemetry、CostCollector 与 LLM Audit 只承担各自的事实或观测职责。

@@ -50,6 +50,7 @@ export class QuickstartMemoryToolRuntime implements QuickstartToolRuntime {
       parameters: tool.parameters,
       validateArguments: args => tool['validateArguments'](args),
       idempotency: tool.idempotency,
+      ...(tool.parallel ? { parallel: tool.parallel } : {}),
     };
   }
 

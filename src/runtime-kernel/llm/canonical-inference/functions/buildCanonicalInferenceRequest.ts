@@ -15,6 +15,7 @@ import type {
 } from '../../../../ports';
 import type { LlmCallOptions, ToolCall } from '../../caller.types';
 import { isRecord, toToolCalls } from '../../sidecar-replay';
+import { orderToolResultsByCall } from './orderToolResultsByCall';
 
 function imageBlock(
   attachment: ResolvedLlmImageAttachment
@@ -198,7 +199,7 @@ export function buildCanonicalInferenceRequest(
   const effort = reasoningEffort(input.options.reasoning_effort);
   return {
     model_id: input.model_id,
-    messages: input.messages.map(projectMessage),
+    messages: orderToolResultsByCall(input.messages.map(projectMessage)),
     tools: input.options.tools ?? [],
     tool_choice: input.options.tool_choice ?? 'auto',
     ...(input.options.cache_policy ? { cache_policy: input.options.cache_policy } : {}),

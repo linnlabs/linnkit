@@ -38,12 +38,19 @@ const checkpoint = z.object({
       id: ToolCallIdSchema, type: z.literal('function'),
       function: z.object({ name: z.string().min(1), arguments: z.string() }).strict(),
     }).strict()).optional(),
+    executingToolCallIds: z.array(ToolCallIdSchema).optional(),
+    // 0.47 及更早只记一个在途调用；照常接受，读入时转成只有一个成员的 executingToolCallIds。
     executingToolCallId: ToolCallIdSchema.optional(),
     toolBatchCompletionMode: z.enum(['continue_to_llm', 'yield_after_batch']).optional(),
     pendingInteractionSpec: SerializableJsonRecord.optional(), lastToolResult: SerializableJsonRecord.optional(),
     finalAnswer: z.string().optional(), answerId: z.string().optional(), chunkSeq: counter.optional(),
     contextUsage: ContextUsageSnapshot.optional(),
-  }).passthrough().optional(),
+  }).passthrough().refine(
+    local => local.executingToolCallId === undefined || local.executingToolCallIds === undefined,
+    'Checkpoint must not carry both executingToolCallId and executingToolCallIds',
+  ).transform(({ executingToolCallId: legacy, ...local }) => (
+    legacy === undefined ? local : { ...local, executingToolCallIds: [legacy] }
+  )).optional(),
 }).strict();
 
 /** 存储边界先验证数据形态，再验证 framework 字段；Host 不复制或断言 Graph 内部协议。 */

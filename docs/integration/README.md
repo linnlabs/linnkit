@@ -148,6 +148,7 @@ Memory fallback 补齐缺失依赖。需要接入多 agent、多 workspace 或�
 | 接 LLM provider（OpenAI / Anthropic / DeepSeek / OpenRouter）                            | [llm-provider.md](./llm-provider.md)                                                                                        |
 | 工具集接入面（`ToolRuntimePort` / `ObservationPreviewPort` / 流式生命周期 policy）                                  | [tools.md](./tools.md)                                                                                                      |
 | **工具开发规范**（`BaseTool` 设计哲学 / `data`-`observation` 分层 / 错误处理 / `getExecutionSummary`）⭐ | [tool-development-guide.md](./tool-development-guide.md)                                                                    |
+| 工具并行执行（`parallel` 声明、组内上限、每调用 ToolContext、多个在途调用的断点） | [tools.md §5.1](./tools.md#51-并行执行) / [persistence.md](./persistence.md#并行组的断点) |
 | 工具结果图片（selection、resolver、执行期能力校验与失败语义） | [tool-development-guide.md §7.4](./tool-development-guide.md) / [tools.md](./tools.md) |
 | Host 确定性发起工具并直入 ToolNode                                                          | [host-originated-tools.md](./host-originated-tools.md)                                                                      |
 | **Agent 注册与装配**（`AgentSpec` 静态蓝图 / `defineAgent` quickstart helper / 多 agent 协作）⭐     | [agent-registration-guide.md](./agent-registration-guide.md)                                                                |

@@ -57,7 +57,7 @@ async function runWithStreamDensity(chunkCount: number) {
   expect((await scenario.start('Write two pages')).status).toBe('paused');
   const paused = await scenario.checkpoint();
   expect(paused?.local?.pendingToolCalls?.map(call => call.id)).toEqual(['call-2']);
-  expect(paused?.local?.executingToolCallId).toBeUndefined();
+  expect(paused?.local?.executingToolCallIds).toBeUndefined();
   expect(paused?.local?.history?.every(shouldPersistRuntimeEvent)).toBe(true);
   expect(paused?.local?.history).toEqual(expect.arrayContaining(prior));
   expect(paused?.local?.history?.some(event => event.id === oldProgress.id)).toBe(false);

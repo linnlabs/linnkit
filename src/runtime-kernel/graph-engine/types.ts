@@ -99,8 +99,12 @@ export interface EngineLocalState extends Record<string, unknown> {
   toolRecoveryPort?: ToolRecoveryPort;
   /** 运行中插话：一批工具结算完、回到模型前取用 Host 的待送达输入；不序列化能力。 */
   pendingUserInputPort?: PendingUserInputPort;
-  /** 意图已提交但结果未提交的原始 call；重启时必须经过工具 owner 对账。 */
-  executingToolCallId?: ToolCallId;
+  /**
+   * 意图已提交但结果未提交的原始 call；重启时每个都必须经过工具 owner 对账。
+   *
+   * 串行调用最多一个，并行组可以有多个；它们始终是 pendingToolCalls 的子集，结果提交时移除。
+   */
+  executingToolCallIds?: ToolCallId[];
   runtimeFailureFactSink?: RuntimeFailureFactSink;
   summarizationCallbacks?: SummarizationCallbacks;
   /** 最近一次成功完成的 LLM Prompt 占用；可序列化并随 checkpoint 保留。 */

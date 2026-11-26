@@ -6,6 +6,8 @@ import type { UnknownRecord } from './toolNode.helpers';
 import type { ToolNodeEventBridge } from './toolNode.eventBridge';
 import { stripAnswerState } from './toolNode.stateTransitions';
 import { appendWorkingHistory } from '../functions/appendWorkingHistory';
+import { parsePendingToolCalls } from '../functions/parsePendingToolCalls';
+import { withoutToolCall } from './toolNode.helpers';
 
 const CANCELLED_BEFORE_EXECUTION = 'Tool call was cancelled before execution because the run was aborted.';
 const CANCELLED_DURING_EXECUTION = 'Tool call was cancelled during execution because the run was aborted.';
@@ -15,29 +17,28 @@ export function isToolExecutionAbort(error: unknown): boolean {
 }
 
 /**
- * 执行中取消必须先补全当前调用与同 batch 未启动调用的 tool_output，再允许 AbortError 离开 ToolNode。
- * 事实由通用 ToolNode 创建；Host 和 UI 只能消费，不能扫描 loading 状态后补造结果。
+ * 执行中取消时，先把这个调用结算为“执行中被取消”，再允许 AbortError 离开或交给并行组收口。
+ * 同批未启动的调用随后由 ToolNode.cancel 结算；事实由通用 ToolNode 创建，
+ * Host 和 UI 只能消费，不能扫描 loading 状态后补造结果。
  */
-export function settleToolCallsAfterExecutionAbort(params: {
+export function settleToolCallAfterExecutionAbort(params: {
   readonly state: EngineState;
-  readonly remainingCalls: readonly StandardToolCall[];
+  readonly call: StandardToolCall;
   readonly currentBridge: ToolNodeEventBridge;
-  readonly toolCatalog: Pick<ToolCatalogPort, 'getToolDefinition'>;
 }): RoutedRuntimeEvent[] {
   params.currentBridge.emitToolOutput({
     status: 'error',
     observation: CANCELLED_DURING_EXECUTION,
     error: CANCELLED_DURING_EXECUTION,
   });
-
-  const prepared = prepareToolNodeContext(params.state);
   const events = params.currentBridge.getRuntimeEvents();
-  events.push(...createPendingToolCancellationEvents({
-    prepared,
-    calls: params.remainingCalls,
-    toolCatalog: params.toolCatalog,
-  }));
-  params.state.local = buildCancelledToolBatchLocalState(prepared.local, events);
+  // 并行组里其他调用可能已经替换 state.local，必须基于最新状态移除本调用。
+  const local: UnknownRecord = params.state.local ?? {};
+  params.state.local = {
+    ...stripAnswerState(local),
+    pendingToolCalls: withoutToolCall(parsePendingToolCalls(local.pendingToolCalls ?? []), params.call.id),
+    history: appendWorkingHistory(parseRuntimeEvents(local.history ?? []), events),
+  };
   return events;
 }
 

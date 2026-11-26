@@ -101,9 +101,12 @@ describe('toolNode.executionSetup', () => {
     expect(execution?.toolName).toBe('search');
     expect(execution?.toolCallId).toBe('call_1');
     expect(execution?.idempotencyKey).toMatch(/^[a-f0-9]{32}$/);
-    expect(prepared.toolContext.parentToolCallId).toBe('call_1');
-    expect(prepared.toolContext.conversationId).toBe('conv_root_1');
-    expect(prepared.toolContext.turnId).toBe('turn_1');
+    // 调用身份只写在本次调用的上下文上，共享上下文不带，避免并行调用互相覆盖。
+    expect(execution?.toolContext.parentToolCallId).toBe('call_1');
+    expect(execution?.toolContext).not.toBe(prepared.toolContext);
+    expect(prepared.toolContext.parentToolCallId).toBeUndefined();
+    expect(execution?.toolContext.conversationId).toBe('conv_root_1');
+    expect(execution?.toolContext.turnId).toBe('turn_1');
   });
 
   it('prepareToolExecution 在未注入 toolCatalog 时不应隐式依赖宿主默认实现', () => {

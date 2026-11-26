@@ -159,7 +159,7 @@ Child runs use the same fact pipeline. A child EventBus owns child persistence a
 | [docs/integration/agent-registration-guide.md](./docs/integration/agent-registration-guide.md) | Agent registration and `AgentSpec` |
 | [docs/integration/context-engineering.md](./docs/integration/context-engineering.md) | Context policy, ContextTrace, TokenizerPort |
 | [docs/integration/context-fences.md](./docs/integration/context-fences.md) | Host context injection |
-| [docs/integration/tools.md](./docs/integration/tools.md) | Tool integration overview |
+| [docs/integration/tools.md](./docs/integration/tools.md) | Tool integration overview, including parallel tool calls (`parallel: true`) |
 | [docs/integration/tool-development-guide.md](./docs/integration/tool-development-guide.md) | Tool design internals |
 | [docs/integration/run-supervisor.md](./docs/integration/run-supervisor.md) | Run lifecycle management |
 | [docs/integration/realtime.md](./docs/integration/realtime.md) | RuntimeEvent identity, admission, realtime/persistence fan-out, and event change checklist |

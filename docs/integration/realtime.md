@@ -273,7 +273,7 @@ Host 如持久化 compact trace，必须同时保存共享 retry/failure payload
 
 运行起点的 `user_input` 由客户端在发送时自己先显示，不经实时通道回传。运行中途送达的插话（见 [`mid-run-user-input.md`](./mid-run-user-input.md)）由 Graph 在一批工具结算后写入，客户端事先不知道它落在哪里，因此投影为 SSE `user_input`：只带用户原文和 `delivery: 'mid_run'`，`id` 与客户端提交插话时给的编号相同，客户端据此确认送达并把它放进时间线。
 
-`tool_call_decision` 表示模型提交了调用清单，不等于所有调用正在执行。普通 ToolNode 串行消费清单，实际开始由 ephemeral `tool_process(start)` 表达。客户端不应为 decision 创建 queued/pending 可见行；未来 ToolNode 并行化时只是多个 process 同时开始，协议不变。无论成功、失败还是 run 取消，decision 中每个 `tool_call_id` 都必须有 durable `tool_output` 配对；未启动就取消的调用使用 error output 明确结算，不能让 Host 或 Renderer 把永久 loading 当成可恢复状态。
+`tool_call_decision` 表示模型提交了调用清单，不等于所有调用正在执行。ToolNode 按清单顺序消费，相邻的可并行调用（见 [Tools §5.1](./tools.md#51-并行执行)）同时执行，实际开始由 ephemeral `tool_process(start)` 表达。客户端不应为 decision 创建 queued/pending 可见行；并行时只是多个 process 同时开始、各自结束，协议不变。并行组的 `tool_output` 按完成先后到达，客户端按 `tool_call_id` 配对，不能按到达顺序对应调用。无论成功、失败还是 run 取消，decision 中每个 `tool_call_id` 都必须有 durable `tool_output` 配对；未启动就取消的调用使用 error output 明确结算，不能让 Host 或 Renderer 把永久 loading 当成可恢复状态。
 
 `context_usage_snapshot` 必须通过 Graph 已注入的 RuntimeEventSink 发布，不能为 token 面板建立 node→transport 旁路。它不进入
 Graph history/checkpoint event list、EventStore、UI replay 或 Agent context；Host 可以在 publisher 前的 execution-scoped

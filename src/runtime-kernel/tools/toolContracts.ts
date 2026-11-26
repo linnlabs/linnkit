@@ -46,6 +46,8 @@ export abstract class BaseTool<TArgs extends ToolArgs = ToolArgs, TResult extend
 
   readonly idempotency?: ToolIdempotencyPolicy;
   readonly streaming?: ToolCallStreamingPolicy;
+  /** 见 `ToolRuntimeDefinition.parallel`；Host 的工具目录需把它原样交给 ToolNode。 */
+  readonly parallel?: true;
 
   getExecutionSummary?(output: string): string {
     const FULL_CONTENT_THRESHOLD = 200;

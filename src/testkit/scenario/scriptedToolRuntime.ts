@@ -36,6 +36,8 @@ export interface ScriptedToolSpec {
   readonly description?: string;
   readonly parameters?: ToolParameterSchema;
   readonly validateArguments?: ToolRuntimeDefinition['validateArguments'];
+  /** 声明可与相邻的可并行调用同时执行，见 `ToolRuntimeDefinition.parallel`。 */
+  readonly parallel?: true;
 }
 
 export type ScriptedToolMap = Readonly<Record<string, ScriptedToolHandler | ScriptedToolSpec>>;
@@ -110,6 +112,7 @@ export function createScriptedToolRuntime(tools: ScriptedToolMap = {}): Scripted
       return {
         parameters: spec.parameters ?? EMPTY_PARAMETERS,
         ...(spec.validateArguments ? { validateArguments: spec.validateArguments } : {}),
+        ...(spec.parallel ? { parallel: spec.parallel } : {}),
       };
     },
     async executeTool(toolName, args, context) {

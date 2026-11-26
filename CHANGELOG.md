@@ -14,6 +14,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Parallel tool calls. A tool declares `parallel: true` (new optional field on
+  `ToolRuntimeDefinition` and `BaseTool`; Host tool catalogs must pass it
+  through `getToolDefinition`). When one model reply contains several calls,
+  `ToolNode` runs each run of adjacent `parallel` calls as a group; a call
+  without the declaration is a barrier that waits for the group before it and
+  finishes before the next call starts. Undeclared tools behave exactly as
+  before. Within a group:
+  - at most `maxParallelToolCalls` calls run at once (new optional
+    `ToolNodeDependencies` field, default 3, positive integer; the model cannot
+    change it), the rest queue in call order;
+  - a call that returns a failure does not affect its peers; each call gets
+    its own result, as in a serial batch. If a tool port throws, no further
+    calls start, running peers finish and are committed, then the error is
+    raised;
+  - each result is published, written to working history and committed as the
+    call finishes, so a crash or pause never re-runs a finished call;
+  - every running call receives the cancel signal; running calls settle as
+    cancelled during execution, unstarted and later calls as cancelled before
+    execution;
+  - consecutive protocol errors are counted in call order after the group, so
+    the fuse does not depend on timing;
+  - a parallel tool must not return `control.requireUser`,
+    `control.terminateRun` or `control.finalAnswer`; such a result settles as a
+    `TOOL_RESULT_CONTRACT_VIOLATION` error.
+- `buildCanonicalInferenceRequest` puts the tool results that directly follow
+  an assistant tool-call message back into call order, since parallel results
+  enter history in completion order.
+
+### Changed
+
+- **Breaking:** the checkpoint records in-flight tool calls as
+  `EngineLocalState.executingToolCallIds: ToolCallId[]` instead of the single
+  `executingToolCallId`. It is always a subset of `pendingToolCalls`; settled
+  calls leave it with the same commit, calls still running stay. On continue,
+  each listed call is reconciled through `ToolRecoveryPort` on its own.
+  `parseEngineCheckpoint` still reads checkpoints saved by 0.47.0 and earlier
+  and turns `executingToolCallId` into a one-element `executingToolCallIds`;
+  a checkpoint carrying both is rejected. Hosts that check "this result belongs
+  to the in-flight call" must test membership in `executingToolCallIds`.
+- **Breaking:** `executeTool` receives a `ToolExecutionContext` derived for that
+  call, not the shared `state.local.toolContext`. `parentToolCallId` is set
+  only on the derived context, so concurrent calls no longer overwrite each
+  other's parent identity (which would attach child-run traces to the wrong
+  tool card). The derived context reads the same run history; writes a tool
+  makes to it are not seen by other calls. The model-input resolver and
+  observation preview receive the same per-call context.
+
+### Documentation
+
+- `docs/integration/tools.md` §5.1 describes declaring parallel tools, the
+  group limit, failure, cancel, result order and per-call ToolContext;
+  `persistence.md` covers checkpoints with several in-flight calls and reading
+  old checkpoints; `realtime.md` and `child-runs.md` describe parallel
+  `tool_process` events and parallel child runs.
+
 ---
 
 ## [0.47.0] - 2026-11-26

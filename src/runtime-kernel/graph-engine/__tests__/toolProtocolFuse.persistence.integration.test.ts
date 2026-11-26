@@ -140,7 +140,7 @@ describe('protocol fuse with the checkpoint persistence consumer', () => {
         nodeId: 'llm', executionStatus: 'ready',
         local: { pendingToolCalls: [], _consecutiveToolProtocolErrors: count },
       });
-      expect(checkpoint.state.local?.executingToolCallId).toBeUndefined();
+      expect(checkpoint.state.local?.executingToolCallIds).toBeUndefined();
       expect(checkpoint.state.local?.history?.map(event => event.id)).toEqual(persisted.map(event => event.id));
 
       const continued = f.execution();

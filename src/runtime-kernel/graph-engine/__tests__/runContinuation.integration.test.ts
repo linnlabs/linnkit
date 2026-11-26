@@ -120,7 +120,7 @@ describe('durable graph continuation', () => {
       expect(f.durable.map(event => event.type === 'tool_output' && [event.tool_call_id, event.status]))
         .toEqual([['call-1', outcome === 'committed' ? 'success' : 'error'], ['call-2', 'error']]);
       expect((await f.checkpoint()).state).toMatchObject({ executionStatus: 'yielded', local: { pendingToolCalls: [] } });
-      expect((await f.checkpoint()).state.local?.executingToolCallId).toBeUndefined();
+      expect((await f.checkpoint()).state.local?.executingToolCallIds).toBeUndefined();
       f.crash();
       await f.engine(execute).continueSession('run', {
         expectedRevision: (await f.checkpoint()).revision, capabilities: f.capabilities,
@@ -138,7 +138,7 @@ describe('durable graph continuation', () => {
     expect(f.durable.map(event => event.type === 'tool_output' && event.tool_call_id)).toEqual(['call-1']);
     const { state, revision } = await f.checkpoint();
     expect(state.local?.pendingToolCalls?.map(tool => tool.id)).toEqual(['call-2']);
-    expect(state.local?.executingToolCallId).toBeUndefined();
+    expect(state.local?.executingToolCallIds).toBeUndefined();
     const nextExecute = vi.fn(async () => success);
     const result = await f.engine(nextExecute).continueSession('run', {
       expectedRevision: revision, capabilities: { ...f.capabilities, signal: new AbortController().signal },
@@ -154,11 +154,11 @@ describe('durable graph continuation', () => {
   it('owner 已完成而 checkpoint 未提交时，先阻塞；对账后不重复执行副作用', async () => {
     const f = fixture();
     let effects = 0;
-    f.failCommit(state => effects === 1 && !state.local?.executingToolCallId);
+    f.failCommit(state => effects === 1 && !state.local?.executingToolCallIds);
     await expect(f.start(f.engine(async () => { effects += 1; return success; }))).rejects.toThrow('commit failed');
     f.crash();
     expect(f.durable).toEqual([]);
-    expect((await f.checkpoint()).state.local?.executingToolCallId).toBe('call-1');
+    expect((await f.checkpoint()).state.local?.executingToolCallIds).toEqual(['call-1']);
     f.failCommit(() => false);
     const execute = vi.fn(async () => { effects += 1; return success; });
     await expect(f.engine(execute).continueSession('run', {
@@ -180,7 +180,7 @@ describe('durable graph continuation', () => {
   it('执行意图提交失败则零副作用；yielded 断点不会重复最终工具', async () => {
     const f = fixture();
     const execute = vi.fn(async () => success);
-    f.failCommit(state => state.local?.executingToolCallId === 'call-1');
+    f.failCommit(state => state.local?.executingToolCallIds?.includes(ToolCallIdSchema.parse('call-1')) === true);
     await expect(f.start(f.engine(execute))).rejects.toThrow('commit failed');
     expect(execute).not.toHaveBeenCalled();
     f.failCommit(() => false);
@@ -198,7 +198,7 @@ describe('durable graph continuation', () => {
 
   it('两个继续入口只能执行一次，旧 revision 被拒绝', async () => {
     const f = fixture();
-    f.failCommit(state => state.local?.executingToolCallId === 'call-1');
+    f.failCommit(state => state.local?.executingToolCallIds?.includes(ToolCallIdSchema.parse('call-1')) === true);
     await expect(f.start(f.engine(async () => success))).rejects.toThrow();
     f.failCommit(() => false);
     const execute = vi.fn(async () => success);
@@ -233,7 +233,7 @@ describe('停止期限：工具不理会停止信号', () => {
     expect(Date.now() - pausedAt).toBeLessThan(1_000);
     const { state } = await f.checkpoint();
     // 与工具自己响应停止、结果未知时相同：继续前先对账。
-    expect(state.local?.executingToolCallId).toBe('call-1');
+    expect(state.local?.executingToolCallIds).toEqual(['call-1']);
     expect(state.local?.pendingToolCalls?.map(tool => tool.id)).toEqual(['call-1', 'call-2']);
     tool.release();
     await new Promise(resolve => setTimeout(resolve, 10));

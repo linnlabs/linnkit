@@ -71,4 +71,18 @@ describe('buildCanonicalInferenceRequest', () => {
     expect(request.cache_policy).toEqual(options.cache_policy);
     expect(request.sampling.max_output_tokens).toBe(8_192);
   });
+
+  it('并行执行按完成先后写入的工具结果，发给模型时按调用顺序排列', () => {
+    const toolCall = (id: string) => ({ id, type: 'function', function: { name: 'search', arguments: '{}' } });
+    const tool = (id: string) => ({ role: 'tool' as const, tool_call_id: id, content: `result ${id}` });
+    const messages: ResolvedLlmInputMessage[] = [
+      { role: 'user', content: 'compare' },
+      { role: 'assistant', content: '', tool_calls: [toolCall('a'), toolCall('b'), toolCall('c')] },
+      tool('c'), tool('a'), tool('b'),
+      { role: 'user', content: 'next' },
+    ];
+    const request = buildCanonicalInferenceRequest({ model_id: 'model-1', messages, options: {} });
+    expect(request.messages.map(message => (message.role === 'tool' ? message.tool_call_id : message.role)))
+      .toEqual(['user', 'assistant', 'a', 'b', 'c', 'user']);
+  });
 });

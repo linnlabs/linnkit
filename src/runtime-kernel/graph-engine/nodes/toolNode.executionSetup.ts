@@ -2,7 +2,10 @@ import { normalizeToolArgs } from '../../tools/argNormalizer';
 import type { ToolExecutionContext } from '../../tools/toolExecutionContext';
 import { computeToolIdempotencyKey } from '../../tools/idempotency/toolIdempotency';
 import type { ToolCatalogPort, ToolRuntimeDefinition } from '../../tools/ports';
-import { ensureToolContextRuntimeCapability } from '../../tools/toolContextRuntime';
+import {
+  copyToolContextRuntimeCapability,
+  ensureToolContextRuntimeCapability,
+} from '../../tools/toolContextRuntime';
 import type { EngineState, RuntimeEventSink, StandardToolCall } from '../types';
 import { ToolNodeEventBridge } from './toolNode.eventBridge';
 import { isRecord, parseJsonSafe, type UnknownRecord } from './toolNode.helpers';
@@ -28,6 +31,8 @@ export type PreparedToolNodeContext = {
 
 export type PreparedToolExecution = {
   call: StandardToolCall;
+  /** 本次调用独有的上下文；共享的运行上下文不带任何调用身份。 */
+  toolContext: ToolExecutionContext;
   toolName: string;
   toolCallId: ToolCallId;
   rawArguments: string;
@@ -143,21 +148,21 @@ export function prepareToolExecution(params: {
     }
   }
 
+  const toolContext = deriveCallToolContext({
+    toolContext: params.prepared.toolContext,
+    conversationId: params.prepared.conversationId,
+    turnId: params.prepared.turnId,
+    toolCallId,
+  });
+
   const idempotencyKey = protocolError
     ? undefined
     : computeIdempotencyKey({
         toolDefinition,
         toolName,
         toolArgs,
-        toolContext: params.prepared.toolContext,
+        toolContext,
       });
-
-  bindRuntimeToolContext({
-    toolContext: params.prepared.toolContext,
-    conversationId: params.prepared.conversationId,
-    turnId: params.prepared.turnId,
-    toolCallId,
-  });
 
   const bridge = new ToolNodeEventBridge({
     runtimeEventSink: params.prepared.runtimeEventSink,
@@ -170,6 +175,7 @@ export function prepareToolExecution(params: {
   });
   return {
     call: params.call,
+    toolContext,
     toolName,
     toolCallId,
     rawArguments,
@@ -219,24 +225,32 @@ function computeIdempotencyKey(params: {
   });
 }
 
-function bindRuntimeToolContext(params: {
+/**
+ * 每个调用拿到自己的 ToolContext 副本，再写入父工具调用身份。
+ *
+ * 并行组里多个调用同时执行；若仍共用一个对象，后开始的调用会改掉先开始调用看到的
+ * parentToolCallId，子运行 trace 会挂到别的工具卡上。副本的历史视图仍读同一份运行历史；
+ * 工具对副本的写入不会被同批其他调用看到。
+ */
+function deriveCallToolContext(params: {
   toolContext: ToolExecutionContext;
   conversationId: string;
   turnId: string;
   toolCallId: ToolCallId;
-}): void {
+}): ToolExecutionContext {
+  const callContext: ToolExecutionContext = { ...params.toolContext };
+  copyToolContextRuntimeCapability(params.toolContext, callContext);
   const existingConversationId =
-    typeof params.toolContext.conversationId === 'string'
-      ? params.toolContext.conversationId.trim()
-      : '';
+    typeof callContext.conversationId === 'string' ? callContext.conversationId.trim() : '';
   ensureToolContextRuntimeCapability({
-    context: params.toolContext,
+    context: callContext,
     executionMeta: {
       conversationId: existingConversationId || params.conversationId,
       turnId: params.turnId,
       parentToolCallId: params.toolCallId,
     },
   });
+  return callContext;
 }
 
 export { parseJsonSafe };

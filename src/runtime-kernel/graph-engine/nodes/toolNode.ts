@@ -30,9 +30,8 @@ import {
   applyProtocolFuseState,
   createToolProtocolFuseError,
   checkProtocolFuse,
-  type ToolProtocolFuseError,
 } from './toolNode.protocolFuse';
-import { isRecord, parseJsonSafe } from './toolNode.helpers';
+import { isRecord, parseJsonSafe, withoutToolCall } from './toolNode.helpers';
 import type { UnknownRecord } from './toolNode.helpers';
 import {
   buildErrorLocalState,
@@ -54,10 +53,23 @@ import { parsePendingToolCalls } from '../functions/parsePendingToolCalls';
 import {
   isToolExecutionAbort,
   settlePendingToolCallsAfterAbort,
-  settleToolCallsAfterExecutionAbort,
+  settleToolCallAfterExecutionAbort,
 } from './toolNode.cancellation';
 import { recordToolProtocolError } from '../../../shared/llmAuditRecorder';
-import { commitToolBoundary, executeRecoverableTool } from './toolNode.recovery';
+import {
+  assertExecutionIntentsArePending,
+  commitToolBoundary,
+  executeRecoverableTool,
+  readExecutingToolCallIds,
+} from './toolNode.recovery';
+import {
+  DEFAULT_MAX_PARALLEL_TOOL_CALLS,
+  readProtocolErrorCount,
+  runParallelToolGroup,
+  selectParallelToolGroup,
+  type ToolCallMode,
+  type ToolCallOutcome,
+} from './toolNode.parallelGroup';
 import { isRunPauseSignal, RunRecoveryBlockedError } from '../definitions/runContinuation';
 import { claimPendingUserInputs } from './toolNode.pendingUserInput';
 
@@ -107,8 +119,11 @@ function formatCapabilityError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+const SERIAL_MODE: ToolCallMode = { kind: 'serial' };
+
+/** toolContext 是本次调用派生的上下文，不是 prepared 里共享的那份。 */
 type ToolNodeSuccessContext = PreparedToolNodeContext & {
-  calls: StandardToolCall[];
+  mode: ToolCallMode;
   toolName: string;
   toolCallId: ToolCallId;
   exec: ToolExecutionResult;
@@ -119,7 +134,7 @@ type ToolNodeSuccessContext = PreparedToolNodeContext & {
 };
 
 type ToolNodeErrorContext = PreparedToolNodeContext & {
-  calls: StandardToolCall[];
+  mode: ToolCallMode;
   call: StandardToolCall;
   toolName: string;
   toolCallId: ToolCallId;
@@ -128,12 +143,15 @@ type ToolNodeErrorContext = PreparedToolNodeContext & {
   bridge: ToolNodeEventBridge;
 };
 
-/** 已结算的工具失败仍须提交结果边界，不能通过提前抛错丢弃 publisher 已接纳的事实。 */
-type ToolCallOutcome = NodeResult | {
-  readonly kind: 'interrupted';
-  readonly error: ToolProtocolFuseError;
-  readonly events: RoutedRuntimeEvent[];
-};
+/** 并行组里其他调用结算时会替换 state.local；结算时必须读最新对象，不能用准备阶段拿到的引用。 */
+function currentLocal(state: EngineState): UnknownRecord {
+  if (!state.local) state.local = {};
+  return state.local;
+}
+
+function remainingCallsAfter(state: EngineState, toolCallId: ToolCallId): StandardToolCall[] {
+  return withoutToolCall(parsePendingToolCalls(currentLocal(state).pendingToolCalls ?? []), toolCallId);
+}
 
 export interface ToolNodeDependencies {
   toolRuntime: Pick<ToolCatalogPort, 'getToolDefinition'> & Pick<ToolExecutionPort, 'executeTool'>;
@@ -147,6 +165,11 @@ export interface ToolNodeDependencies {
   modelInputResolver?: ToolModelInputResolverPort;
   /** 停止信号发出后等工具自行结束的期限；默认 3 秒，超时按中断处理并丢弃迟到结果。 */
   abortGraceMs?: number;
+  /**
+   * 一组相邻的可并行调用里同时执行的上限，超出的排队；默认 3。
+   * 由 Host 装配决定，模型无法通过调用参数改变它。
+   */
+  maxParallelToolCalls?: number;
 }
 
 export class ToolNode implements GraphNode {
@@ -159,9 +182,15 @@ export class ToolNode implements GraphNode {
   private readonly modelInputResolver?: ToolModelInputResolverPort;
   private readonly idempotencyInFlight: ToolIdempotencyInFlightRegistry = new Map();
   private readonly abortGraceMs?: number;
+  private readonly maxParallelToolCalls: number;
 
   constructor(dependencies: ToolNodeDependencies) {
     this.abortGraceMs = dependencies.abortGraceMs;
+    const maxParallelToolCalls = dependencies.maxParallelToolCalls ?? DEFAULT_MAX_PARALLEL_TOOL_CALLS;
+    if (!Number.isInteger(maxParallelToolCalls) || maxParallelToolCalls < 1) {
+      throw new Error(`ToolNode maxParallelToolCalls must be a positive integer, got ${maxParallelToolCalls}`);
+    }
+    this.maxParallelToolCalls = maxParallelToolCalls;
     this.toolRuntime = dependencies.toolRuntime;
     this.observationPreview = dependencies.observationPreview;
     this.telemetryPort = dependencies.telemetryPort ?? noopTelemetry;
@@ -289,6 +318,7 @@ export class ToolNode implements GraphNode {
   }
 
   async run(state: EngineState): Promise<NodeResult> {
+    assertExecutionIntentsArePending(state);
     const events: RoutedRuntimeEvent[] = [];
 
     while (true) {
@@ -379,7 +409,34 @@ export class ToolNode implements GraphNode {
       return { kind: 'yield', events: [] };
     }
 
-    const call = calls[0];
+    const group = selectParallelToolGroup(calls, this.toolRuntime);
+    if (group.length > 0) {
+      return this.runParallelGroup(state, prepared, group);
+    }
+    return this.runToolCall(state, prepared, calls[0], SERIAL_MODE);
+  }
+
+  private runParallelGroup(
+    state: EngineState,
+    prepared: PreparedToolNodeContext,
+    group: readonly StandardToolCall[],
+  ): Promise<ToolCallOutcome> {
+    return runParallelToolGroup({
+      state,
+      group,
+      limit: this.maxParallelToolCalls,
+      conversationId: prepared.conversationId,
+      turnId: prepared.turnId,
+      runCall: (call, mode) => this.runToolCall(state, prepared, call, mode),
+    });
+  }
+
+  private async runToolCall(
+    state: EngineState,
+    prepared: PreparedToolNodeContext,
+    call: StandardToolCall,
+    mode: ToolCallMode,
+  ): Promise<ToolCallOutcome> {
     const execution = prepareToolExecution({
       prepared,
       call,
@@ -389,11 +446,12 @@ export class ToolNode implements GraphNode {
       logger.warn('no tool name found in call');
       return { kind: 'yield', events: [] };
     }
+    const callContext = { ...prepared, toolContext: execution.toolContext };
 
     if (typeof execution.protocolError === 'string') {
       return this.handleError({
-        ...prepared,
-        calls,
+        ...callContext,
+        mode,
         call,
         toolName: execution.toolName,
         toolCallId: execution.toolCallId,
@@ -415,8 +473,8 @@ export class ToolNode implements GraphNode {
       reason: 'tool call passed protocol validation',
       conversationId: prepared.conversationId,
       turnId: prepared.turnId,
-      runId: prepared.toolContext.runId,
-      parentRunId: prepared.toolContext.parentRunId,
+      runId: execution.toolContext.runId,
+      parentRunId: execution.toolContext.parentRunId,
     });
 
     // tool_process(start) 是“实际开始执行”的事实，不是参数或能力准入的占位。
@@ -430,8 +488,9 @@ export class ToolNode implements GraphNode {
       const exec = await executeRecoverableTool({
         state,
         call,
-        context: prepared.toolContext,
+        context: execution.toolContext,
         abortGraceMs: this.abortGraceMs,
+        ...(mode.kind === 'parallel' ? { group: { commitQueue: mode.commitQueue } } : {}),
         onAbandon: () => logger.warn('[ToolNode] 工具未在停止期限内结束，按中断处理并丢弃迟到结果', {
           toolName: execution.toolName,
           toolCallId: execution.toolCallId,
@@ -441,30 +500,36 @@ export class ToolNode implements GraphNode {
         execute: () => executeToolWithIdempotency({
         idempotencyKey: execution.idempotencyKey,
         inFlight: this.idempotencyInFlight,
-        history: readHistoryEvents(prepared.local),
+        history: readHistoryEvents(currentLocal(state)),
         toolName: execution.toolName,
         execute: () =>
           this.toolRuntime.executeTool(
             execution.toolName,
             execution.toolArgs,
-            prepared.toolContext
+            execution.toolContext
           ),
         }),
       });
       if (exec.success) {
         const parsed = typeof exec.result === 'string' ? parseJsonSafe(exec.result) : exec.result;
         const contract = validateStructuredToolResultContract(parsed);
-        if (!contract.ok) {
+        const violation = !contract.ok
+          ? contract.reason
+          : mode.kind === 'parallel' && extractToolControlInfo(contract.result)
+            // 等待用户、结束运行、最终答案都要求本批之后不再有别的调用结算，并行组无法保证。
+            ? 'tools declared parallel must not return control.requireUser, control.terminateRun or control.finalAnswer.'
+            : undefined;
+        if (!contract.ok || violation !== undefined) {
           return this.handleError({
-            ...prepared,
-            calls,
+            ...callContext,
+            mode,
             call,
             toolName: execution.toolName,
             toolCallId: execution.toolCallId,
             toolArgs: execution.toolArgs,
             exec: {
               success: false,
-              error: `TOOL_RESULT_CONTRACT_VIOLATION: ${contract.reason}`,
+              error: `TOOL_RESULT_CONTRACT_VIOLATION: ${violation}`,
               errorKind: 'execution',
               durationMs: exec.durationMs,
             },
@@ -480,14 +545,14 @@ export class ToolNode implements GraphNode {
               toolName: execution.toolName,
               toolCallId: execution.toolCallId,
               selections: contract.modelInputAttachments,
-              context: prepared.toolContext,
+              context: execution.toolContext,
               resolver: this.modelInputResolver,
             });
           }
         } catch (error) {
           return this.handleError({
-            ...prepared,
-            calls,
+            ...callContext,
+            mode,
             call,
             toolName: execution.toolName,
             toolCallId: execution.toolCallId,
@@ -503,8 +568,8 @@ export class ToolNode implements GraphNode {
           });
         }
         return this.handleSuccess({
-          ...prepared,
-          calls,
+          ...callContext,
+          mode,
           toolName: execution.toolName,
           toolCallId: execution.toolCallId,
           exec,
@@ -516,8 +581,8 @@ export class ToolNode implements GraphNode {
       }
 
       return this.handleError({
-        ...prepared,
-        calls,
+        ...callContext,
+        mode,
         call,
         toolName: execution.toolName,
         toolCallId: execution.toolCallId,
@@ -527,11 +592,11 @@ export class ToolNode implements GraphNode {
       });
     } catch (error) {
       if (isToolExecutionAbort(error) && !isRunPauseSignal(state.local?.signal)) {
-        settleToolCallsAfterExecutionAbort({
+        // 只结算本调用；同批未启动的调用由 ToolNode.cancel 统一结算。
+        settleToolCallAfterExecutionAbort({
           state,
-          remainingCalls: calls.slice(1),
+          call,
           currentBridge: execution.bridge,
-          toolCatalog: this.toolRuntime,
         });
       }
       throw error;
@@ -539,7 +604,7 @@ export class ToolNode implements GraphNode {
       await this.modelInputResolver?.completeToolModelInput({
         toolName: execution.toolName,
         toolCallId: execution.toolCallId,
-        context: prepared.toolContext,
+        context: execution.toolContext,
       });
     }
   }
@@ -555,15 +620,13 @@ export class ToolNode implements GraphNode {
       parentRunId: context.toolContext.parentRunId,
     });
 
-    applyProtocolFuseState(context.local, 0);
-
     const observationGovernance = await applyObservationGovernance({
       parsed: context.parsed,
       toolName: context.toolName,
       toolContext: context.toolContext,
       structuredObservation: context.observation,
       observationPreview: this.observationPreview,
-      policy: readToolObservationPolicy(context.local),
+      policy: readToolObservationPolicy(currentLocal(context.state)),
     });
 
     const control = extractToolControlInfo(context.parsed);
@@ -610,9 +673,14 @@ export class ToolNode implements GraphNode {
       });
     }
 
-    const remainingCalls = context.calls.slice(1);
+    // 从这里到写回 state 之间没有 await：并行组内的结算不会互相覆盖。
+    const local = currentLocal(context.state);
+    if (context.mode.kind === 'serial') {
+      applyProtocolFuseState(local, 0);
+    }
+    const remainingCalls = remainingCallsAfter(context.state, context.toolCallId);
     context.state.local = buildSuccessLocalState({
-      local: context.local,
+      local,
       remainingCalls,
       conversationId: context.conversationId,
       turnId: context.turnId,
@@ -631,7 +699,7 @@ export class ToolNode implements GraphNode {
 
     if (
       remainingCalls.length === 0
-      && context.local.toolBatchCompletionMode === 'yield_after_batch'
+      && local.toolBatchCompletionMode === 'yield_after_batch'
     ) {
       logger.info('[ToolNode] 工具批次已结算，按 Host 策略直接 yield', {
         toolName: context.toolName,
@@ -653,11 +721,11 @@ export class ToolNode implements GraphNode {
     context: ToolNodeSuccessContext & { control: ToolControlInfo }
   ): NodeResult {
     context.state.local = buildRequireUserLocalState({
-      local: context.local,
+      local: currentLocal(context.state),
       parsed: context.parsed,
       toolCallId: context.toolCallId,
       toolName: context.toolName,
-      remainingCalls: context.calls.slice(1),
+      remainingCalls: remainingCallsAfter(context.state, context.toolCallId),
       conversationId: context.conversationId,
       turnId: context.turnId,
       runtimeEvents: context.bridge.getRuntimeEvents(),
@@ -667,7 +735,7 @@ export class ToolNode implements GraphNode {
   }
 
   private async handleError(context: ToolNodeErrorContext): Promise<ToolCallOutcome> {
-    if (context.state.local?.executingToolCallId
+    if (readExecutingToolCallIds(context.state).includes(context.toolCallId)
       && (context.exec.errorKind === 'protocol' || context.exec.errorKind === 'capability')) {
       // 当前能力不可用不证明原副作用失败；保留未决意图，待 owner 能再次对账。
       throw new RunRecoveryBlockedError(context.exec.error ?? 'Tool recovery capability is unavailable');
@@ -710,7 +778,7 @@ export class ToolNode implements GraphNode {
     );
 
     const fuse = checkProtocolFuse({
-      local: context.local,
+      local: currentLocal(context.state),
       exec: context.exec,
       toolName: context.toolName,
       toolCallId: context.toolCallId,
@@ -726,18 +794,24 @@ export class ToolNode implements GraphNode {
         parentRunId: context.toolContext.parentRunId,
       });
     }
-    const remainingCalls = context.calls.slice(1);
+    if (context.mode.kind === 'parallel' && fuse.isProtocolError) {
+      context.mode.protocolErrors.set(context.toolCallId, error);
+    }
 
+    // 从这里到写回 state 之间没有 await：并行组内的结算不会互相覆盖。
+    const local = currentLocal(context.state);
+    const remainingCalls = remainingCallsAfter(context.state, context.toolCallId);
     context.state.local = buildErrorLocalState({
-      local: context.local,
+      local,
       remainingCalls,
       conversationId: context.conversationId,
       turnId: context.turnId,
       runtimeEvents: context.bridge.getRuntimeEvents(),
-      nextProtocolErrorCount: fuse.nextCount,
+      // 并行组的计数在组结束后按原顺序重算，这里保持原值。
+      nextProtocolErrorCount: context.mode.kind === 'serial' ? fuse.nextCount : readProtocolErrorCount(local),
     });
 
-    if (fuse.shouldFuse && remainingCalls.length === 0) {
+    if (context.mode.kind === 'serial' && fuse.shouldFuse && remainingCalls.length === 0) {
       return {
         kind: 'interrupted',
         error: createToolProtocolFuseError(fuse.nextCount, context.exec.error),
@@ -747,7 +821,7 @@ export class ToolNode implements GraphNode {
 
     if (
       remainingCalls.length === 0
-      && context.local.toolBatchCompletionMode === 'yield_after_batch'
+      && local.toolBatchCompletionMode === 'yield_after_batch'
     ) {
       return { kind: 'yield', events: context.bridge.getRuntimeEvents() };
     }

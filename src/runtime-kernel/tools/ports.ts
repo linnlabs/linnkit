@@ -22,6 +22,14 @@ export interface ToolRuntimeDefinition {
   idempotency?: ToolIdempotencyPolicy;
   /** LLM 流式 tool_call 的通用事件发布策略；未声明即不发布早期生命周期事件。 */
   streaming?: ToolCallStreamingPolicy;
+  /**
+   * 可与同一次模型回复里相邻的其他可并行调用同时执行。
+   *
+   * 未声明的工具是串行屏障：前面的并行组全部结算后才开始，结束后才开始下一个调用。
+   * 只给互不依赖、不改同一份数据、也不返回 requireUser / terminateRun / finalAnswer
+   * 控制的工具打开；并行工具返回这些控制会按工具结果合同错误结算。
+   */
+  parallel?: true;
 }
 
 export interface ToolExecutionResult {
